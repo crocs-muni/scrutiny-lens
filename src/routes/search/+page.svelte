@@ -10,17 +10,13 @@
 	import { LayoutList, SlidersHorizontal } from '@lucide/svelte';
 	import type { FilterPlan } from '$lib/ai/types.js';
 
-	let query = $state('');
+	let query = $derived($page.url.searchParams.get('q') ?? '');
 	let interpretation = $state('');
 	let identifiers: string[] = $state([]);
 	let events: NostrEvent[] = $state([]);
 	let cards: (SearchCard | { skeleton: true; eventId: string })[] = $state([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
-
-	page.subscribe((p) => {
-		query = p.url.searchParams.get('q') ?? '';
-	});
 
 	onMount(async () => {
 		if (!query) {

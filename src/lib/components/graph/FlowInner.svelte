@@ -71,13 +71,11 @@
 	}
 
 	function buildEdges(view: GraphView): Edge[] {
+		const deletionIds = new Set(
+			view.nodes.filter((n) => n.type === 'deletion').map((n) => n.id)
+		);
 		return view.edges
-			.filter(
-				(e) =>
-					showDeleted ||
-					(!view.nodes.find((n) => n.id === e.source && n.type === 'deletion') &&
-						!view.nodes.find((n) => n.id === e.target && n.type === 'deletion'))
-			)
+			.filter((e) => showDeleted || (!deletionIds.has(e.source) && !deletionIds.has(e.target)))
 			.map((e) => ({
 				id: e.id,
 				source: e.source,
