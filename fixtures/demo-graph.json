@@ -1,0 +1,146 @@
+{
+  "_comment": "Synthetic demo fixtures for UI/agent development. Pubkeys and signatures are placeholders; replace with deterministic persona keys before E2E testing.",
+  "events": [
+    {
+      "id": "product-infineon-roca-0001000000000000000000000000000000000000000000000000000001",
+      "pubkey": "vendor-persona-0000000000000000000000000000000000000000000000000000000001",
+      "kind": 1,
+      "created_at": 1500000000,
+      "tags": [
+        ["t", "scrutiny-fabric"],
+        ["t", "scrutiny-v059"],
+        ["t", "scrutiny-product"],
+        ["i", "cc:BSI-DSZ-CC-0782-2012"],
+        ["i", "cc-dgst:infineonrocachip0001"],
+        ["i", "scheme:DE"],
+        ["k", "cc"],
+        ["k", "cc-dgst"],
+        ["k", "scheme"]
+      ],
+      "content": "Infineon SLE78 (RSALib) smartcard security controller.\nCertified under scheme DE at EAL5+.\nManufacturer: Infineon Technologies AG.\nValid from 2012-11-20 to 2017-11-20.\nStatus: active.\nCertification ID: BSI-DSZ-CC-0782-2012.",
+      "sig": "placeholder-signature-product-0000000000000000000000000000000000000000000000000000000000000001"
+    },
+    {
+      "id": "metadata-report-0002000000000000000000000000000000000000000000000000000002",
+      "pubkey": "vendor-persona-0000000000000000000000000000000000000000000000000000000001",
+      "kind": 1,
+      "created_at": 1500000010,
+      "tags": [
+        ["t", "scrutiny-fabric"],
+        ["t", "scrutiny-v059"],
+        ["t", "scrutiny-metadata"],
+        ["i", "cc:BSI-DSZ-CC-0782-2012"],
+        ["i", "cc-dgst:infineonrocachip0001"],
+        ["k", "cc"],
+        ["k", "cc-dgst"],
+        ["imeta", "url https://www.bsi.bund.de/SharedDocs/certs/0782a.pdf", "m application/pdf", "alt Certification report (PDF)", "x aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+      ],
+      "content": "Certification report for BSI-DSZ-CC-0782-2012.",
+      "sig": "placeholder-signature-metadata-report-000000000000000000000000000000000000000000000002"
+    },
+    {
+      "id": "metadata-st-0003000000000000000000000000000000000000000000000000000003",
+      "pubkey": "vendor-persona-0000000000000000000000000000000000000000000000000000000001",
+      "kind": 1,
+      "created_at": 1500000020,
+      "tags": [
+        ["t", "scrutiny-fabric"],
+        ["t", "scrutiny-v059"],
+        ["t", "scrutiny-metadata"],
+        ["i", "cc:BSI-DSZ-CC-0782-2012"],
+        ["i", "cc-dgst:infineonrocachip0001"],
+        ["k", "cc"],
+        ["k", "cc-dgst"],
+        ["imeta", "url https://www.bsi.bund.de/SharedDocs/certs/0782b.pdf", "m application/pdf", "alt Security target (PDF)", "x bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+      ],
+      "content": "Security target for BSI-DSZ-CC-0782-2012.",
+      "sig": "placeholder-signature-metadata-st-00000000000000000000000000000000000000000000000003"
+    },
+    {
+      "id": "metadata-cve-roca-shared-0004000000000000000000000000000000000000000000000004",
+      "pubkey": "researcher-persona-000000000000000000000000000000000000000000000000000000002",
+      "kind": 1,
+      "created_at": 1507795200,
+      "tags": [
+        ["t", "scrutiny-fabric"],
+        ["t", "scrutiny-v059"],
+        ["t", "scrutiny-metadata"],
+        ["i", "cve:CVE-2017-15361"],
+        ["k", "cve"]
+      ],
+      "content": "CVE-2017-15361 (ROCA): weak RSA key generation in Infineon RSALib, affecting smartcards, TPMs, and Yubikeys using the vulnerable library. Discovered by the Centre for Research on Cryptography and Security (Masaryk University).",
+      "sig": "placeholder-signature-metadata-cve-000000000000000000000000000000000000000000000004"
+    },
+    {
+      "id": "binding-product-report-0005000000000000000000000000000000000000000000000005",
+      "pubkey": "vendor-persona-0000000000000000000000000000000000000000000000000000000001",
+      "kind": 1,
+      "created_at": 1500000011,
+      "tags": [
+        ["t", "scrutiny-fabric"],
+        ["t", "scrutiny-v059"],
+        ["t", "scrutiny-binding"],
+        ["e", "product-infineon-roca-0001000000000000000000000000000000000000000000000000000001", "", "root", "vendor-persona-0000000000000000000000000000000000000000000000000000000001"],
+        ["e", "metadata-report-0002000000000000000000000000000000000000000000000000000002", "", "link", "vendor-persona-0000000000000000000000000000000000000000000000000000000001"]
+      ],
+      "content": "SCRUTINY Binding: product-infineon-roca-0001... ↔ metadata-report-0002...\nreport metadata for BSI-DSZ-CC-0782-2012.",
+      "sig": "placeholder-signature-binding-0000000000000000000000000000000000000000000000000005"
+    },
+    {
+      "id": "binding-product-cve-0006000000000000000000000000000000000000000000000006",
+      "pubkey": "auditor-persona-00000000000000000000000000000000000000000000000000000003",
+      "kind": 1,
+      "created_at": 1507795210,
+      "tags": [
+        ["t", "scrutiny-fabric"],
+        ["t", "scrutiny-v059"],
+        ["t", "scrutiny-binding"],
+        ["e", "product-infineon-roca-0001000000000000000000000000000000000000000000000000000001", "", "root", "vendor-persona-0000000000000000000000000000000000000000000000000000000001"],
+        ["e", "metadata-cve-roca-shared-0004000000000000000000000000000000000000000000000004", "", "link", "researcher-persona-000000000000000000000000000000000000000000000000000000002"]
+      ],
+      "content": "SCRUTINY Binding: product-infineon-roca-0001... ↔ metadata-cve-roca-shared-0004...\ncve metadata for BSI-DSZ-CC-0782-2012.",
+      "sig": "placeholder-signature-binding-cve-a-000000000000000000000000000000000000000006"
+    },
+    {
+      "id": "binding-product2-cve-0007000000000000000000000000000000000000000000000007",
+      "pubkey": "auditor-persona-00000000000000000000000000000000000000000000000000000003",
+      "kind": 1,
+      "created_at": 1507795220,
+      "tags": [
+        ["t", "scrutiny-fabric"],
+        ["t", "scrutiny-v059"],
+        ["t", "scrutiny-binding"],
+        ["e", "product-yubikey4-0008000000000000000000000000000000000000000000000000000008", "", "root", "vendor-persona-b-00000000000000000000000000000000000000000000000000004"],
+        ["e", "metadata-cve-roca-shared-0004000000000000000000000000000000000000000000000004", "", "link", "researcher-persona-000000000000000000000000000000000000000000000000000000002"]
+      ],
+      "content": "SCRUTINY Binding: product-yubikey4-0008... ↔ metadata-cve-roca-shared-0004...\ncve metadata for a second ROCA-affected product (shared CVE hub).",
+      "sig": "placeholder-signature-binding-cve-b-000000000000000000000000000000000000000007"
+    },
+    {
+      "id": "patch-product-status-0009000000000000000000000000000000000000000000000009",
+      "pubkey": "auditor-persona-00000000000000000000000000000000000000000000000000000003",
+      "kind": 1,
+      "created_at": 1507795300,
+      "tags": [
+        ["t", "scrutiny-fabric"],
+        ["t", "scrutiny-v059"],
+        ["t", "scrutiny-patch"],
+        ["e", "product-infineon-roca-0001000000000000000000000000000000000000000000000000000001", "", "root", "vendor-persona-0000000000000000000000000000000000000000000000000000000001"],
+        ["e", "product-infineon-roca-0001000000000000000000000000000000000000000000000000000001", "", "reply", "vendor-persona-0000000000000000000000000000000000000000000000000000000001"]
+      ],
+      "content": "--- old\n+++ new\n-Status: active.\n+Status: archived (superseded following ROCA disclosure, CVE-2017-15361).\nUpdated product information for BSI-DSZ-CC-0782-2012.",
+      "sig": "placeholder-signature-patch-00000000000000000000000000000000000000000000000009"
+    },
+    {
+      "id": "deletion-of-patch-0010000000000000000000000000000000000000000000000010",
+      "pubkey": "auditor-persona-00000000000000000000000000000000000000000000000000000003",
+      "kind": 5,
+      "created_at": 1507795400,
+      "tags": [
+        ["e", "patch-product-status-0009000000000000000000000000000000000000000000000009"]
+      ],
+      "content": "Retracted: status patch was published against a stale product snapshot; corrected patch to follow.",
+      "sig": "placeholder-signature-deletion-000000000000000000000000000000000000000000000010"
+    }
+  ]
+}
