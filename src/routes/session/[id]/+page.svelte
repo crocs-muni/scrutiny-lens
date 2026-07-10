@@ -11,17 +11,13 @@
 	import ChatPanel from '$lib/components/graph/ChatPanel.svelte';
 	import { Plus, X, Loader2 } from '@lucide/svelte';
 
-	let id = $state<string>('');
+	let id = $derived($page.params.id ?? '');
 	let session = $state<Session | undefined>(sessionStore.active);
 	let aiNodeMap = $state<Map<string, AIGraphNode>>(new Map());
 	let selectedNode = $state<GraphNode | null>(null);
 	let followups = $state<string[]>([]);
 	let loadingNodes = $state(true);
 	let showDeleted = $state(true);
-
-	page.subscribe((p) => {
-		id = p.params.id ?? '';
-	});
 
 	onMount(async () => {
 		if (!id) return;

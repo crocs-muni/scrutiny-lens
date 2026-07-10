@@ -13,7 +13,7 @@
 
 	let { data }: Props = $props();
 
-	const icon = $derived(
+	const Icon = $derived(
 		data.metaType === 'cve' ? Crosshair : data.metaType === 'maintenance' ? Wrench : FileText
 	);
 	const iconColor = $derived(
@@ -28,7 +28,7 @@
 >
 	<div class="flex items-start gap-2">
 		<div class="mt-0.5 shrink-0 {iconColor}">
-			{@render Icon()}
+			<Icon class="h-4 w-4" />
 		</div>
 		<div class="min-w-0 flex-1">
 			<h4 class="text-[13px] font-semibold leading-tight text-card-foreground">{data.title}</h4>
@@ -43,13 +43,3 @@
 		</div>
 	{/if}
 </div>
-
-{#snippet Icon()}
-	{#if data.metaType === 'cve'}
-		<Crosshair class="h-4 w-4" />
-	{:else if data.metaType === 'maintenance'}
-		<Wrench class="h-4 w-4" />
-	{:else}
-		<FileText class="h-4 w-4" />
-	{/if}
-{/snippet}

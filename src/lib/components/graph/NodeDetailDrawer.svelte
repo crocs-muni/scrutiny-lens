@@ -11,6 +11,9 @@
 
 	let { node, ai = null, onClose }: Props = $props();
 
+	const identifierList = $derived(node ? identifiers(node.event) : []);
+	const attachmentList = $derived(node ? attachments(node.event) : []);
+
 	function typeLabel(type: string) {
 		if (type === 'product') return 'Certificate · Product';
 		if (type === 'metadata') return 'Metadata';
@@ -68,11 +71,11 @@
 				<p class="whitespace-pre-wrap text-sm leading-relaxed text-foreground/80">{node.event.content}</p>
 			{/if}
 
-			{#if identifiers(node.event).length > 0}
+			{#if identifierList.length > 0}
 				<div class="mt-5">
 					<h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Identifiers</h3>
 					<div class="mt-2 flex flex-wrap gap-2">
-						{#each identifiers(node.event) as id}
+						{#each identifierList as id}
 							<code class="rounded bg-accent px-2 py-1 text-xs font-mono text-accent-foreground border border-pri-border">{id}</code>
 						{/each}
 					</div>
@@ -94,11 +97,11 @@
 				</div>
 			</div>
 
-			{#if attachments(node.event).length > 0}
+			{#if attachmentList.length > 0}
 				<div class="mt-5 border-t border-border pt-5">
 					<h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Attachments</h3>
 					<div class="mt-2 space-y-2">
-						{#each attachments(node.event) as att}
+						{#each attachmentList as att}
 							<a href={att.url} target="_blank" class="flex items-center justify-between rounded-md border border-border bg-surface p-2 text-sm hover:border-primary">
 								<span class="flex items-center gap-2"><FileText class="h-4 w-4 text-destructive" /> {att.alt}</span>
 								<ExternalLink class="h-3.5 w-3.5 text-muted-foreground" />
