@@ -19,6 +19,18 @@
 	let loadingNodes = $state(true);
 	let showDeleted = $state(true);
 
+	let chatEvents = $derived(session?.events ?? []);
+	let chatRootSummary = $derived.by(() => {
+		const root = session?.events.find((e) =>
+			e.tags.some((t) => t[0] === 't' && t[1] === 'scrutiny-product')
+		);
+		if (!root) return 'A SCRUTINY certification event graph.';
+		const ids = root.tags.filter((t) => t[0] === 'i').map((t) => t[1]);
+		const idStr = ids.join(', ');
+		const snippet = root.content.slice(0, 120);
+		return `This session contains a Product event ${idStr ? '(' + idStr + ': ' + snippet + ')' : ''}. Other events are metadata, bindings, patches, and deletions connected to it.`;
+	});
+
 	onMount(async () => {
 		if (!id) return;
 		const opened = await sessionStore.open(id, fetchSessionEvents);
@@ -152,5 +164,5 @@
 	</section>
 
 	<!-- Chat -->
-	<ChatPanel questions={followups} />
+	<ChatPanel events={chatEvents} rootSummary={chatRootSummary} questions={followups} />
 </div>
