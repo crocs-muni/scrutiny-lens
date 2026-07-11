@@ -8,10 +8,9 @@
 		style="width: 150px; height: 104px;"
 		nodeStrokeWidth={3}
 		nodeColor={(n) => {
+			if (n.data?.retracted) return '#dc2626';
 			if (n.type === 'product') return '#2563eb';
-			if (n.type === 'metadata') return '#0ea5e9';
-			if (n.type === 'patch') return '#d97706';
-			return '#dc2626';
+			return '#0ea5e9';
 		}}
 		maskColor="rgba(255,255,255,0.4)"
 	/>

@@ -1,9 +1,7 @@
 <script lang="ts">
 	const items = [
 		{ label: 'Certificate / Product', color: 'bg-primary' },
-		{ label: 'CVE hub', color: 'bg-warning' },
-		{ label: 'Report / Target', color: 'bg-info' },
-		{ label: 'Patch', color: 'bg-warning/70' },
+		{ label: 'Metadata', color: 'bg-info' },
 		{ label: 'Retracted', color: 'bg-destructive' },
 		{ label: 'Binding edge', color: 'bg-border', shape: 'line' }
 	];

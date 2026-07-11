@@ -13,7 +13,6 @@
 	import type { GraphNode as AIGraphNode } from '$lib/ai/types.js';
 	import ProductNode from './ProductNode.svelte';
 	import MetadataNode from './MetadataNode.svelte';
-	import PatchNode from './PatchNode.svelte';
 	import FlowToolbar from './FlowToolbar.svelte';
 	import MiniMap from './MiniMap.svelte';
 	import Legend from './Legend.svelte';
@@ -31,9 +30,7 @@
 
 	const nodeTypes = {
 		product: ProductNode,
-		metadata: MetadataNode,
-		patch: PatchNode,
-		deletion: PatchNode
+		metadata: MetadataNode
 	};
 
 	let flowApi: ReturnType<typeof import('@xyflow/svelte').useSvelteFlow> | null = $state(null);
@@ -44,14 +41,12 @@
 
 	function buildNodes(view: GraphView): Node[] {
 		return view.nodes
-			.filter((n) => showDeleted || n.type !== 'deletion')
+			.filter((n) => showDeleted || !n.retracted)
 			.map((n) => {
 				const ai = aiNodes.get(n.id);
 				const typeTags = n.event.tags.filter((t) => t[0] === 't').map((t) => t[1]);
-				const idents = n.event.tags.filter((t) => t[0] === 'i').map((t) => t[1]);
-				let metaType: 'report' | 'target' | 'maintenance' | 'cve' = 'report';
-				if (typeTags.includes('scrutiny-cve') || typeTags.some((t) => t.includes('cve')) || idents.some((i) => i.startsWith('cve:'))) metaType = 'cve';
-				else if (typeTags.includes('scrutiny-target')) metaType = 'target';
+				let metaType: 'report' | 'target' | 'maintenance' = 'report';
+				if (typeTags.includes('scrutiny-target')) metaType = 'target';
 				else if (typeTags.includes('scrutiny-maintenance')) metaType = 'maintenance';
 
 				return {
@@ -64,18 +59,16 @@
 						badges: ai?.badges ?? [],
 						selected: selectedId === n.id,
 						metaType,
-						retracted: n.type === 'deletion'
+						retracted: n.retracted
 					}
 				};
 			});
 	}
 
 	function buildEdges(view: GraphView): Edge[] {
-		const deletionIds = new Set(
-			view.nodes.filter((n) => n.type === 'deletion').map((n) => n.id)
-		);
+		const retractedIds = new Set(view.nodes.filter((n) => n.retracted).map((n) => n.id));
 		return view.edges
-			.filter((e) => showDeleted || (!deletionIds.has(e.source) && !deletionIds.has(e.target)))
+			.filter((e) => showDeleted || (!retractedIds.has(e.source) && !retractedIds.has(e.target)))
 			.map((e) => ({
 				id: e.id,
 				source: e.source,
@@ -114,12 +107,15 @@
 		requestAnimationFrame(runLayout);
 	});
 
-	$effect(() => {
-		nodes = nodes.map((n) => ({
-			...n,
-			data: { ...n.data, selected: selectedId === n.id }
-		}));
-	});
+	// Derived, not an effect: an effect that both reads and writes `nodes`
+	// (as the previous version did) re-triggers itself every time it runs,
+	// since reassigning `nodes` is itself a change to one of its own
+	// dependencies — Svelte's effect-depth guard eventually throws
+	// `effect_update_depth_exceeded`. A derived value recomputes without
+	// writing back to `nodes`, breaking the cycle.
+	let displayNodes = $derived(
+		nodes.map((n) => ({ ...n, data: { ...n.data, selected: selectedId === n.id } }))
+	);
 
 	function onNodeClick({ node }: { node: Node; event: MouseEvent | TouchEvent }) {
 		const gn = graph.nodes.find((n) => n.id === node.id);
@@ -129,7 +125,7 @@
 
 <div class="h-full w-full">
 	<SvelteFlow
-		{nodes}
+		nodes={displayNodes}
 		{edges}
 		{nodeTypes}
 		fitView

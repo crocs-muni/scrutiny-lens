@@ -1,24 +1,23 @@
 <script lang="ts">
-	import { X, ExternalLink, FileText, Trash2 } from '@lucide/svelte';
+	import { X, ExternalLink, FileText, Trash2, GitCommitVertical } from '@lucide/svelte';
 	import type { GraphNode, NostrEvent } from '$lib/session/types.js';
 	import type { GraphNode as AIGraphNode } from '$lib/ai/types.js';
 
 	interface Props {
 		node: GraphNode | null;
 		ai?: AIGraphNode | null;
+		/** Patch events (scrutiny-patch) whose chain targets this node, oldest first. */
+		patches?: NostrEvent[];
 		onClose: () => void;
 	}
 
-	let { node, ai = null, onClose }: Props = $props();
+	let { node, ai = null, patches = [], onClose }: Props = $props();
 
 	const identifierList = $derived(node ? identifiers(node.event) : []);
 	const attachmentList = $derived(node ? attachments(node.event) : []);
 
 	function typeLabel(type: string) {
-		if (type === 'product') return 'Certificate · Product';
-		if (type === 'metadata') return 'Metadata';
-		if (type === 'patch') return 'Patch';
-		return 'Retracted';
+		return type === 'product' ? 'Certificate · Product' : 'Metadata';
 	}
 
 	function identifiers(event: NostrEvent) {
@@ -44,7 +43,7 @@
 				<span class="inline-flex items-center rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-accent-foreground border border-pri-border">
 					{typeLabel(node.type)}
 				</span>
-				<h2 class="mt-2 text-[21px] font-semibold text-card-foreground {node.type === 'deletion' ? 'line-through text-muted-foreground' : ''}">
+				<h2 class="mt-2 text-[21px] font-semibold text-card-foreground {node.retracted ? 'line-through text-muted-foreground' : ''}">
 					{ai?.title ?? node.event.id.slice(0, 24)}
 				</h2>
 				<p class="mt-1 text-sm text-muted-foreground">{ai?.subtitle ?? node.event.pubkey.slice(0, 24)}</p>
@@ -55,7 +54,7 @@
 		</div>
 
 		<div class="flex-1 overflow-y-auto p-6">
-			{#if node.type === 'deletion'}
+			{#if node.retracted}
 				<div class="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
 					<div class="flex items-center gap-2 text-destructive">
 						<Trash2 class="h-4 w-4" />
@@ -96,6 +95,23 @@
 					<p class="break-all font-mono text-xs text-muted-foreground">{node.event.id}</p>
 				</div>
 			</div>
+
+			{#if patches.length > 0}
+				<div class="mt-5 border-t border-border pt-5">
+					<h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Patch history</h3>
+					<div class="mt-2 space-y-2">
+						{#each patches as patch (patch.id)}
+							<div class="flex gap-2 rounded-md border border-border bg-surface p-2 text-sm">
+								<GitCommitVertical class="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+								<div class="min-w-0 flex-1">
+									<p class="text-xs text-muted-foreground">{new Date(patch.created_at * 1000).toLocaleString()}</p>
+									<p class="mt-0.5 whitespace-pre-wrap text-foreground/80">{patch.content}</p>
+								</div>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/if}
 
 			{#if attachmentList.length > 0}
 				<div class="mt-5 border-t border-border pt-5">

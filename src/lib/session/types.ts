@@ -19,7 +19,8 @@ export interface GraphEdge {
 
 export interface GraphNode {
 	id: string;
-	type: 'product' | 'metadata' | 'patch' | 'deletion';
+	type: 'product' | 'metadata';
+	retracted: boolean;
 	event: NostrEvent;
 }
 
