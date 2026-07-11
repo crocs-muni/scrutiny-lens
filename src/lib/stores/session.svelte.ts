@@ -61,7 +61,10 @@ class SessionStore {
 		return session;
 	}
 
-	async open(id: string, fetcher?: (id: string) => Promise<NostrEvent[]>): Promise<Session | null> {
+	async open(
+		id: string,
+		fetcher?: (session: Session) => Promise<NostrEvent[]>
+	): Promise<Session | null> {
 		if (!browser) return null;
 		this.activeId = id;
 		this.status = 'loading';
@@ -77,7 +80,7 @@ class SessionStore {
 			// Update-on-return: re-fetch and merge if a fetcher is provided.
 			if (fetcher) {
 				this.status = 'syncing';
-				const fresh = await fetcher(id);
+				const fresh = await fetcher(session);
 				const map = new Map(fresh.map((e) => [e.id, e]));
 				for (const event of session.events) {
 					if (!map.has(event.id)) map.set(event.id, event);
