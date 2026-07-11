@@ -68,3 +68,5 @@ export const ChatResponse = z.object({
 	citations: z.array(Citation).default([])
 });
 export type ChatResponse = z.infer<typeof ChatResponse>;
+
+export const SOURCES_SENTINEL = '%%CITATIONS%%';
