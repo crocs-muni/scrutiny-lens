@@ -6,9 +6,11 @@
 		card: SearchCard;
 		primary?: boolean;
 		onOpen?: () => void;
+		/** Real per-result counts from the relay; undefined while still loading. */
+		stats?: { boundMetadata: number; attachments: number; updates: number };
 	}
 
-	let { card, primary = false, onOpen }: Props = $props();
+	let { card, primary = false, onOpen, stats }: Props = $props();
 
 	const metaMatch = $derived(card.snippet.match(/^(.*?) · (.*?) · (.*?) · (Active|Archived)/));
 	const identifiers = $derived(card.badges.filter((b) => b.includes(':') || b.startsWith('BSI') || b.startsWith('ANSSI')));
@@ -46,10 +48,13 @@
 
 	<div class="mt-4 flex items-center justify-between border-t border-secondary pt-3 text-xs text-muted-foreground">
 		<div class="flex items-center gap-4">
-			<span class="flex items-center gap-1"><FileText class="h-3.5 w-3.5" /> 5 bound metadata</span>
-			<span class="flex items-center gap-1"><Paperclip class="h-3.5 w-3.5" /> 2 attachments</span>
-			<span class="flex items-center gap-1"><Clock class="h-3.5 w-3.5" /> 3 updates</span>
+			{#if stats}
+				<span class="flex items-center gap-1"><FileText class="h-3.5 w-3.5" /> {stats.boundMetadata} bound metadata</span>
+				<span class="flex items-center gap-1"><Paperclip class="h-3.5 w-3.5" /> {stats.attachments} attachments</span>
+				<span class="flex items-center gap-1"><Clock class="h-3.5 w-3.5" /> {stats.updates} updates</span>
+			{:else}
+				<span class="h-3 w-40 animate-pulse rounded bg-secondary"></span>
+			{/if}
 		</div>
-		<span class="font-mono">0.94</span>
 	</div>
 </article>
