@@ -20,6 +20,19 @@
 	let showDeleted = $state(true);
 
 	let chatEvents = $derived(session?.events ?? []);
+	// Patch events (scrutiny-patch) aren't graph nodes — they're history for
+	// whichever node their `e` tags target (components.md #12).
+	let selectedNodePatches = $derived.by(() => {
+		if (!selectedNode) return [];
+		const targetId = selectedNode.id;
+		return (session?.events ?? [])
+			.filter(
+				(e) =>
+					e.tags.some((t) => t[0] === 't' && t[1] === 'scrutiny-patch') &&
+					e.tags.some((t) => t[0] === 'e' && t[1] === targetId)
+			)
+			.sort((a, b) => a.created_at - b.created_at);
+	});
 	let chatRootSummary = $derived.by(() => {
 		const root = session?.events.find((e) =>
 			e.tags.some((t) => t[0] === 't' && t[1] === 'scrutiny-product')
@@ -160,7 +173,7 @@
 			/>
 			{/if}
 		</div>
-		<NodeDetailDrawer node={selectedNode} ai={selectedNode ? aiNodeMap.get(selectedNode.id) ?? null : null} onClose={closeNode} />
+		<NodeDetailDrawer node={selectedNode} ai={selectedNode ? aiNodeMap.get(selectedNode.id) ?? null : null} patches={selectedNodePatches} onClose={closeNode} />
 	</section>
 
 	<!-- Chat -->
