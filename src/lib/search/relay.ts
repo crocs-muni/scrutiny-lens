@@ -152,6 +152,17 @@ export async function searchProducts(
 	};
 }
 
+/**
+ * Total Binding events touching a Product or Metadata node, either direction
+ * (as `root` or `link`) -- i.e. how many other nodes it's connected to on the
+ * relay, regardless of how many of those are currently visible in a session
+ * graph. Used to show the "+N" expand affordance's count before the user
+ * clicks it.
+ */
+export async function countBindings(ndk: NDK, nodeId: string): Promise<number> {
+	return countEvents(ndk, { kinds: [1], '#t': [TYPE_TAGS.binding], '#e': [nodeId] });
+}
+
 export interface ProductStats {
 	boundMetadata: number;
 	attachments: number;
