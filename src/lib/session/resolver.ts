@@ -58,3 +58,46 @@ export const simpleGraphResolver: GraphResolver = (events: NostrEvent[]): GraphV
 
 	return { nodes, edges };
 };
+
+/**
+ * Filters a fully-resolved graph down to what the user has actually chosen to
+ * see: the root node, plus anything reachable by crossing an edge touching a
+ * node in `expandedNodeIds`. The root is always implicitly expanded (its own
+ * bindings/metadata are the session's base view); every other node starts
+ * collapsed until the user clicks its expand affordance.
+ *
+ * This is deliberately a pure filter over the already-resolved graph, not a
+ * new fetch -- expand/collapse only ever changes which subset of already-known
+ * nodes is rendered. A node reachable via two different expanded parents
+ * stays visible if only one of those parents is later collapsed.
+ */
+export function visibleSubgraph(
+	graph: GraphView,
+	rootId: string,
+	expandedNodeIds: Iterable<string>,
+): GraphView {
+	const expanded = new Set(expandedNodeIds);
+	const nodeIds = new Set(graph.nodes.map((n) => n.id));
+	if (!nodeIds.has(rootId)) return { nodes: [], edges: [] };
+
+	const visible = new Set<string>([rootId]);
+	const queue = [rootId];
+
+	while (queue.length > 0) {
+		const current = queue.shift()!;
+		if (current !== rootId && !expanded.has(current)) continue;
+
+		for (const edge of graph.edges) {
+			const other = edge.source === current ? edge.target : edge.target === current ? edge.source : null;
+			if (other && !visible.has(other)) {
+				visible.add(other);
+				queue.push(other);
+			}
+		}
+	}
+
+	return {
+		nodes: graph.nodes.filter((n) => visible.has(n.id)),
+		edges: graph.edges.filter((e) => visible.has(e.source) && visible.has(e.target)),
+	};
+}

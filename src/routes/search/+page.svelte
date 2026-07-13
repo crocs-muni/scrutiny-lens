@@ -172,7 +172,9 @@
 	async function openGraph(index: number) {
 		const card = cards[index];
 		if (!card || 'skeleton' in card) return;
-		const session = await sessionStore.create(card.title || query, query, events);
+		const rootEvent = events.find((e) => e.id === card.eventId);
+		if (!rootEvent) return;
+		const session = await sessionStore.create(card.title || query, query, [rootEvent]);
 		goto(`/session/${session.id}`);
 	}
 </script>
@@ -180,7 +182,7 @@
 <div class="flex h-screen w-full">
 	<!-- Icon rail -->
 	<aside class="flex w-[60px] flex-col items-center border-r border-border bg-surface py-3">
-		<div class="h-6 w-6 rounded bg-primary"></div>
+		<a href="/" class="rounded-md p-1 hover:bg-secondary"><div class="h-6 w-6 rounded bg-primary"></div></a>
 		<a href="/" class="mt-6 rounded-md p-2 text-muted-foreground hover:bg-secondary"><LayoutList class="h-5 w-5" /></a>
 	</aside>
 

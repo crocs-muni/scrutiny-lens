@@ -1,4 +1,4 @@
-import NDK, { NDKEvent, type NDKFilter } from '@nostr-dev-kit/ndk';
+import NDK, { NDKEvent } from '@nostr-dev-kit/ndk';
 import { PUBLIC_RELAY_URL } from '$env/static/public';
 import type { NostrEvent, Session } from './types.js';
 import demo from '../../../fixtures/demo-graph.json' with { type: 'json' };
@@ -6,10 +6,7 @@ import demo from '../../../fixtures/demo-graph.json' with { type: 'json' };
 const DEFAULT_RELAY_URL = 'ws://localhost:7777';
 const CONNECT_TIMEOUT_MS = 3000;
 const FETCH_TIMEOUT_MS = 8000;
-// Product -> Binding -> Metadata -> Patch -> Deletion is 4 edges; one extra hop
-// ensures the last-discovered node's own content is actually fetched.
-const MAX_HOPS = 5;
-const HOP_LIMIT = 200;
+const FETCH_LIMIT = 1000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
 	return Promise.race([
@@ -33,82 +30,82 @@ function toNostrEvent(event: NDKEvent): NostrEvent {
 	};
 }
 
+const isBinding = (event: NostrEvent): boolean =>
+	event.tags.some((t) => t[0] === 't' && t[1] === 'scrutiny-binding');
+
 /**
- * Walks the event graph outward from a set of seed ids in both directions:
- *  - incoming: events whose `e` tags reference a frontier id (e.g. a Binding
- *    references its Product; a Patch or Deletion may reference a Metadata event)
- *  - outgoing: ids that a frontier event's own `e` tags point at (e.g. a
- *    Binding's `e` tags point at both its Product and its Metadata event)
- * This is required because Products and Metadata never reference each other
- * directly -- only the Binding in between carries both edges.
+ * Fetches exactly one node's immediate neighborhood: every Binding, Patch, and
+ * Deletion event that directly references `nodeId`, plus -- for each Binding
+ * found -- the actual Product/Metadata content on the *other* end of that
+ * edge. Deliberately does not recurse: a shared Metadata node (e.g. a common
+ * SAR component bound to many unrelated certificates) stops here instead of
+ * pulling in every other product that happens to share it. Recursing further
+ * is the user's call, one node at a time, via the expand affordance.
  */
-async function resolveGraph(ndk: NDK, seedIds: string[]): Promise<NostrEvent[]> {
-	const events = new Map<string, NostrEvent>();
-	const known = new Set(seedIds);
-	let frontier = seedIds;
+export async function fetchNodeNeighbors(ndk: NDK, nodeId: string): Promise<NostrEvent[]> {
+	const touching = await withTimeout(
+		ndk.fetchEvents({ '#e': [nodeId], limit: FETCH_LIMIT }),
+		FETCH_TIMEOUT_MS,
+		'relay neighbor fetch'
+	);
+	const touchingEvents = Array.from(touching).map(toNostrEvent);
 
-	for (let hop = 0; hop < MAX_HOPS && frontier.length > 0; hop++) {
-		const filters: NDKFilter[] = [
-			{ ids: frontier, limit: HOP_LIMIT },
-			{ '#e': frontier, limit: HOP_LIMIT }
-		];
-		const [idsResult, refResult] = await Promise.all(
-			filters.map((filter) => ndk.fetchEvents(filter))
-		);
-
-		const nextFrontier: string[] = [];
-		const addNew = (id: string) => {
-			if (!known.has(id)) {
-				known.add(id);
-				nextFrontier.push(id);
-			}
-		};
-
-		// Frontier events themselves: record them, and follow their outgoing e-tags.
-		for (const ndkEvent of idsResult) {
-			const event = toNostrEvent(ndkEvent);
-			if (!events.has(event.id)) events.set(event.id, event);
-			for (const tag of event.tags) {
-				if (tag[0] === 'e' && tag[1]) addNew(tag[1]);
-			}
+	const otherIds = new Set<string>();
+	for (const event of touchingEvents) {
+		if (!isBinding(event)) continue;
+		for (const tag of event.tags) {
+			if (tag[0] === 'e' && tag[1] && tag[1] !== nodeId) otherIds.add(tag[1]);
 		}
-		// Events that reference the frontier (incoming edges).
-		for (const ndkEvent of refResult) {
-			const event = toNostrEvent(ndkEvent);
-			if (!events.has(event.id)) events.set(event.id, event);
-			addNew(event.id);
-		}
-
-		frontier = nextFrontier;
 	}
 
-	return Array.from(events.values());
+	if (otherIds.size === 0) return touchingEvents;
+
+	const others = await withTimeout(
+		ndk.fetchEvents({ ids: Array.from(otherIds) }),
+		FETCH_TIMEOUT_MS,
+		'relay neighbor content fetch'
+	);
+	return [...touchingEvents, ...Array.from(others).map(toNostrEvent)];
 }
 
 /**
- * Fetches the events belonging to a session from the configured relay, starting
- * from the session's root event and any already-known related events, then
- * resolving the graph outward (see resolveGraph). Falls back to the synthetic
- * demo fixture if the relay is unreachable, times out, or returns nothing.
+ * Fetches a session's base view: the root event's own immediate neighborhood
+ * (see fetchNodeNeighbors). Falls back to the synthetic demo fixture if the
+ * relay is unreachable, times out, or returns nothing.
  */
 export async function fetchSessionEvents(session: Session): Promise<NostrEvent[]> {
-	const seedIds = Array.from(new Set([session.rootEventId, ...session.relatedEventIds])).filter(
-		Boolean
-	);
-	if (seedIds.length === 0) return demo.events as NostrEvent[];
+	if (!session.rootEventId) return demo.events as NostrEvent[];
 
 	const relayUrl = PUBLIC_RELAY_URL || DEFAULT_RELAY_URL;
 	const ndk = new NDK({ explicitRelayUrls: [relayUrl] });
 
 	try {
 		await withTimeout(ndk.connect(CONNECT_TIMEOUT_MS), CONNECT_TIMEOUT_MS, 'relay connect');
-		const events = await withTimeout(resolveGraph(ndk, seedIds), FETCH_TIMEOUT_MS, 'relay fetch');
-		if (events.length === 0) return demo.events as NostrEvent[];
-		return events;
+		const neighbors = await fetchNodeNeighbors(ndk, session.rootEventId);
+		if (neighbors.length === 0) return demo.events as NostrEvent[];
+		return neighbors;
 	} catch (err) {
 		// MVP fallback: relay unreachable, slow, or empty for this session -> synthetic demo graph.
 		console.warn('[fetchSessionEvents] relay fetch failed, falling back to fixtures:', err);
 		return demo.events as NostrEvent[];
+	} finally {
+		for (const relay of ndk.pool.relays.values()) relay.disconnect();
+	}
+}
+
+/**
+ * Expands a single node on demand (the "+" affordance): connects fresh, fetches
+ * that node's immediate neighborhood, disconnects. Unlike fetchSessionEvents,
+ * this does not fall back to the demo fixture on failure -- a relay hiccup
+ * during an on-demand expand should surface as an error, not silently inject
+ * unrelated synthetic data into a real session.
+ */
+export async function expandNodeNeighbors(nodeId: string): Promise<NostrEvent[]> {
+	const relayUrl = PUBLIC_RELAY_URL || DEFAULT_RELAY_URL;
+	const ndk = new NDK({ explicitRelayUrls: [relayUrl] });
+	try {
+		await withTimeout(ndk.connect(CONNECT_TIMEOUT_MS), CONNECT_TIMEOUT_MS, 'relay connect');
+		return await fetchNodeNeighbors(ndk, nodeId);
 	} finally {
 		for (const relay of ndk.pool.relays.values()) relay.disconnect();
 	}

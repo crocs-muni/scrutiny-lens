@@ -6,6 +6,8 @@
 	<MiniMap
 		class="rounded-[9px] border border-border bg-card/90 backdrop-blur shadow-md"
 		style="width: 150px; height: 104px;"
+		width={150}
+		height={104}
 		nodeStrokeWidth={3}
 		nodeColor={(n) => {
 			if (n.data?.retracted) return '#dc2626';
