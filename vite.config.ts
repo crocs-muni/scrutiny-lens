@@ -4,6 +4,9 @@ import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
 
 export default defineConfig({
+	server: {
+		port: process.env.PORT ? Number(process.env.PORT) : 5173
+	},
 	plugins: [
 		tailwindcss(),
 		sveltekit({
