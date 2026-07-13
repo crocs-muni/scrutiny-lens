@@ -1,17 +1,32 @@
 <script lang="ts">
-	import { X, ExternalLink, FileText, Trash2, GitCommitVertical } from '@lucide/svelte';
+	import { X, ExternalLink, FileText, Trash2, GitCommitVertical, Sparkles, Quote } from '@lucide/svelte';
 	import type { GraphNode, NostrEvent } from '$lib/session/types.js';
 	import type { GraphNode as AIGraphNode } from '$lib/ai/types.js';
+	import { deriveSubtitle } from '$lib/session/nodeDisplay.js';
 
 	interface Props {
 		node: GraphNode | null;
 		ai?: AIGraphNode | null;
 		/** Patch events (scrutiny-patch) whose chain targets this node, oldest first. */
 		patches?: NostrEvent[];
+		/** Set when this drawer was opened by clicking a chat citation pill. */
+		arrivedFromCitation?: number | null;
+		/** The citation's verbatim quote -- shown as its own "cited passage"
+		 *  block. See citationRender.ts's verifyQuote. */
+		citationQuote?: string | null;
+		citationVerified?: boolean;
 		onClose: () => void;
 	}
 
-	let { node, ai = null, patches = [], onClose }: Props = $props();
+	let {
+		node,
+		ai = null,
+		patches = [],
+		arrivedFromCitation = null,
+		citationQuote = null,
+		citationVerified = false,
+		onClose
+	}: Props = $props();
 
 	const identifierList = $derived(node ? identifiers(node.event) : []);
 	const attachmentList = $derived(node ? attachments(node.event) : []);
@@ -46,7 +61,7 @@
 				<h2 class="mt-2 text-[21px] font-semibold text-card-foreground {node.retracted ? 'line-through text-muted-foreground' : ''}">
 					{ai?.title ?? node.event.id.slice(0, 24)}
 				</h2>
-				<p class="mt-1 text-sm text-muted-foreground">{ai?.subtitle ?? node.event.pubkey.slice(0, 24)}</p>
+				<p class="mt-1 text-sm text-muted-foreground">{deriveSubtitle(node.event)}</p>
 			</div>
 			<button onclick={onClose} class="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground">
 				<X class="h-5 w-5" />
@@ -55,7 +70,7 @@
 
 		<div class="flex-1 overflow-y-auto p-6">
 			{#if node.retracted}
-				<div class="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+				<div class="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
 					<div class="flex items-center gap-2 text-destructive">
 						<Trash2 class="h-4 w-4" />
 						<span class="text-sm font-semibold">Retracted by author</span>
@@ -64,9 +79,30 @@
 				</div>
 			{/if}
 
-			{#if ai?.summary}
-				<p class="text-sm leading-relaxed text-foreground/80">{ai.summary}</p>
-			{:else}
+			{#if arrivedFromCitation}
+				<div class="mb-3 flex items-center gap-2 rounded-lg border border-pri-border bg-accent px-3 py-2 text-sm text-pri-strong">
+					<span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground">
+						{arrivedFromCitation}
+					</span>
+					<span class="flex items-center gap-1.5">
+						<Sparkles class="h-3.5 w-3.5" /> Arrived from citation
+					</span>
+				</div>
+
+				{#if citationQuote}
+					<blockquote class="cited-quote-block mb-4">
+						<Quote class="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+						<span>{citationQuote}</span>
+					</blockquote>
+					{#if !citationVerified}
+						<p class="mb-4 -mt-3 text-xs text-muted-foreground">
+							Not found verbatim in the source event — the assistant may have paraphrased this quote.
+						</p>
+					{/if}
+				{/if}
+			{/if}
+
+			{#if !node.retracted}
 				<p class="whitespace-pre-wrap text-sm leading-relaxed text-foreground/80">{node.event.content}</p>
 			{/if}
 

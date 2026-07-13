@@ -62,11 +62,24 @@ function parseChatResponse(text: string, onDelta?: (text: string) => void): AskC
 	try {
 		const raw = JSON.parse(tail);
 		if (Array.isArray(raw)) {
-			citations = raw.map((c: Record<string, unknown>) => ({
-				n: Number(c.n ?? 0),
-				id: String(c.id ?? ''),
-				snippet: typeof c.snippet === 'string' ? c.snippet : undefined
-			}));
+			const seenN = new Set<number>();
+			citations = raw
+				.map((c: Record<string, unknown>) => ({
+					n: Number(c.n ?? 0),
+					id: String(c.id ?? ''),
+					quote: typeof c.quote === 'string' ? c.quote : ''
+				}))
+				.filter((c) => c.id && c.quote && c.n > 0)
+				// A malformed response reusing (or omitting, via the `?? 0`
+				// default) the same n for two different events would otherwise
+				// make resolveGlobalCitations's local->global map silently
+				// overwrite the first entry with the second, corrupting both --
+				// keep only the first citation per n.
+				.filter((c) => {
+					if (seenN.has(c.n)) return false;
+					seenN.add(c.n);
+					return true;
+				});
 		}
 	} catch {
 		// citations remain empty

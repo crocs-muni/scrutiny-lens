@@ -5,23 +5,21 @@ import { getCache, setCache } from '../cache.js';
 import { GraphNode, type AIResult } from '../types.js';
 import type { NostrEvent } from '$lib/session/types.js';
 
-const NODE_PROMPT = `You summarize a batch of Nostr SCRUTINY events into concise graph node labels.
+const NODE_PROMPT = `You label a batch of Nostr SCRUTINY events for a graph view. Everything else about a node (subtitle, description) comes from its real tags/content, not you -- your only job is a short title and a few badges.
 
 For each event, return an object matching this schema:
 {
   "eventId": "the exact event id",
   "title": "short product/metadata/patch title (1 line)",
-  "subtitle": "vendor · scheme · EAL, or type/subtype context (1 line)",
-  "badges": ["short label", "cc:..."],
-  "summary": "1-2 sentence summary of the event's role in the graph"
+  "badges": ["short label", "cc:..."]
 }
 
 Rules:
 - Use only the provided event tags and content.
-- For product events, title is the product/certificate name; subtitle is vendor · scheme · EAL.
-- For metadata events, title is document type (e.g. Certification Report, Security Target); subtitle is the bound certificate id.
-- For patch events, title is the change type; subtitle is the target certificate id.
-- For deletion/retraction events, title is "Retracted" and summary explains why.
+- For product events, title is the product/certificate name.
+- For metadata events, title is the document type (e.g. Certification Report, Security Target).
+- For patch events, title is the change type (e.g. "Maintenance update").
+- For deletion/retraction events, title is "Retracted".
 - Badges should include identifiers like cc:... or cve:... when present.
 - Do not explain, only return the JSON array under "nodes".`;
 
@@ -37,13 +35,28 @@ export async function runNodesAgent(
 	const provider = getProvider(env);
 	if (!provider) return { ok: false, kind: 'no-key', message: 'API key not configured' };
 
-	const cached = getCache(env, 'nodes', req);
-	if (cached) {
-		const parsed = z.array(GraphNode).safeParse((cached as { nodes: unknown }).nodes);
-		if (parsed.success) return { ok: true, result: parsed.data, cached: true };
+	// Cache is keyed per event id (not per whole request batch) so an event
+	// already summarized is never resent to the model, even if it later shows
+	// up in a differently-sized batch (e.g. after a node expand). Scoped to
+	// this agent -- see nodes.ts caller for why cache.ts's generic keying is
+	// left alone.
+	const cachedNodes: GraphNode[] = [];
+	const uncachedEvents: NostrEvent[] = [];
+	for (const event of req.events) {
+		const cached = getCache(env, 'nodes', { eventId: event.id });
+		const parsed = cached ? GraphNode.safeParse(cached) : undefined;
+		if (parsed?.success) {
+			cachedNodes.push(parsed.data);
+		} else {
+			uncachedEvents.push(event);
+		}
 	}
 
-	const eventsJson = JSON.stringify(req.events, null, 2);
+	if (uncachedEvents.length === 0) {
+		return { ok: true, result: cachedNodes, cached: true };
+	}
+
+	const eventsJson = JSON.stringify(uncachedEvents, null, 2);
 	const result = await generateStructured(z.object({ nodes: z.array(GraphNode) }), {
 		model: provider(getModel(env)),
 		system: NODE_PROMPT,
@@ -59,10 +72,12 @@ export async function runNodesAgent(
 
 	if (!result.ok) return result;
 
-	const nodes = result.result.nodes.map((n, i) => ({
+	const freshNodes = result.result.nodes.map((n, i) => ({
 		...n,
-		eventId: req.events[i]?.id ?? n.eventId
+		eventId: uncachedEvents[i]?.id ?? n.eventId
 	}));
-	setCache(env, 'nodes', req, { nodes }, getModel(env));
-	return { ok: true, result: nodes };
+	for (const node of freshNodes) {
+		setCache(env, 'nodes', { eventId: node.eventId }, node, getModel(env));
+	}
+	return { ok: true, result: [...cachedNodes, ...freshNodes] };
 }
