@@ -4,7 +4,9 @@ import { getCache, setCache } from '../cache.js';
 import { FollowUps, type AIResult } from '../types.js';
 import type { NostrEvent } from '$lib/session/types.js';
 
-const FOLLOWUPS_PROMPT = `You suggest follow-up questions a security analyst might ask about a SCRUTINY session graph.
+const FOLLOWUPS_PROMPT = `You suggest the most basic, natural first questions a security analyst would
+ask the moment they open this session graph -- orientation questions, not deep
+technical follow-ups.
 
 Return a JSON object matching this schema:
 {
@@ -12,8 +14,16 @@ Return a JSON object matching this schema:
 }
 
 Rules:
-- Questions should be concrete and grounded in the provided events.
-- Focus on relationships, status changes, CVE impact, EAL levels, and patch history.
+- Ground each question in what's actually in the provided events (the real
+  product/vendor name, its actual status, what it's actually bound to) --
+  never invent facts. But keep the questions themselves basic and broad, the
+  kind a newcomer asks first: what is this, is it still valid, what's it
+  connected to, has anything changed -- not comparative or deep-dive questions.
+- Each question is a short, natural sentence, roughly 4-8 words.
+- Do not assume any particular field exists -- no fixed focus on EAL levels,
+  CVE ids, or patch history specifically. Let whatever's actually present in
+  the events guide what's askable, since not every graph has the same kinds
+  of events.
 - Return exactly 3 questions.
 - Do not explain, only return JSON.`;
 

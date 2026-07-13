@@ -49,3 +49,63 @@ html {
 .font-mono {
 	font-family: var(--font-mono);
 }
+
+/* Chat citation pills ([n] markers) and their cited-span highlight -- built
+   as plain CSS classes rather than Tailwind utilities because the markup is
+   generated inside citationRender.ts and injected via {@html}, not written
+   in a component template. Spec: components.md #03. */
+.citation-pill {
+	display: inline-flex;
+	align-items: center;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 700;
+	line-height: 1;
+	padding: 1px 6px;
+	margin: 0 1px;
+	border-radius: 5px;
+	background: var(--color-accent);
+	color: var(--color-primary);
+	border: 1px solid var(--color-pri-border);
+	cursor: pointer;
+	vertical-align: baseline;
+	transition:
+		background-color 0.12s ease,
+		color 0.12s ease,
+		box-shadow 0.12s ease;
+}
+
+.citation-pill:hover,
+.citation-pill:focus-visible,
+.citation-pill.is-active {
+	background: var(--color-primary);
+	color: var(--color-primary-foreground);
+	box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.28);
+	padding: 1px 7px;
+	outline: none;
+}
+
+.cited-mark {
+	background: var(--color-pri-mark);
+	color: var(--color-pri-deep);
+	border-radius: 3px;
+	padding: 2px 3px;
+	box-shadow: inset 0 -2px 0 var(--color-pri-mid);
+}
+
+/* Node drawer's "cited passage" -- the citation's verbatim quote, shown as
+   its own block rather than searched for inside the (separately paraphrased)
+   AI summary. See NodeDetailDrawer.svelte. */
+.cited-quote-block {
+	display: flex;
+	gap: 0.5rem;
+	align-items: flex-start;
+	background: var(--color-pri-mark);
+	color: var(--color-pri-deep);
+	border-left: 3px solid var(--color-pri-mid);
+	border-radius: var(--radius-sm);
+	padding: 0.625rem 0.75rem;
+	font-size: 13.5px;
+	line-height: 1.5;
+	font-style: italic;
+}

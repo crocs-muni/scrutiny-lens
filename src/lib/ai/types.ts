@@ -28,12 +28,13 @@ export const SearchCard = z.object({
 });
 export type SearchCard = z.infer<typeof SearchCard>;
 
+// Deliberately narrow: subtitle is derived from real tags (see
+// session/nodeDisplay.ts's deriveSubtitle) and the drawer shows the event's
+// real content -- the LLM's only job is a short title and a few badges.
 export const GraphNode = z.object({
 	eventId: z.string(),
 	title: z.string(),
-	subtitle: z.string(),
-	badges: z.array(z.string()),
-	summary: z.string()
+	badges: z.array(z.string())
 });
 export type GraphNode = z.infer<typeof GraphNode>;
 
@@ -45,7 +46,11 @@ export type FollowUps = z.infer<typeof FollowUps>;
 export const Citation = z.object({
 	n: z.coerce.number(),
 	id: z.string(),
-	snippet: z.string().optional()
+	// A VERBATIM, character-for-character substring copied from the cited
+	// event's own content -- not a paraphrase. This is what lets the node
+	// drawer show a "cited passage" that's checked against the real event
+	// text instead of a fuzzy guess (see citationRender.ts's verifyQuote).
+	quote: z.string()
 });
 export type Citation = z.infer<typeof Citation>;
 
