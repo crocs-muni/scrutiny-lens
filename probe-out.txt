@@ -1,0 +1,11 @@
+svelte.config.js is ignored when options are passed via your Vite config
+svelte.config.js is ignored when options are passed via your Vite config
+
+ RUN  v4.1.11 C:/Users/alsorehi/scrutiny-lens
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  10:47:08
+   Duration  984ms (transform 99ms, setup 0ms, import 365ms, tests 12ms, environment 0ms)
+

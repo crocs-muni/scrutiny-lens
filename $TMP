@@ -1,0 +1,88 @@
+root {
+ "id": "619d169a4b26f130519b22b906fe40b9465863d4cc99ed186898b0ddcb377b23",
+ "pubkey": "8703287e3aa93514c328e3b18431d2d7d83938e7fd9b6782b741af70a48bdcf7",
+ "sig": "ba8ef003e14311a409c6ba09b752a5a4ee81de869f9dcdfebaf4464df4d260a4d3aa9de0839d7e93627d661030be0e9340842e32b72e42facbe5664d41b23c27",
+ "kind": 1,
+ "created_at": 1785542440,
+ "tags": [
+  [
+   "t",
+   "scrutiny-fabric"
+  ],
+  [
+   "t",
+   "scrutiny-product"
+  ],
+  [
+   "t",
+   "scrutiny-v0.8.0"
+  ],
+  [
+   "i",
+   "cc-pp:KECS-PP-1348-2025_PP_EN"
+  ],
+  [
+   "k",
+   "cc-pp"
+  ]
+ ],
+ "content": "Protection Profile: KECS-PP-1348-2025_PP_EN\nSource: https://www.commoncriteriaportal.org/nfs/ccpfiles/files/ppfiles/KECS-PP-1348-2025_PP_EN.pdf"
+}
+link {
+ "id": "e8d23a576a4edb9a92d3a36a507f546ab7acf316b1d56bd1049dbc9f559da168",
+ "pubkey": "8703287e3aa93514c328e3b18431d2d7d83938e7fd9b6782b741af70a48bdcf7",
+ "sig": "937c2141cc773cbd3d0f195972afa7fce945fd95eecbfba9388998f5f94dd7a880b68030d2aa3bcddf9cf7e150f2164b74a05adafea395af27d5100bd0ca320d",
+ "kind": 1,
+ "created_at": 1785542682,
+ "tags": [
+  [
+   "t",
+   "scrutiny-fabric"
+  ],
+  [
+   "t",
+   "scrutiny-metadata"
+  ],
+  [
+   "t",
+   "scrutiny-v0.8.0"
+  ]
+ ],
+ "content": "Claims conformance to protection profile: KECS-PP-1348-2025_PP_EN."
+}
+binding {
+ "id": "116ff0bc175156ebce8afc44fdd27409a1fe28a372ad199bcabfd6f11572049c",
+ "pubkey": "8703287e3aa93514c328e3b18431d2d7d83938e7fd9b6782b741af70a48bdcf7",
+ "sig": "875f7c4a6f0a2b65939129c1343713b0ba051c16a0d8a1376d6cd4c8fe695bfb5f06bd822f4f2839d78166c21b524468a68bf8f26b9a730c6ed7873e951b80db",
+ "kind": 1,
+ "created_at": 1785542683,
+ "tags": [
+  [
+   "t",
+   "scrutiny-fabric"
+  ],
+  [
+   "t",
+   "scrutiny-binding"
+  ],
+  [
+   "t",
+   "scrutiny-v0.8.0"
+  ],
+  [
+   "e",
+   "619d169a4b26f130519b22b906fe40b9465863d4cc99ed186898b0ddcb377b23",
+   "",
+   "root",
+   "8703287e3aa93514c328e3b18431d2d7d83938e7fd9b6782b741af70a48bdcf7"
+  ],
+  [
+   "e",
+   "e8d23a576a4edb9a92d3a36a507f546ab7acf316b1d56bd1049dbc9f559da168",
+   "",
+   "link",
+   "8703287e3aa93514c328e3b18431d2d7d83938e7fd9b6782b741af70a48bdcf7"
+  ]
+ ],
+ "content": "PP conformance edge."
+}

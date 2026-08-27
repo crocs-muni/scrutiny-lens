@@ -23,6 +23,7 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 # Local cache / temp files
-data/*.sqlite
+# Local SQLite database and runtime data (WAL files etc.)
+data/
 preview-*.log
 test-query-agent.mjs

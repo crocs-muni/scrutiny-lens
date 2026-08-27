@@ -1,41 +1,25 @@
-# Self-contained bundle: the relay (pre-seeded with the sec-certs corpus,
-# baked into the image -- no volume) + this explorer app.
-#
-# The relay image isn't built here: it's built from a separate repo
-# (scrutiny-mvp/packages/relay). Load the pre-built image once with:
-#   docker load -i scrutiny-relay-demo.tar.gz
-# (see the project's README for how that tarball is produced/obtained).
-#
-# Then, with your own LLM API key in a .env file (copy .env.example):
-#   docker compose up --build
-
 services:
   relay:
-    image: scrutiny-relay-demo:latest
+    # placeholder until relay image published
+    image: ghcr.io/crocs-muni/scrutiny-relay-demo:latest
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "--header=Accept: application/nostr+json", "http://127.0.0.1:8080/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
       interval: 3s
       timeout: 3s
       retries: 10
       start_period: 2s
 
   explorer:
-    build:
-      context: .
-      args:
-        # Must match the host port relay publishes above -- the BROWSER
-        # connects to this, not the explorer container, so it's `localhost`
-        # even though the two containers also reach each other by service
-        # name on the internal Docker network.
-        PUBLIC_RELAY_URL: ws://localhost:8080
+    build: .
     ports:
       - "5173:3000"
     environment:
       - API_KEY=${API_KEY}
       - BASE_URL=${BASE_URL:-https://llm.ai.e-infra.cz/v1}
       - MODEL=${MODEL:-coder}
+      - PUBLIC_RELAY_URLS=${PUBLIC_RELAY_URLS:-ws://localhost:8080/ws}
     depends_on:
       relay:
-        condition: service_healthy
+        condition: service_started

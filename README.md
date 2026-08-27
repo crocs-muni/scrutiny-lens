@@ -1,36 +1,39 @@
-# Scrutiny Lens
+# SCRUTINY Lens v2
 
-## Run with Docker
+SCRUTINY Lens explores Nostr session graphs and interprets them with an
+OpenAI-compatible LLM. Built on SvelteKit 2 + Svelte 5 (runes) + TypeScript
+strict, persisting to `node:sqlite`.
 
-```sh
-docker load -i scrutiny-relay-demo.tar.gz
-cp .env.example .env   # fill in API_KEY
-docker compose up --build
-```
-
-Open http://localhost:5173.
-
-## Run locally
+## Quickstart
 
 ```sh
 pnpm install
-cp .env.example .env   # fill in API_KEY
-pnpm dev
+cp .env.example .env   # fill in API_KEY (app degrades gracefully without it)
+pnpm dev          # http://localhost:5173
+pnpm check        # type-check (svelte-check)
+pnpm test         # vitest run
+pnpm build        # adapter-node build -> ./build
 ```
 
-Needs a relay running at `PUBLIC_RELAY_URL` (default `ws://127.0.0.1:8080`):
+## Environment
+
+| Variable            | Required | Default                          |
+| ------------------- | -------- | -------------------------------- |
+| `API_KEY`           | yes      | — (app degrades: `no_key`)       |
+| `BASE_URL`          | no       | `https://llm.ai.e-infra.cz/v1`   |
+| `MODEL`             | no       | `coder`                          |
+| `PUBLIC_RELAY_URLS` | no       | `ws://localhost:8080/ws`         |
+
+Browser BYOK (ADR-018): clients may pass a per-request provider override;
+override keys are never persisted or logged server-side.
+
+## Docker
 
 ```sh
-docker run -d -p 8080:8080 scrutiny-relay-demo:latest
+cp .env.example .env
+docker compose up --build   # explorer on :5173, relay on :8080
 ```
 
-Other scripts: `pnpm build`, `pnpm preview`, `pnpm check`, `pnpm test`.
+## License
 
-## Environment variables
-
-| Variable          | Required | Default                          |
-| ----------------- | -------- | --------------------------------- |
-| `API_KEY`          | yes      | —                                  |
-| `BASE_URL`         | no       | `https://llm.ai.e-infra.cz/v1`     |
-| `MODEL`            | no       | `coder`                           |
-| `PUBLIC_RELAY_URL` | no       | `ws://localhost:8080`             |
+See `LICENSE`.
