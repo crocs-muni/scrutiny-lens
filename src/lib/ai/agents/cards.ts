@@ -19,15 +19,15 @@ import {
 	type AIResult,
 	type AIKind,
 	type CallLLM
-} from '$lib/server/ai/output';
-import { writeDeadLetter } from '$lib/server/ai/cache';
+} from '../output';
+import { writeDeadLetter } from '../deadLetter';
 import {
 	projectSkeleton,
 	tagValues,
 	type SkeletonStats
-} from '$lib/server/ai/projector';
-import { buildSystemPrompt, DEFAULT_PROFILE } from '$lib/server/ai/prompts/vocabCcd';
-import type { NostrEvent } from '$lib/server/fabric';
+} from '../projector';
+import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
+import type { NostrEvent } from '$lib/fabric';
 
 export const BATCH_SIZE = 12;
 

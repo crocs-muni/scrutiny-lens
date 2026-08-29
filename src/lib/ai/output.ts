@@ -33,7 +33,7 @@
 import { z } from 'zod';
 import { generateText } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { getProviderConfig, type ProviderConfig, type ProviderOverrideInput } from '../provider';
+import { getProviderConfig, type ProviderConfig, type ProviderOverrideInput } from './provider';
 
 /** Honest-degradation contract: never throw on an LLM failure. */
 export type AIResult<T> =
@@ -157,10 +157,9 @@ export async function generateStructured<T>(opts: GenerateStructuredOptions<T>):
 
 	const provRes = getProviderConfig(provider);
 	if (!provRes.ok) {
-		return { ok: false, kind: 'invalid_request', message: provRes.issues.join('; ') };
-	}
-	if (!provRes.config.apiKey) {
-		return { ok: false, kind: 'no_key', message: 'No API key configured (set API_KEY or pass provider.apiKey)' };
+		return provRes.kind === 'no_key'
+			? { ok: false, kind: 'no_key', message: 'No API key set (open settings)' }
+			: { ok: false, kind: 'invalid_request', message: provRes.issues.join('; ') };
 	}
 
 	const call = callLLM ?? defaultCallLLM;

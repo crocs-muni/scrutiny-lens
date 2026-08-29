@@ -5,7 +5,7 @@
  *   1. System prompt: ground EVERY claim to a visible node with the inline
  *      marker `[N]{"eventId":"<id>","quote":"<verbatim>"}`; if the question is
  *      not answerable from the visible nodes, emit the single-line sentinel
- *      `UNGROUNDED {"availableContext":"…","followUps":[…]}` — never fabricate.
+ *      `UNGROUNDED {"availableContext":"…"}` — never fabricate.
  *   2. Stream raw model text (streamText → textStream; injectable via
  *      `streamLLM`). Deltas are forwarded as SSE frames as they arrive — only
  *      the ≤10-char sentinel-prefix ambiguity is ever buffered, never
@@ -16,12 +16,12 @@
  *      Unresolvable markers are dropped from the final content; extrapolatory
  *      citations stay but are marked unverified with support 'extrapolatory'.
  *   4. A single final SSE frame carries the resolved content, citations[],
- *      claimsSummary and followUps — emitted only after marker resolution.
+ *      claimsSummary — emitted only after marker resolution.
  *
  * SSE frames emitted on the returned ReadableStream:
  *   data: {"type":"delta","text":"…"}
- *   data: {"type":"final","content":"…","citations":[…],"claimsSummary":{…},"followUps":[…]}
- *   data: {"type":"final","kind":"ungrounded","question":"…","availableContext":"…","followUps":[…]}
+ *   data: {"type":"final","content":"…","citations":[…],"claimsSummary":{…}}
+ *   data: {"type":"final","kind":"ungrounded","question":"…","availableContext":"…"}
  *   data: {"type":"error","message":"…"}
  *
  * Abort: the caller's abortSignal (client disconnect) is propagated into the
@@ -32,7 +32,7 @@
 import { streamText } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
-import type { CallLLM, CallLLMArgs, LLMMessage } from '../output';
+import type { CallLLMArgs, LLMMessage } from '../output';
 import { extractedGate, type ExtractionState } from '../verifier';
 import { createCitationRegistry, type Citation } from '../citationRegistry';
 import { bestIdentifier } from '../projector';
@@ -41,10 +41,8 @@ import {
 	getProviderConfig,
 	type ProviderConfig,
 	type ProviderOverrideInput
-} from '../../provider';
+} from '../provider';
 import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
-import { suggestFollowups, STATIC_FOLLOWUPS } from './followups';
-
 /** Injectable streaming transport — yields raw model text chunks as they arrive. Throws on transport failure. */
 export type StreamLLM = (args: CallLLMArgs) => AsyncIterable<string>;
 
@@ -63,8 +61,6 @@ export interface ChatGroundOptions {
 	abortSignal?: AbortSignal;
 	/** Test seam — chunked raw model text. Defaults to the streamText transport. */
 	streamLLM?: StreamLLM;
-	/** Test seam forwarded to the followups agent (keeps tests offline). */
-	callLLM?: CallLLM;
 }
 
 /** Resolved citation in a final chat frame (view-models.md §3.7). */
@@ -124,7 +120,7 @@ const GROUNDING_INSTRUCTIONS = [
 	'1. Ground EVERY factual claim to a visible node using the inline marker syntax: [N]{"eventId":"<event id>","quote":"<short quote>"}. N counts citations starting at 1.',
 	'2. The quote MUST be copied verbatim from the event content (a contiguous subset is acceptable). If you cannot quote it, do not make the claim.',
 	'3. Never fabricate event ids, identifiers, or quotes.',
-	`4. If the question cannot be answered from the visible nodes, reply with EXACTLY one line: ${UNGROUNDED_SENTINEL} {"availableContext":"<what the graph does contain>","followUps":["<up to 3 answerable questions>"]} — no other text.`
+	`4. If the question cannot be answered from the visible nodes, reply with EXACTLY one line: ${UNGROUNDED_SENTINEL} {"availableContext":"<what the graph does contain>"} — no other text.`
 ].join('\n');
 
 /* ------------------------------------------------------------------ *
@@ -227,7 +223,6 @@ function resolveFinal(
 
 const ungroundedPayloadSchema = z.object({
 	availableContext: z.string().min(1),
-	followUps: z.array(z.string().min(1).max(100)).max(3)
 });
 
 function ungroundedFrame(
@@ -248,13 +243,12 @@ function ungroundedFrame(
 	const payload = parsed.success
 		? parsed.data
 		: // Honest degrade: never fabricate context; fall back to the root summary.
-			{ availableContext: rootSummary, followUps: STATIC_FOLLOWUPS };
+			{ availableContext: rootSummary };
 	return frame({
 		type: 'final',
 		kind: 'ungrounded',
 		question,
-		availableContext: payload.availableContext,
-		followUps: payload.followUps
+		availableContext: payload.availableContext
 	});
 }
 
@@ -298,10 +292,11 @@ export function chatground(opts: ChatGroundOptions): ReadableStream<Uint8Array> 
 		try {
 			const provRes = getProviderConfig(opts.provider);
 			if (!provRes.ok) {
-				return fail(`invalid_request: ${provRes.issues.join('; ')}`);
-			}
-			if (!provRes.config.apiKey) {
-				return fail('no_key: No API key configured (set API_KEY or pass provider.apiKey)');
+				return fail(
+					provRes.kind === 'no_key'
+						? 'no_key: No API key set (open settings)'
+						: `invalid_request: ${provRes.issues.join('; ')}`
+				);
 			}
 			const provider: ProviderConfig = provRes.config;
 			const profile = opts.profile ?? DEFAULT_PROFILE;
@@ -359,24 +354,12 @@ export function chatground(opts: ChatGroundOptions): ReadableStream<Uint8Array> 
 
 			const { content, citations, claimsSummary } = resolveFinal(full, opts.visibleEvents);
 
-			// Follow-ups are always suggested — degrade is internal to the agent.
-			const follow = await suggestFollowups({
-				question: opts.question,
-				answer: content,
-				rootSummary: opts.rootSummary,
-				profile,
-				provider,
-				callLLM: opts.callLLM,
-				abortSignal: internal.signal
-			});
-
 			controller.enqueue(
 				frame({
 					type: 'final',
 					content,
 					citations,
-					...(claimsSummary ? { claimsSummary } : {}),
-					followUps: follow.ok ? follow.result : [...STATIC_FOLLOWUPS]
+					...(claimsSummary ? { claimsSummary } : {})
 				})
 			);
 			done();

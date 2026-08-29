@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { createCitationRegistry } from '$lib/server/ai/citationRegistry';
-import type { NostrEvent } from '$lib/server/fabric';
+import { createCitationRegistry } from '$lib/ai/citationRegistry';
+import type { NostrEvent } from '$lib/fabric';
 
 function event(id: string, content: string): NostrEvent {
 	return { id, sig: 'sig', pubkey: 'pk', created_at: 1700000000, kind: 1, tags: [], content };

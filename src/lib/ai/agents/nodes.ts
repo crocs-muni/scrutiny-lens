@@ -29,11 +29,11 @@ import {
 	type AIResult,
 	type CallLLM
 } from '../output';
-import { writeDeadLetter } from '../cache';
+import { writeDeadLetter } from '../deadLetter';
 import { bestIdentifier, projectSkeleton, tagValues } from '../projector';
 import { extractedGate } from '../verifier';
 import { resolveGraph, type GraphView, type NostrEvent } from '../../fabric';
-import type { ProviderOverrideInput } from '../../provider';
+import type { ProviderOverrideInput } from '../provider';
 import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
 import { IconTokenEnum } from './cards';
 

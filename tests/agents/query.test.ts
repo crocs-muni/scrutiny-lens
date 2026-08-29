@@ -1,11 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
-import { resetConfigCache } from '$lib/server/config';
-import type { CallLLM, CallLLMArgs } from '$lib/server/ai/output';
+import { describe, it, expect} from 'vitest';
+import type { CallLLM, CallLLMArgs } from '$lib/ai/output';
 import {
 	interpretQuery,
 	classifyQueryType,
 	KNOWN_INDEXER_PREFIXES
-} from '$lib/server/ai/agents/query';
+} from '$lib/ai/agents/query';
 
 const PROVIDER = { baseUrl: 'https://llm.example.com/v1', model: 'test-model', apiKey: 'test-key' };
 
@@ -203,19 +202,11 @@ describe('interpretQuery — schema gate and degradation', () => {
 	});
 
 	it('no API key surfaces as no_key without calling the LLM', async () => {
-		resetConfigCache();
-		vi.stubEnv('API_KEY', '');
-		vi.stubEnv('BASE_URL', 'https://llm.example.com/v1');
-		try {
-			const { call, calls } = fakeLLM('[]');
-			const res = await interpretQuery({ query: 'ROCA', callLLM: call });
-			expect(calls).toHaveLength(0);
-			expect(res.ok).toBe(false);
-			if (res.ok) return;
-			expect(res.kind).toBe('no_key');
-		} finally {
-			vi.unstubAllEnvs();
-			resetConfigCache();
-		}
+		const { call, calls } = fakeLLM('[]');
+		const res = await interpretQuery({ query: 'ROCA', callLLM: call });
+		expect(calls).toHaveLength(0);
+		expect(res.ok).toBe(false);
+		if (res.ok) return;
+		expect(res.kind).toBe('no_key');
 	});
 });
