@@ -2,45 +2,53 @@
 
 Read this before writing code. Violations of these rules are build-breaking.
 
-## Spec authority order
+## Spec authority
 
-1. `docs/prd.md` — goals, non-goals, success criteria
-2. `docs/journeys.md` — user journeys with acceptance criteria
-3. `docs/view-models.md` — zod schemas; the ONLY source of VM field truth
-4. `docs/architecture.md` — module map, invariants, ADRs
-5. `docs/component-registry.md` — VM→component mapping, icon taxonomy
-6. `docs/profiles.md` — domain profiles (prompt + facets + vocab config)
-7. `docs/api.md` — route contracts
-8. `docs/types.md` — shared types (NostrEvent, GraphView, Session, SearchFilter, Citation, ChatTurn, VM aliases)
-9. `docs/verification.md` — fixture/sskeleton→fill/Docker/citation-registry/vm_cache/empty-first-run contracts
-10. Protocol: `@scrutiny-fabric/core` + `docs/glossary.md` vocabulary
+`docs/spec.md` is the **only** spec. If code and spec disagree, spec wins; change the spec via its edit ritual (propose a line change → owner vetoes or accepts). Never silently.
 
-If code and spec disagree, spec wins. Change the spec via PR edit, never silently.
+The superseded 16-doc set was removed from the tree (git history preserves it). When in doubt, spec.md rules.
+
+## Product invariants (from spec.md — read it)
+
+- **No app server.** Static SPA; the browser talks to Nostr relays and the user's AI endpoint directly. No telemetry, analytics, or beacons; all assets self-hosted.
+- **Never lie (spec §2).** AI writes only: search translation, card texts, node titles/summaries, chat answers. Status, patch history, facets, counts, citation quotes, date comparisons are computed deterministically — never by AI. Chat quotes must match event content verbatim or the claim is dropped. AI failure → fallback that shows the event's own tags + first ~200 chars, marked "not interpreted". **Never fabricate placeholder text.**
+- **API key:** memory-only, never persisted (including inside anything serialized to IndexedDB), never logged; sent only to the user's configured endpoint.
 
 ## Hard rules
 
 - **Svelte 5 runes only.** `$state`, `$derived`, `$effect`, `$props()`. No legacy `export let`, no stores API for cross-component state.
-- **All `i`/`k` tag constants and protocol shapes come from `@scrutiny-fabric/core`** — never hand-rolled.
-- **API_KEY never leaves the server.** `$env/dynamic/private` only. **User-supplied API keys are never persisted nor logged server-side** — they exist only inside request lifecycle (ADR-018). Public relay pool env is `PUBLIC_RELAY_URLS` (comma-separated 2–4).
-- **Every `{@html}` path sanitizes via DOMPurify** and every interpolated attribute escapes via the shared `escapeAttr`.
-- **Every POST body zod-parsed at the route boundary** before any agent logic.
-- **Real streaming** for chat (SSE `text/event-stream`); abortSignal threaded from client disconnect to LLM call; timeout clears only after stream close.
-- **AI never picks icons/colors/layout.** Model picks `IconToken`/`TypeToken` from closed enums; `ICON_MAP`/registry maps to visuals.
-- **Component registry is the only place `vm.kind` selects a component.** No `if kind ===` outside the registry.
-- **Components never see the provenance envelope** — props are `vm.content` fields only.
-- **Degradation is honest**: LLM down → deterministic skeleton + `uninterpreted` label; unverified quote → `not-verbatim` mark; never silently fabricate.
-- **Edges come from the protocol resolver only** (`core.resolve`/`admit`), never from AI inference.
+- **All protocol work via `@scrutiny-fabric/core`** (validate/resolve/admit/store/query + tag constants) — never hand-rolled. The only app-owned protocol code is the verification shim (Schnorr verify via `@noble/curves` + id recompute) and relay transport.
+- **Edges come from protocol resolution only** (bindings), never from AI inference.
+- **Patch content only through `core.resolve()`** — no direct `jsdiff`/`git apply` on patch payloads.
 - **nostr-tools for all relay I/O.** No `@nostr-dev-kit/ndk` imports anywhere (forbidden; CI greps).
-- **Updates flow through core's patch gate** — no direct application of `jsdiff`/`git apply` to patch payloads (determinism rule PB-1/PB-2; D32-style reasoning in core README).
 - **kebab-case t tags only** (`scrutiny-product`, never `scrutiny_product`) — TAG-4.
+- **Chat/markdown HTML:** rendered via `marked` + DOMPurify; every `{@html}` path sanitizes.
+- **AI surfaces are conformance-tested**: code asserting AI input/output matches spec §2 rule 1 must pass — adding an AI-written field requires a spec line first.
+- **Config, not constants:** relay pool (2–4) and AI endpoint defaults come from config/env (see `.env.example`); no secrets exist in this app.
+
+## UI rules
+
+- Components in `src/lib/ui/` are **vendored forks** of [beautiful-ui-svelte](https://github.com/aykoooo/beautiful-ui-svelte) (MIT), made data-driven — improve upstream via PR, don't drift the fork silently.
+- **bits-ui** headless primitives for Combobox/Tooltip/ScrollArea/Popover/Progress.
+- Graph canvas: `@xyflow/svelte`, in-app (not the library).
+- Writing rule: **monospace = machine-made/verified (ids, tags, hashes, quotes); sans = AI-written prose.**
 
 ## Conventions
 
-- pnpm; `pnpm check` must be 0 errors; `pnpm test` per-module specs required for every shared lib module.
-- Comments explain **why**, not what; cite spec rule ids (e.g., `// SIG-1`) where applicable.
-- Conventional commits (`feat:`, `fix:`, `docs:`, …). No sign-offs, no Co-Authored-By.
-- Env contract: `API_KEY` (required), `BASE_URL`, `MODEL`, `PUBLIC_RELAY_URL` — see `.env.example`.
+- pnpm; `pnpm check` must be 0 errors.
+- Comments explain **why**, not what; cite spec.md sections (e.g., `// spec §2 rule 5`).
 
-## For LLM/doc agents
+## Workflow
 
-`llms.txt` indexes the docs. When consuming spec docs, read `docs/view-models.md` schemas as zod source of truth; examples in each VM section are canonical expected outputs.
+- **Issue first.** Every unit of work = a GitHub issue (fine-grained, per feature): title + ≤5 bullets (goal, acceptance, spec lines touched). No issue, no code.
+- **Branch** `<type>/<N>-<slug>` (feat/fix/chore/docs/test/refactor). Free to commit/push/open PRs on feature branches. Never push to main, never force-push.
+- **TDD where it pays:** trust gates (zod shapes, verifier, citations, query translation, fabric seam, cache) get a failing test first. UI is browser-verified visually.
+- **Review pass before PR:** run `simplify`, then `code-review` (adversarial). Fix findings or file follow-ups.
+- **PR:** draft early `Refs #N`; body = What / Why / Verification / Out of scope (+ screenshots for UI); ready → `Closes #N`. Small, one idea, ~200–400 lines.
+- **Merge by agent only after owner's explicit chat approval.** Never push to main directly.
+- **Board:** labels = type + `in-progress`/`blocked` only; `Stuck:` comment when blocked. No milestones.
+- **Voice:** conventional commits, imperative, ≤72-char subject; no sign-offs or AI attribution; no slop words ("comprehensive", "robust", "leverage", "seamless", "This PR"); spec changes are separate `docs:` commits, never smuggled into code PRs.
+
+## SDK feedback loop (desired, not optional)
+
+scrutiny-lens is the **first consumer** of `@scrutiny-fabric/core`, and the owner is its solo maintainer — using it is supposed to refine it. When the SDK is missing something, behaves wrong, or its API could be better: **file a GitHub issue on crocs-muni/scrutiny-fabric-tools** (or fork/PR if trivial) and work around minimally in-lens with a comment linking the issue. Never silently fork the protocol behavior inside the app.
