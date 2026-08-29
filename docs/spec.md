@@ -1,6 +1,6 @@
 # SCRUTINY Lens — Spec (v2, cycle 1)
 
-> Single source of truth for the current build cycle. Supersedes the 16-doc set (reference material only). Edit ritual: propose line change → owner vetoes or accepts → line changes. No side documents.
+> Single source of truth for the current build cycle. Supersedes the 16-doc set (removed from the tree; git history preserves them). Edit ritual: propose line change → owner vetoes or accepts → line changes. No side documents.
 > Review panel 2026-08-29 (7 agents): applied findings; rejected items are listed in §12.
 
 ## 0. Vocabulary (the whole data model)

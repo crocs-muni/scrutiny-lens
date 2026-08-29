@@ -6,7 +6,7 @@ Read this before writing code. Violations of these rules are build-breaking.
 
 `docs/spec.md` is the **only** spec. If code and spec disagree, spec wins; change the spec via its edit ritual (propose a line change → owner vetoes or accepts). Never silently.
 
-Everything else under `docs/` (prd.md, journeys.md, view-models.md, architecture.md, api.md, verification.md, …) is **historical reference from the superseded 16-doc set** — useful context, not requirements. When in doubt, spec.md rules.
+The superseded 16-doc set was removed from the tree (git history preserves it). When in doubt, spec.md rules.
 
 ## Product invariants (from spec.md — read it)
 

@@ -27,3 +27,9 @@ vite.config.ts.timestamp-*
 data/
 preview-*.log
 test-query-agent.mjs
+
+# local design + research material (not published)
+research/
+docs/*.html
+fixtures/RELAY-NOTES.md
+.claude/
