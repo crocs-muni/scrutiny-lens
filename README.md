@@ -7,25 +7,48 @@ Svelte 5 (runes) + TypeScript strict. Spec: `docs/spec.md`.
 
 ## Quickstart
 
-Requires the sibling `scrutiny-fabric-tools` checkout (`@scrutiny-fabric/core`
-is a `file:` dependency — see spec §8).
+Requires Node >=22.12 and the sibling `scrutiny-fabric-tools` checkout beside
+this repo (`@scrutiny-fabric/core` is a `file:` dependency — see spec §8). The
+sibling's `packages/core` must be **built** (`pnpm install && pnpm build`
+inside it) — its exports point at `dist/`.
 
 ```sh
 pnpm install
 pnpm dev          # http://localhost:5173
 pnpm check        # type-check (svelte-check)
 pnpm test         # vitest run
-pnpm build        # production build -> ./build (adapter-static lands with issue #9)
+pnpm build        # static bundle -> ./build (adapter-static)
 ```
 
 ## Deploy
 
-Serve `build/` with any static file server. Path-style share links
-(`/event/nevent1…`) need one SPA fallback rule, e.g. nginx:
+The build is a pure SPA: `build/index.html` is the fallback page for every URL
+(spec §8), so the site runs on any static file server at root mount. A postbuild
+step also copies it to `build/404.html` for GitHub Pages, and
+`static/.nojekyll` ships so `_app/` assets are published.
 
-```nginx
-location / { try_files $uri $uri/ /index.html; }
-```
+- **GitHub Pages:** serve `build/` as-is (decision record: issue #16). Deep
+  links (`/event/nevent1…`) boot via `404.html` (unmatched paths return HTTP
+  404 status — a soft-404). Project-site deployments
+  (`<org>.github.io/<repo>`) must build with `BASE_PATH=/<repo>` so asset and
+  router paths are prefixed.
+- **nginx:** one host rule serves deep links:
+
+  ```nginx
+  location / {
+      try_files $uri $uri/ /index.html;
+  }
+  ```
+
+- **Apache:** the shipped `static/.htaccess` (`FallbackResource /index.html`)
+  handles it without mod_rewrite.
+
+Caching contract: `_app/immutable/*` is content-hashed — long-cache it
+(`immutable, max-age=31536000`); `index.html` must revalidate
+(`no-cache, must-revalidate`), or redeploys serve a stale module graph.
+
+Subpath hosting anywhere (`/~user/lens/`) requires rebuilding with
+`BASE_PATH` set — `kit.paths.base` is a build-time constant.
 
 ## Configuration
 

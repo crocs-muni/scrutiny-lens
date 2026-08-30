@@ -13,7 +13,7 @@
 
 ## 1. What it is
 
-A public, static website. No app server, no login — no first-party telemetry, analytics, or beacons (the static host unavoidably sees page loads). Deployed on academic servers; any static host works.
+A public, static website. No app server, no login — no first-party telemetry, analytics, or beacons (the static host unavoidably sees page loads). Deployed on GitHub Pages; any static host works.
 
 Analyst asks in plain English ("ROCA vulnerability in Infineon chips") or drops an identifier (CVE, package URL, GHSA, cert id… → routed **directly** to a tag query, never through AI). The browser asks public Nostr relays for matching SCRUTINY events, verifies each (Schnorr signature + id recompute — a shim we own; the SDK deliberately ships no default verifier), builds the product graph via `@scrutiny-fabric/core` (`createStore`, `resolve`, `computeAdmission`), and AI writes the readable layer: search translation, card texts, node titles/summaries, chat answers with citations.
 
@@ -78,7 +78,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 
 ## 8. Engineering
 
-- One SvelteKit 2 app, `adapter-static` with SPA fallback page, deployed on academic servers. Path URLs (`/event/…`) need one host-level rule (nginx `try_files … /index.html`); document it in README. Svelte 5 runes only.
+- One SvelteKit 2 app, `adapter-static` with SPA fallback page, deployed on GitHub Pages. The SPA fallback is `index.html`; the build also emits a copy as `404.html`, which is what Pages serves on unmatched paths (deep links return HTTP 404 status). Requires `.nojekyll` in the bundle; project-site mounts build with `kit.paths.base` set. Svelte 5 runes only.
 - `@scrutiny-fabric/core` consumed as a local `file:` dep on the sibling repo for now (SDK repo is private — a git-SHA pin resolves nowhere for other machines). When the repo goes public: switch to git-SHA pin + SDK `prepare` script. Later: npm publish. Any deploy before that requires the sibling checkout present at build time (document in README). All protocol work via the SDK; the only app-owned protocol code is the mandated verification shim (Schnorr verify via `@noble/curves` + id recompute) and relay transport.
 - `nostr-tools` relay pool (list from config/env (no hardcoded addresses yet; shipped defaults TBD when the canonical SCRUTINY relays are known), 2–4 entries, user-editable; per-relay status surfaced).
 - Server runtime deleted; ported to client: AI agents (query/cards/nodes/chat), zod gates, verifier, citation registry, transport. `db.ts`/`cache.ts` die → IndexedDB. The followups agent dies (chat suggests follow-ups inline if ever needed).
