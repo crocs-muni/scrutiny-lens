@@ -95,7 +95,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 - Citations: numbered inline pills à la Vercel AI Elements inline-citation (hover → source card with verbatim quote), plus the coordination store ringing the graph node.
 - New components: SidebarRecents (extend SidebarNav: query, timestamp, unseen dot, close), ResultCard (seed: RecommendationCard), FacetGroup (checkbox+count rows; seed: SearchList+ToolChips), ChatMessage + SourceList (citation pills), CitationMark (colored underline from GlideHighlight) **plus a citation-coordination store** linking pill ↔ prose span ↔ graph-node ring, InspectorStrip (top strip over the canvas: node detail + citations + patch history, collapsible like the side rails), Timeline (patch history entries), EmptyState, KeyField, RelayDot.
 - Writing rule: **monospace = machine-made/verified (ids, tags, hashes, quotes); sans = AI-written prose.**
-- Components we expect to need from the library are tracked as an issue on beautiful-ui-svelte (not in this spec).
+- Components we expect to need from the library are tracked as aykoooo/beautiful-ui-svelte#1.
 
 ## 10. Scope
 
@@ -105,7 +105,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 
 ## 11. Build order (each step ships usable)
 
-1. Shell: delete server, static build, **vendored UI data-driven pass**, settings (endpoint/key/model/relays), IndexedDB persistence.
+1. Shell: delete server, static build, **library data-driven pass (upstream)**, settings (endpoint/key/model/relays), IndexedDB persistence.
 2. Search → fetch (capability-aware) → cards (AI + fallback) + facet sidebar + edge states.
 3. Graph + InspectorStrip (detail, patch history, retractions, chain states).
 4. Chat with verified citations + coordination store.
