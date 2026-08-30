@@ -28,7 +28,7 @@ The superseded 16-doc set was removed from the tree (git history preserves it). 
 
 ## UI rules
 
-- Components in `src/lib/ui/` are **vendored forks** of [beautiful-ui-svelte](https://github.com/aykoooo/beautiful-ui-svelte) (MIT), made data-driven — improve upstream via PR, don't drift the fork silently.
+- Component library: [beautiful-ui-svelte](https://github.com/aykoooo/beautiful-ui-svelte) (MIT, sibling dep). Improve upstream via PR — never fork components into this repo.
 - **bits-ui** headless primitives for Combobox/Tooltip/ScrollArea/Popover/Progress.
 - Graph canvas: `@xyflow/svelte`, in-app (not the library).
 - Writing rule: **monospace = machine-made/verified (ids, tags, hashes, quotes); sans = AI-written prose.**

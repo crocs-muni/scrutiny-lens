@@ -87,7 +87,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 
 ## 9. UI
 
-- Vendor `beautiful-ui-svelte` into `src/lib/ui/` = **fork, not copy**: its components are no-props Storybook demos; the vendoring pass makes each used component data-driven (props/snippets) and drops baked-in demo content. Budgeted inside §11 step 1.
+- Consume `beautiful-ui-svelte` as the component library (local sibling dep now, git/npm when public). Its demo components need a data-driven pass and missing atoms ported — that work is tracked in THAT repo, budgeted inside §11 step 1. No component forks in this repo.
 - Design board (`Downloads/Scrutiny Session Explorer/*.dc.html`) = wireframe (owner refines); beautiful-ui = skin; harness = vibe.
 - bits-ui headless for: Combobox (model picker), Tooltip, ScrollArea, Popover (share), Progress.
 - Port upstream atoms: Chip, StatusPill, ValuePill, EntityChip, TextRow, SegmentedControl, Switch, Shimmer.
@@ -95,6 +95,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 - Citations: numbered inline pills à la Vercel AI Elements inline-citation (hover → source card with verbatim quote), plus the coordination store ringing the graph node.
 - New components: SidebarRecents (extend SidebarNav: query, timestamp, unseen dot, close), ResultCard (seed: RecommendationCard), FacetGroup (checkbox+count rows; seed: SearchList+ToolChips), ChatMessage + SourceList (citation pills), CitationMark (colored underline from GlideHighlight) **plus a citation-coordination store** linking pill ↔ prose span ↔ graph-node ring, InspectorStrip (top strip over the canvas: node detail + citations + patch history, collapsible like the side rails), Timeline (patch history entries), EmptyState, KeyField, RelayDot.
 - Writing rule: **monospace = machine-made/verified (ids, tags, hashes, quotes); sans = AI-written prose.**
+- Components we expect to need from the library are tracked as aykoooo/beautiful-ui-svelte#1.
 
 ## 10. Scope
 
@@ -104,7 +105,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 
 ## 11. Build order (each step ships usable)
 
-1. Shell: delete server, static build, **vendored UI data-driven pass**, settings (endpoint/key/model/relays), IndexedDB persistence.
+1. Shell: delete server, static build, **library data-driven pass (upstream)**, settings (endpoint/key/model/relays), IndexedDB persistence.
 2. Search → fetch (capability-aware) → cards (AI + fallback) + facet sidebar + edge states.
 3. Graph + InspectorStrip (detail, patch history, retractions, chain states).
 4. Chat with verified citations + coordination store.
