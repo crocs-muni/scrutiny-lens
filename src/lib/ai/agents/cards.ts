@@ -9,8 +9,7 @@
  * never fails because one item was bad. Only a whole-page LLM/schema
  * failure surfaces as an error result.
  *
- * Offline-testable: `callLLM` is injectable and `setCacheDb` provides an
- * isolated DB for dead_letter.
+ * Offline-testable: `callLLM` is injectable and rejected artifacts land in an in-memory dead-letter ring (Persistent store: issue #12).
  */
 
 import { z } from 'zod';
@@ -27,7 +26,7 @@ import {
 	type SkeletonStats
 } from '../projector';
 import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
-import type { NostrEvent } from '$lib/fabric';
+import type { NostrEvent } from '../../fabric';
 
 export const BATCH_SIZE = 12;
 
@@ -316,15 +315,15 @@ export function validateMatchReasons(
 		const reason = r.trim();
 		if (rebinds(reason, input)) out.push(reason);
 		else {
-			writeDeadLetter(
-				CARD_ENTITY_TYPE,
-				input.entityId,
-				SCHEMA_VERSION,
-				input.profile,
-				input.model,
-				{ reason },
-				`unverifiable match reason: ${reason}`
-			);
+			writeDeadLetter({
+				entityType: CARD_ENTITY_TYPE,
+				entityId: input.entityId,
+				schemaVersion: SCHEMA_VERSION,
+				profile: input.profile,
+				model: input.model,
+				payload: { reason },
+				reason: `unverifiable match reason: ${reason}`
+			});
 		}
 	}
 	return out.slice(0, 3);
@@ -488,15 +487,15 @@ function finalizeCard(
 		if (sr.ok && sr.snippet) {
 			snippet = sr.snippet;
 		} else if (!sr.ok) {
-			writeDeadLetter(
-				CARD_ENTITY_TYPE,
-				ctx.entityId,
-				SCHEMA_VERSION,
-				ctx.profile,
-				ctx.model,
-				{ text: draft.snippet.text, highlights: draft.snippet.highlights },
-				`snippet ${sr.rule}`
-			);
+			writeDeadLetter({
+				entityType: CARD_ENTITY_TYPE,
+				entityId: ctx.entityId,
+				schemaVersion: SCHEMA_VERSION,
+				profile: ctx.profile,
+				model: ctx.model,
+				payload: { text: draft.snippet.text, highlights: draft.snippet.highlights },
+				reason: `snippet ${sr.rule}`
+			});
 		}
 	}
 
@@ -526,7 +525,15 @@ function finalizeCard(
 	const reason = parsed.error.issues
 		.map((iss) => `${iss.path.join('.') || '(root)'}: ${iss.message}`)
 		.join('; ');
-	writeDeadLetter(CARD_ENTITY_TYPE, ctx.entityId, SCHEMA_VERSION, ctx.profile, ctx.model, candidate, `card validation failed: ${reason}`);
+	writeDeadLetter({
+		entityType: CARD_ENTITY_TYPE,
+		entityId: ctx.entityId,
+		schemaVersion: SCHEMA_VERSION,
+		profile: ctx.profile,
+		model: ctx.model,
+		payload: candidate,
+		reason: `card validation failed: ${reason}`
+	});
 	return degradedCard(graph, query, ctx);
 }
 
@@ -550,7 +557,7 @@ export async function interpretCards(
 	const graphs = opts.graphs;
 	const query = opts.query;
 	const profile = opts.profile ?? DEFAULT_PROFILE;
-	const model = opts.provider?.model ?? 'env';
+	const model = opts.provider?.model ?? 'unspecified';
 	const system = buildSystemPrompt({ profile });
 
 	const cards: CardVM[] = [];

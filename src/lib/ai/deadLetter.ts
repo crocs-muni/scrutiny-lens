@@ -18,27 +18,10 @@ export interface DeadLetterEntry {
 const MAX_ENTRIES = 200;
 const ring: DeadLetterEntry[] = [];
 
-export function writeDeadLetter(
-	entityType: string,
-	entityId: string,
-	schemaVersion: string,
-	profile: string,
-	model: string,
-	payload: unknown,
-	reason: string
-): void {
-	ring.push({
-		entityType,
-		entityId,
-		schemaVersion,
-		profile,
-		model,
-		payload,
-		reason,
-		at: Date.now()
-	});
+export function writeDeadLetter(entry: Omit<DeadLetterEntry, 'at'>): void {
+	ring.push({ ...entry, at: Date.now() });
 	if (ring.length > MAX_ENTRIES) ring.shift();
-	console.warn(`[dead-letter] ${entityType}:${entityId} — ${reason}`);
+	console.warn(`[dead-letter] ${entry.entityType}:${entry.entityId} — ${entry.reason}`);
 }
 
 export function deadLetters(): readonly DeadLetterEntry[] {

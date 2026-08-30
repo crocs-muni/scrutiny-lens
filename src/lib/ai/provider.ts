@@ -1,4 +1,8 @@
 import { z } from 'zod';
+
+/** Shared copy for every consumer surfacing a missing BYOK key. */
+export const NO_KEY_MESSAGE = 'No API key set (open settings)';
+
 export interface ProviderConfig {
 	name: string;
 	baseUrl: string;

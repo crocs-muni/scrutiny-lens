@@ -40,7 +40,8 @@ import type { NostrEvent } from '../../fabric';
 import {
 	getProviderConfig,
 	type ProviderConfig,
-	type ProviderOverrideInput
+	type ProviderOverrideInput,
+	NO_KEY_MESSAGE
 } from '../provider';
 import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
 /** Injectable streaming transport — yields raw model text chunks as they arrive. Throws on transport failure. */
@@ -294,7 +295,7 @@ export function chatground(opts: ChatGroundOptions): ReadableStream<Uint8Array> 
 			if (!provRes.ok) {
 				return fail(
 					provRes.kind === 'no_key'
-						? 'no_key: No API key set (open settings)'
+						? `no_key: ${NO_KEY_MESSAGE}`
 						: `invalid_request: ${provRes.issues.join('; ')}`
 				);
 			}

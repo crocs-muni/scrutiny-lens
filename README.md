@@ -29,9 +29,9 @@ location / { try_files $uri $uri/ /index.html; }
 
 ## Configuration
 
-Defaults come from env at build time (see `.env.example`): relay list and the
-default LLM endpoint. The AI key is entered in the app's settings, kept in
-memory for the tab only, and sent only to the endpoint the user configured.
+Config surface lands with issue #11 (`PUBLIC_RELAY_URLS` defaults, settings
+dialog). The AI key will be entered in settings, kept in memory for the tab
+only, and sent only to the endpoint the user configures.
 
 ## License
 

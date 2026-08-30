@@ -254,7 +254,7 @@ class RelayTransport implements Transport {
  * Default pool: a real nostr-tools SimplePool. `enableReconnect: false` because
  * reconnection policy belongs to the caller (a failed relay is reported
  * 'refused'/'timeout' and the UI decides whether to retry), and reconnect timers
- * would keep handles alive in the server process.
+ * would keep handles alive in the browser tab past the page's lifetime.
  */
 const defaultPoolFactory: PoolFactory = () => new SimplePool({ enableReconnect: false });
 

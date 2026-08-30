@@ -157,7 +157,7 @@ describe('chatground — streaming frames', () => {
 describe('chatground — ungrounded', () => {
 	it('unanswerable question returns a non-streaming UngroundedStateVM final frame', async () => {
 		const { stream } = fakeStream([
-			'UNGROUNDED {"availableContext":"Only certificate metadata is visible on this graph.","followUps":["Which products are bound to ROCA?","Show archived nodes."]}'
+			'UNGROUNDED {"availableContext":"Only certificate metadata is visible on this graph."}'
 		]);
 		const frames = await readFrames(
 			chatground(baseOpts({ question: 'What is the weather?', streamLLM: stream }))

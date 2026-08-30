@@ -406,15 +406,15 @@ function finalizeNode(
 				const gate = extractedGate(summary, event.content);
 				if (gate.state === 'extrapolatory') {
 					// Quote verification failed: the summary cites nothing on the event.
-					writeDeadLetter(
-						NODE_ENTITY_TYPE,
-						ctx.entityId,
-						SCHEMA_VERSION,
-						ctx.profile,
-						ctx.model,
-						{ summary: draft?.summary },
-						'summary extrapolatory (quote gate found no contiguous match in event content)'
-					);
+					writeDeadLetter({
+						entityType: NODE_ENTITY_TYPE,
+						entityId: ctx.entityId,
+						schemaVersion: SCHEMA_VERSION,
+						profile: ctx.profile,
+						model: ctx.model,
+						payload: { summary: draft?.summary },
+						reason: 'summary extrapolatory (quote gate found no contiguous match in event content)'
+					});
 					summary = '';
 				}
 			}
@@ -438,15 +438,15 @@ function finalizeNode(
 	const reason = parsed.error.issues
 		.map((iss) => `${iss.path.join('.') || '(root)'}: ${iss.message}`)
 		.join('; ');
-	writeDeadLetter(
-		NODE_ENTITY_TYPE,
-		ctx.entityId,
-		SCHEMA_VERSION,
-		ctx.profile,
-		ctx.model,
-		candidate,
-		`node validation failed: ${reason}`
-	);
+	writeDeadLetter({
+		entityType: NODE_ENTITY_TYPE,
+		entityId: ctx.entityId,
+		schemaVersion: SCHEMA_VERSION,
+		profile: ctx.profile,
+		model: ctx.model,
+		payload: candidate,
+		reason: `node validation failed: ${reason}`
+	});
 	return degradedNode(event, det);
 }
 
@@ -466,7 +466,7 @@ export async function batchNodeInterpret(
 	const events = opts.events;
 	const view = resolveGraph(events);
 	const profile = opts.profile ?? DEFAULT_PROFILE;
-	const model = opts.provider?.model ?? 'env';
+	const model = opts.provider?.model ?? 'unspecified';
 	const system = buildSystemPrompt({ profile });
 
 	const dets = events.map((e) => buildDeterministic(e, view, events));
