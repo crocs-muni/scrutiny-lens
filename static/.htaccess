@@ -1,0 +1,5 @@
+# SPA fallback (spec §8): any path that is not a real file boots the app shell.
+# FallbackResource works without mod_rewrite (frequently blocked by
+# AllowOverride on shared hosting). Under subpath hosting (/~user/lens/) the target
+# must be the full URL path, e.g. FallbackResource /~user/lens/index.html.
+FallbackResource /index.html
