@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { tagGate, extractedGate, type VerificationSource } from '$lib/server/ai/verifier';
-import type { NostrEvent } from '$lib/server/fabric';
+import { tagGate, extractedGate, type VerificationSource } from '$lib/ai/verifier';
+import type { NostrEvent } from '$lib/fabric';
 
 function ev(tags: string[][], content = ''): NostrEvent {
 	return { id: 'a'.repeat(64), sig: 'b'.repeat(128), pubkey: 'c'.repeat(64), created_at: 1, kind: 1, tags, content };

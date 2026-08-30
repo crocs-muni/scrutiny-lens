@@ -22,7 +22,7 @@ import {
 	resolveGraph,
 	validateAndClassify,
 	type NostrEvent
-} from '$lib/server/fabric';
+} from '$lib/fabric';
 
 const PUBKEY = '8703287e3aa93514c328e3b18431d2d7d83938e7fd9b6782b741af70a48bdcf7';
 

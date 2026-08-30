@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import type { NostrEvent } from '$lib/server/fabric';
-import type { CallLLMArgs } from '$lib/server/ai/output';
-import { chatground, type StreamLLM } from '$lib/server/ai/agents/chat';
+import type { NostrEvent } from '$lib/fabric';
+import type { CallLLMArgs } from '$lib/ai/output';
+import { chatground, type StreamLLM } from '$lib/ai/agents/chat';
 
 const PROVIDER = { baseUrl: 'https://llm.example.com/v1', model: 'test-model', apiKey: 'test-key' };
 
@@ -59,7 +59,6 @@ function baseOpts(over: Partial<Parameters<typeof chatground>[0]> = {}): Paramet
 		visibleEvents: EVENTS,
 		rootSummary: 'Infineon M7794 · ROCA exposure',
 		provider: PROVIDER,
-		callLLM: async () => 'never used', // followups injection stays offline
 		...over
 	};
 }
@@ -158,7 +157,7 @@ describe('chatground — streaming frames', () => {
 describe('chatground — ungrounded', () => {
 	it('unanswerable question returns a non-streaming UngroundedStateVM final frame', async () => {
 		const { stream } = fakeStream([
-			'UNGROUNDED {"availableContext":"Only certificate metadata is visible on this graph.","followUps":["Which products are bound to ROCA?","Show archived nodes."]}'
+			'UNGROUNDED {"availableContext":"Only certificate metadata is visible on this graph."}'
 		]);
 		const frames = await readFrames(
 			chatground(baseOpts({ question: 'What is the weather?', streamLLM: stream }))
@@ -172,10 +171,9 @@ describe('chatground — ungrounded', () => {
 		expect(final.kind).toBe('ungrounded');
 		expect(final.question).toBe('What is the weather?');
 		expect(final.availableContext).toBe('Only certificate metadata is visible on this graph.');
-		expect(final.followUps).toEqual(['Which products are bound to ROCA?', 'Show archived nodes.']);
 	});
 
-	it('malformed ungrounded payload degrades honestly to rootSummary + static follow-ups', async () => {
+	it('malformed ungrounded payload degrades honestly to rootSummary', async () => {
 		const { stream } = fakeStream(['UNGROUNDED not json at all']);
 		const frames = await readFrames(
 			chatground(baseOpts({ question: 'Unanswerable thing', streamLLM: stream }))
@@ -184,7 +182,6 @@ describe('chatground — ungrounded', () => {
 		const final = frames[0];
 		expect(final.kind).toBe('ungrounded');
 		expect(final.availableContext).toBe('Infineon M7794 · ROCA exposure');
-		expect((final.followUps as string[]).length).toBeGreaterThan(0);
 	});
 });
 

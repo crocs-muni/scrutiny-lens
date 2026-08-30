@@ -1,11 +1,11 @@
 /**
  * SCRUTINY Lens v2 — fabric protocol seam (wave W2).
  *
- * Server-only module: `@scrutiny-fabric/core` and `@noble/hashes` must NEVER be
- * imported outside src/lib/server/**. Core is sans-IO and crypto-free by design
+ * Client-side fabric seam. Core is sans-IO and crypto-free by design
  * (its README/D12): SHA-256 must be injected, and it never verifies schnorr
- * signatures — relay-trusted sigs come from W1 transport; what this seam adds
- * on top is the NIP-01 id recompute (tamper detection) plus protocol validation.
+ * signatures — full SIG-1 (schnorr verify via @noble/curves + id recompute)
+ * lands with the store integration (spec §8); this seam currently adds the
+ * NIP-01 id recompute (tamper detection) plus protocol validation.
  *
  * ── W2 verification: actual @scrutiny-fabric/core 0.1.0 API surface ──────────
  * Verified against packages/core/etc/api-report.api.md (spec v0.8.1):

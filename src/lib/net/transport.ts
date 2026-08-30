@@ -1,8 +1,7 @@
 /**
  * SCRUTINY Lens v2 — Nostr relay transport (wave W1).
  *
- * Server-only module: `nostr-tools` must NEVER be imported outside src/lib/server/**
- * so the client bundle stays free of websocket/relay code.
+ * Client-side relay transport: the browser talks to relays directly (spec §8).
  *
  * ── C2 verification: actual nostr-tools 2.25.0 API surface ─────────────────────
  * Verified against node_modules/nostr-tools/lib/types/*.d.ts and lib/esm/*.js:
@@ -255,7 +254,7 @@ class RelayTransport implements Transport {
  * Default pool: a real nostr-tools SimplePool. `enableReconnect: false` because
  * reconnection policy belongs to the caller (a failed relay is reported
  * 'refused'/'timeout' and the UI decides whether to retry), and reconnect timers
- * would keep handles alive in the server process.
+ * would keep handles alive in the browser tab past the page's lifetime.
  */
 const defaultPoolFactory: PoolFactory = () => new SimplePool({ enableReconnect: false });
 

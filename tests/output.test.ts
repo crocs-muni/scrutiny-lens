@@ -1,8 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
-import { generateStructured, type CallLLM, type CallLLMArgs } from '$lib/server/ai/output';
-import { resetConfigCache } from '$lib/server/config';
-
+import { generateStructured, type CallLLM, type CallLLMArgs } from '$lib/ai/output';
 const schema = z.object({ title: z.string(), count: z.number() });
 
 function fakeLLM(responses: string[]): { call: CallLLM; calls: CallLLMArgs[] } {
@@ -17,14 +15,6 @@ function fakeLLM(responses: string[]): { call: CallLLM; calls: CallLLMArgs[] } {
 }
 
 describe('generateStructured', () => {
-	beforeEach(() => {
-		resetConfigCache();
-		process.env.API_KEY = 'sk-test';
-		process.env.MODEL = 'coder';
-		process.env.BASE_URL = 'https://llm.ai.e-infra.cz/v1';
-		process.env.PUBLIC_RELAY_URLS = 'ws://localhost:8080/ws';
-	});
-
 	const provider = { baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' };
 
 	it('returns the parsed result on a clean schema-valid response', async () => {
@@ -58,9 +48,7 @@ describe('generateStructured', () => {
 		expect(retryPrompt.toLowerCase()).toContain('validation');
 	});
 
-	it('returns a degraded no_key result when no API key is configured', async () => {
-		process.env.API_KEY = '';
-		resetConfigCache();
+	it('returns a degraded no_key result when no provider is given', async () => {
 		const r = await generateStructured({ schema, messages: [] });
 		expect(r.ok).toBe(false);
 		if (!r.ok) expect(r.kind).toBe('no_key');

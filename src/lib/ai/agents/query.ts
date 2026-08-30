@@ -21,8 +21,8 @@ import {
 	type AIResult,
 	type AIKind,
 	type CallLLM
-} from '$lib/server/ai/output';
-import { buildSystemPrompt, DEFAULT_PROFILE } from '$lib/server/ai/prompts/vocabCcd';
+} from '../output';
+import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
 
 /** Indexer prefixes the query agent MAY emit (docs/types.md §Indexer prefixes). */
 export const KNOWN_INDEXER_PREFIXES = ['cc', 'cve', 'cpe', 'cwe', 'vendor', 'pp'] as const;

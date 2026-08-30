@@ -1,24 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { getProviderConfig } from '$lib/server/provider';
-import { resetConfigCache } from '$lib/server/config';
+import { describe, it, expect } from 'vitest';
+import { getProviderConfig } from '$lib/ai/provider';
 
 describe('getProviderConfig', () => {
-	beforeEach(() => {
-		resetConfigCache();
-		process.env.API_KEY = 'sk-env-test';
-		process.env.BASE_URL = 'https://llm.ai.e-infra.cz/v1';
-		process.env.MODEL = 'coder';
-		process.env.PUBLIC_RELAY_URLS = 'ws://localhost:8080/ws';
-	});
-
-	it('falls back to env config when no override is given', () => {
+	it('reports no_key when no override is given', () => {
 		const r = getProviderConfig();
-		expect(r.ok).toBe(true);
-		if (r.ok) {
-			expect(r.config.name).toBe('env');
-			expect(r.config.baseUrl).toBe('https://llm.ai.e-infra.cz/v1');
-			expect(r.config.model).toBe('coder');
-		}
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.kind).toBe('no_key');
 	});
 
 	it('rejects an override with a non-http baseUrl', () => {

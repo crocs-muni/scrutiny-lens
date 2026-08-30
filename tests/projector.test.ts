@@ -4,8 +4,8 @@ import {
 	bestIdentifier,
 	composeMetaSegments,
 	tagValues
-} from '$lib/server/ai/projector';
-import type { NostrEvent } from '$lib/server/fabric';
+} from '$lib/ai/projector';
+import type { NostrEvent } from '$lib/fabric';
 
 function ev(tags: string[][], content = '', id = 'a'.repeat(64)): NostrEvent {
 	return { id, sig: 'b'.repeat(128), pubkey: 'c'.repeat(64), created_at: 1, kind: 1, tags, content };

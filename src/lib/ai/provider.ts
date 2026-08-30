@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import { getConfig } from './config';
+
+/** Shared copy for every consumer surfacing a missing BYOK key. */
+export const NO_KEY_MESSAGE = 'No API key set (open settings)';
 
 export interface ProviderConfig {
 	name: string;
@@ -17,6 +19,7 @@ export interface ProviderOverrideInput {
 
 export type ProviderResult =
 	| { ok: true; config: ProviderConfig }
+	| { ok: false; kind: 'no_key' }
 	| { ok: false; kind: 'invalid_request'; issues: string[] };
 
 const overrideSchema = z.object({
@@ -36,11 +39,8 @@ const overrideSchema = z.object({
  */
 export function getProviderConfig(override?: ProviderOverrideInput): ProviderResult {
 	if (override === undefined) {
-		const env = getConfig();
-		return {
-			ok: true,
-			config: { name: 'env', baseUrl: env.baseUrl, model: env.model, apiKey: env.apiKey }
-		};
+		// BYOK: no server-side default key exists; the caller must supply one.
+		return { ok: false, kind: 'no_key' };
 	}
 
 	const parsed = overrideSchema.safeParse(override);

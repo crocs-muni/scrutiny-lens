@@ -6,7 +6,7 @@ import {
 	COUNT_TIMEOUT_MS,
 	type PoolLike,
 	type RelayLike
-} from '$lib/server/transport';
+} from '$lib/net/transport';
 import type { NostrEvent } from 'nostr-tools/core';
 import type { Filter } from 'nostr-tools/filter';
 

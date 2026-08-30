@@ -1,12 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
-import type { NostrEvent } from '$lib/server/fabric';
-import type { CallLLM, CallLLMArgs } from '$lib/server/ai/output';
-import { setCacheDb } from '$lib/server/ai/cache';
-import { openDb } from '$lib/server/db';
+import { describe, it, expect, beforeEach } from 'vitest';
+import type { NostrEvent } from '$lib/fabric';
+import type { CallLLM, CallLLMArgs } from '$lib/ai/output';
+import { clearDeadLetters, deadLetters } from '$lib/ai/deadLetter';
 import {
 	batchNodeInterpret,
 	BATCH_SIZE,
@@ -14,7 +9,7 @@ import {
 	VulnerabilityNodeVMSchema,
 	MetadataNodeVMSchema,
 	UnknownNodeVMSchema
-} from '$lib/server/ai/agents/nodes';
+} from '$lib/ai/agents/nodes';
 
 const PROVIDER = { baseUrl: 'https://llm.example.com/v1', model: 'test-model', apiKey: 'test-key' };
 
@@ -89,25 +84,12 @@ function fakeLLM(json: string): { call: CallLLM; calls: CallLLMArgs[] } {
 
 const CTX = { rootSummary: 'Infineon M7794 · ROCA exposure', query: 'ROCA' };
 
-/* ---------- DB isolation (dead_letter) ---------- */
+/* ---------- dead-letter isolation ---------- */
 
-let dir: string;
-let db: DatabaseSync;
-
-beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), 'scrutiny-nodes-'));
-	db = openDb(join(dir, 'scrutiny.db'));
-	setCacheDb(db);
-});
-
-afterEach(() => {
-	setCacheDb(null);
-	db.close();
-	rmSync(dir, { recursive: true, force: true });
-});
+beforeEach(() => clearDeadLetters());
 
 function deadLetterRows(): Array<{ entityId: string; reason: string }> {
-	return db.prepare('SELECT entityId, reason FROM dead_letter').all() as Array<{ entityId: string; reason: string }>;
+	return deadLetters().map((e) => ({ entityId: e.entityId, reason: e.reason }));
 }
 
 /* ---------- per-kind routing ---------- */
