@@ -95,7 +95,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 - Citations: numbered inline pills à la Vercel AI Elements inline-citation (hover → source card with verbatim quote), plus the coordination store ringing the graph node.
 - New components: SidebarRecents (extend SidebarNav: query, timestamp, unseen dot, close), ResultCard (seed: RecommendationCard), FacetGroup (checkbox+count rows; seed: SearchList+ToolChips), ChatMessage + SourceList (citation pills), CitationMark (colored underline from GlideHighlight) **plus a citation-coordination store** linking pill ↔ prose span ↔ graph-node ring, InspectorStrip (top strip over the canvas: node detail + citations + patch history, collapsible like the side rails), Timeline (patch history entries), EmptyState, KeyField, RelayDot.
 - Writing rule: **monospace = machine-made/verified (ids, tags, hashes, quotes); sans = AI-written prose.**
-- Ownership: owner builds the seven visual components (KeyField, EmptyState, RelayDot, ResultCard, FacetGroup, graph node cards, ChatMessage+SourceList) in `beautiful-ui-svelte` — Lens consumes upstream; missing pieces are upstream PRs, not in-repo forks. Agent builds here: shell, canvas, panels, coordination store, all data wiring.
+- Components we expect to need from the library are tracked as an issue on beautiful-ui-svelte (not in this spec).
 
 ## 10. Scope
 
