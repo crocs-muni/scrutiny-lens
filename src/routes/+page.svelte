@@ -53,7 +53,7 @@
 			{#if shell.view === 'session'}
 				<DetailDrawer
 					open={shell.drawerOpen}
-					height={shell.drawerHeight}
+					height={Math.min(shell.drawerHeight, drawerMax)}
 					maxHeight={drawerMax}
 					onToggle={() => shell.toggleDrawer()}
 					onResize={(next) => (shell.drawerHeight = next)}
@@ -71,8 +71,7 @@
 		<div
 			class="fixed inset-0 z-50 flex items-center justify-center bg-black/20"
 			style:animation="fade-in 180ms ease-out both"
-			onclick={() => shell.toggleSettings()}
-			onkeydown={(e) => e.key === 'Enter' && shell.toggleSettings()}
+			onclick={(event) => event.target === event.currentTarget && shell.toggleSettings()}
 			role="presentation"
 		>
 			<div

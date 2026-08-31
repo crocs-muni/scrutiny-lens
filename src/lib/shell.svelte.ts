@@ -51,6 +51,10 @@ class ShellState {
 			createdAt: Date.now()
 		};
 		this.sessions.unshift(row);
+		this.activate(row);
+	}
+
+	private activate(row: SessionRow) {
 		this.session = row;
 		this.view = 'session';
 		this.chatOpen = true;
@@ -60,9 +64,7 @@ class ShellState {
 		const row = this.sessions.find((s) => s.id === id);
 		if (!row) return;
 		row.unseen = false;
-		this.session = row;
-		this.view = 'session';
-		this.chatOpen = true;
+		this.activate(row);
 	}
 
 	closeSession(id: string) {

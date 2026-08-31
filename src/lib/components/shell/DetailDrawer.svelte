@@ -73,6 +73,7 @@
 	class="relative flex shrink-0 flex-col overflow-hidden border-t border-line"
 	style:height="{open ? height : COLLAPSED}px"
 	style:transition={dragging ? 'none' : `height ${COLLAPSE.duration}ms ${COLLAPSE.easing}`}
+	style:--drawer-copy-duration="{COLLAPSE.copyDuration}ms"
 >
 	{#if open}
 		<!-- splitter: drag between canvas and dossier -->
@@ -136,7 +137,7 @@
 <style>
 	.drawer-copy {
 		opacity: 1;
-		transition: opacity 180ms ease-out;
+		transition: opacity var(--drawer-copy-duration) ease-out;
 	}
 	/* Height collapse: copy exits first, frame follows — same harness
 	 * choreography as the column collapses (issue #10). */
