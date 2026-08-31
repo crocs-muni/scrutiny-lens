@@ -8,10 +8,9 @@
 	 * Investigations rows with timestamp + unseen dot + hover-close, the
 	 * Settings dock at the bottom, and a frameless 40px stub. Improvements
 	 * flow back upstream via the data-driven pass — tracked at
-	 * aykoooo/beautiful-ui-svelte#2; when it lands, this vendored copy
-	 * deletes and the rail returns to source-path import. Improvements
-	 * flow back upstream as PRs (aykoooo/beautiful-ui-svelte#1) — this is
-	 * not a dead fork.
+	 * aykoooo/beautiful-ui-svelte#2 (umbrella: #1); when it lands, this
+	 * vendored copy deletes and the rail returns to source-path import —
+	 * a vendored copy is never a dead fork (spec §9).
 	 *
 	 * Motion contract inherits canon's harness rules verbatim: width-only
 	 * 280ms collapse, copy fades/exits in 180ms, content stays at open
@@ -29,9 +28,10 @@
 		IconX
 	} from '@tabler/icons-svelte';
 	import { formatRel, type SessionRow } from '$lib/shell.svelte';
-	import KeyHint from './KeyHint.svelte';
+	import KeyHint from '../shell/KeyHint.svelte';
+	import { COLLAPSE } from './motion';
 
-	interface $$Props {
+	interface Props {
 		collapsed: boolean;
 		sessions: SessionRow[];
 		activeId: string | null;
@@ -51,22 +51,20 @@
 		onPick,
 		onClose,
 		onSettings
-	}: $$Props = $props();
+	}: Props = $props();
 
 	const MOTION = {
 		expandedWidth: 224,
 		// issue #10: "Sessions stub 40px flat" (canon ships 52).
 		collapsedWidth: 40,
-		duration: 280,
-		copyDuration: 180,
-		copyOffset: 8,
-		easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+		...COLLAPSE
 	};
 
+	// Search field: 180ms width bloom, same curve as the shell contract.
 	const SEARCH_MOTION = {
-		duration: 180,
+		duration: COLLAPSE.copyDuration,
 		closedWidth: 28,
-		easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+		easing: COLLAPSE.easing
 	};
 
 	let listOpen = $state(true);

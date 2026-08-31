@@ -5,24 +5,22 @@
 	 * Chat content (messages, composer, citations) arrives with the chat
 	 * step (spec §11 step 4) — this file is chrome only. */
 
-	import { IconArrowBarToLeft, IconMessage } from '@tabler/icons-svelte';
-	import KeyHint from '../ui/KeyHint.svelte';
+	import { IconArrowBarToLeft, IconArrowBarToRight, IconMessage } from '@tabler/icons-svelte';
+	import KeyHint from './KeyHint.svelte';
+	import { COLLAPSE } from '../ui/motion';
 
-	interface $$Props {
+	interface Props {
 		collapsed: boolean;
 		onToggle: () => void;
 	}
 
-	let { collapsed, onToggle }: $$Props = $props();
+	let { collapsed, onToggle }: Props = $props();
 
 	// Width-only 280ms; copy fades in 180ms ahead of it (issue #10).
 	const MOTION = {
 		expandedWidth: 320,
 		collapsedWidth: 48,
-		duration: 280,
-		copyDuration: 180,
-		copyOffset: 8,
-		easing: 'cubic-bezier(0.16,1,0.3,1)'
+		...COLLAPSE
 	};
 </script>
 
@@ -46,7 +44,7 @@
 				keys="Ctrl+."
 				side="bottom"
 				class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
-				onclick={onToggle}><IconArrowBarToLeft size={18} stroke-width={1.8} /></KeyHint
+				onclick={onToggle}><IconArrowBarToRight size={18} stroke-width={1.8} /></KeyHint
 			>
 		</header>
 		<div class="flex min-h-0 flex-1 items-center justify-center p-4">

@@ -27,7 +27,7 @@ importers:
         specifier: ^7.0.79
         version: 7.0.79(zod@4.4.3)
       beautiful-ui-svelte:
-        specifier: file:..\scrutiny-design-system
+        specifier: file:../scrutiny-design-system
         version: file:../scrutiny-design-system(@internationalized/date@3.12.3)(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.2.0(svelte@5.56.10)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)))(svelte@5.56.10)(typescript@6.0.3)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)))(react@19.2.8)(svelte@5.56.10)
       bits-ui:
         specifier: ^2.19.0

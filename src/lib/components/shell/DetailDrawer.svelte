@@ -6,21 +6,24 @@
 	 * citation ring (spec §9, chat step) persists across open/closed. */
 
 	import { IconChevronDown, IconChevronUp } from '@tabler/icons-svelte';
-	import KeyHint from '../ui/KeyHint.svelte';
+	import KeyHint from './KeyHint.svelte';
+	import { COLLAPSE } from '../ui/motion';
 
 	interface Section {
-		key: string;
+		key: SectionKey;
 		label: string;
 	}
+	/** The four dossier sections (spec §9) — counts are keyed to exactly these. */
+	type SectionKey = 'summary' | 'content' | 'history' | 'files';
 
-	interface $$Props {
+	interface Props {
 		open: boolean;
 		/** Open height in px. */
 		height: number;
 		/** Drag clamp upper bound, measured by the parent canvas card. */
 		maxHeight: number;
 		/** Deterministic per-section counts (spec §2 rule 2) — undefined = hidden. */
-		counts?: Partial<Record<string, number>>;
+		counts?: Partial<Record<SectionKey, number>>;
 		onToggle: () => void;
 		onResize: (next: number) => void;
 	}
@@ -32,7 +35,7 @@
 		counts = {},
 		onToggle,
 		onResize
-	}: $$Props = $props();
+	}: Props = $props();
 
 	// spec §9: 32px collapsed handle.
 	const COLLAPSED = 32;
@@ -64,13 +67,12 @@
 		window.addEventListener('pointerup', up);
 	}
 </script>
-
 <section
 	aria-label="Detail drawer"
 	data-drawer-collapsed={!open}
 	class="relative flex shrink-0 flex-col overflow-hidden border-t border-line"
 	style:height="{open ? height : COLLAPSED}px"
-	style:transition={dragging ? 'none' : 'height 280ms cubic-bezier(0.16,1,0.3,1)'}
+	style:transition={dragging ? 'none' : `height ${COLLAPSE.duration}ms ${COLLAPSE.easing}`}
 >
 	{#if open}
 		<!-- splitter: drag between canvas and dossier -->

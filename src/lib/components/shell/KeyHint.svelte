@@ -5,7 +5,7 @@
 	import { Tooltip } from 'bits-ui';
 	import type { Snippet } from 'svelte';
 
-	interface $$Props {
+	interface Props {
 		/** Action name shown in the tooltip and used as the trigger's aria-label. */
 		label: string;
 		/** Keycap text, e.g. "Ctrl+.". */
@@ -16,7 +16,7 @@
 		children?: Snippet;
 	}
 
-	let { label, keys, side = 'right', class: className = '', onclick, children }: $$Props = $props();
+	let { label, keys, side = 'right', class: className = '', onclick, children }: Props = $props();
 </script>
 
 <Tooltip.Root>
