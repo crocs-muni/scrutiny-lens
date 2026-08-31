@@ -88,11 +88,11 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 
 ## 9. UI
 
-- Consume `beautiful-ui-svelte` as the component library (local sibling dep now, git/npm when public). Its demo components need a data-driven pass and missing atoms ported — that work is tracked in THAT repo, budgeted inside §11 step 1. Zero-mutation canon components import by source path through the `file:` sibling-link (bui has no `exports` field — if a source-path import ever fails, the component VENDORS per the rule below instead of black-box config).
+- Consume `beautiful-ui-svelte` as the component library (local sibling dep now, git/npm when public). Missing atoms are ported into THIS app shadcn-style (copy-in), organized in `src/lib/components/ui/` so a design system can be extracted later — canon is never modified for app needs. Zero-mutation canon components import by source path through the `file:` sibling-link (bui has no `exports` field — if a source-path import ever fails, the component VENDORS per the rule below instead of black-box config).
 - Design board (`Downloads/Scrutiny Session Explorer/*.dc.html`) = wireframe (owner refines); beautiful-ui = skin; harness = vibe.
 - bits-ui headless for: Combobox (model picker), Tooltip, ScrollArea, Popover (share), Progress.
 - Port upstream atoms: Chip, StatusPill, ValuePill, EntityChip, TextRow, SegmentedControl, Switch, Shimmer.
-- **Component sourcing (two-tier).** Canon (reference): beautiful-ui-svelte is the upstream canon — storybooked primitives (SidebarNav, PromptBar, TaskRows, ThinkingState, ChatComposer, atoms: Chip, StatusPill, ValuePill, EntityChip, TextRow, SegmentedControl, Switch, Shimmer). App-owned vendored copies live in `src/lib/components/ui/` — vendored WITH the token infrastructure (`tokens.css` + `primitive-*` helpers + the `.dark` variant) to prevent divergence. Zero-mutation canon components are consumed via a `file:` sibling-link (same mechanism as `@scrutiny-fabric/core`). Any improvement flows BACK to canon via PR — a vendored copy is never a dead fork, and the canon is never blocked on releases. The earlier "no component forks" line now means: no improvements that stay local forever.
+- **Component sourcing (two-tier).** Canon (reference): beautiful-ui-svelte is the upstream canon — storybooked primitives (SidebarNav, PromptBar, TaskRows, ThinkingState, ChatComposer, atoms: Chip, StatusPill, ValuePill, EntityChip, TextRow, SegmentedControl, Switch, Shimmer). App-owned vendored copies live in `src/lib/components/ui/` — vendored WITH the token infrastructure (`tokens.css` + `primitive-*` helpers + the `.dark` variant) to prevent divergence. Zero-mutation canon components are consumed via a `file:` sibling-link (same mechanism as `@scrutiny-fabric/core`). Canon is a faithful port of beautiful-ui and is **never customized for app needs** (owner ruling 2026-08-31): vendored copies are permanent app code, not pending upstream retirement. Upstream work is limited to port completion/fidelity (new primitives the port lacks, tracked as aykoooo/beautiful-ui-svelte#1) — never app-mutation backports.
 - In-app compositions (ResultCard assembly, graph node cards, DetailDrawer, citation pills): built in-app from primitives — never pretend they're library-generic.
 - App shell: three retractable columns — left rail (sessions), center (graph canvas with a collapsible **DetailDrawer** below it: sticky counted sections Summary · Content · History · Files, resizable splitter, 32px collapsed handle; citation ring persists while it is open or closed), right (chat column, resident **only when a session is open** — hidden on the search and results views; a collapsed rail stub + `Ctrl+.` toggles it). Same shell hosts search (A) and results (B): center swaps search → results → session; facets on B are a collapsible second-left strip styled after shadcn-ui-blocks multi-facet-panel.
 - Citations: numbered inline pills à la Vercel AI Elements inline-citation (hover → source card with verbatim quote), plus the coordination store ringing the graph node.
@@ -101,7 +101,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 - Graph node anatomy (locked by the design board): every node carries a kind-mapped icon (Tabler icons; neutral tile, tinted stroke only when warn), a concise title, publisher avatar+name (npub prefix in mono as fallback), relative time, and `edited ×N` only when patches exist (neutral, ink-2 mono). Product/hub adds a one-line description + icon-number counts; a metadata spoke omits both. Dense mode = rendered-pixel floors (full card → icon+mono line → icon disc); selection/hover forces full detail at any zoom.
 - Relay health surface: no always-on indicators. Per-relay status lives in Settings → Relays; on degradation a dismissible banner under the center bar ("relay x unreachable — results from the rest"); the results footer carries the same note.
 - Rail chrome: the left rail's bottom slot is the Settings dock (the menu carries no other settings entry) — stubs show it as a tile.
-- Keyboard: `Ctrl+\` sessions rail · `Ctrl+.` chat column · `Ctrl+Shift+I` DetailDrawer · `Ctrl+,` Settings. Every toggle shows its keycap in the tooltip; when ⌘K lands (deferred), all actions become palette commands.
+- Keyboard: `Ctrl+\` sessions rail · `Ctrl+.` chat column · `Ctrl+;` DetailDrawer · `Ctrl+,` Settings. Every toggle shows its keycap in the tooltip; when ⌘K lands (deferred), all actions become palette commands.
 - Writing rule: **monospace = machine-made/verified (ids, tags, hashes, quotes); sans = AI-written prose.**
 - Components we expect to need from the library are tracked as aykoooo/beautiful-ui-svelte#1.
 
@@ -113,7 +113,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 
 ## 11. Build order (each step ships usable)
 
-1. Shell: delete server, static build, **library data-driven pass (upstream)**, settings (endpoint/key/model/relays), IndexedDB persistence.
+1. Shell: delete server, static build, settings (endpoint/key/model/relays), IndexedDB persistence.
 2. Search → fetch (capability-aware) → cards (AI + fallback) + facet sidebar + edge states.
 3. Graph + DetailDrawer (detail, patch history, retractions, chain states).
 4. Chat with verified citations + coordination store.

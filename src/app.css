@@ -1,0 +1,108 @@
+@import 'tailwindcss';
+/* shadow-plugin (flornkm) — smooth, layered shadow stacks; the semantic
+ * shadow tokens in tokens.css build on these values. */
+@import 'shadow-plugin/unprefixed';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@import './lib/components/ui/tokens.css';
+
+/* Canon components consumed via the file: sibling-link (e.g. GlideHighlight)
+ * carry Tailwind classes in the sibling repo — v4's automatic detection
+ * does not index node_modules, so scan the sibling source explicitly. */
+@source '../../scrutiny-design-system/src';
+
+/* ============================================================
+   Base — same canon foundation as beautiful-ui-svelte app.css
+   (MIT, Shane Levine / Turbo). Kept aligned with that file;
+   per-component CSS lives with its component.
+   ============================================================ */
+html {
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	text-rendering: optimizeLegibility;
+	font-family: var(--font-sans);
+}
+
+body {
+	background-color: var(--stripe-bg);
+	background-image: repeating-linear-gradient(
+		-45deg,
+		transparent 0,
+		transparent 7px,
+		var(--stripe) 7px,
+		var(--stripe) 8px
+	);
+	background-attachment: fixed;
+	color: var(--ink);
+	font-feature-settings: 'cv11', 'ss01';
+	font-size: 14px;
+	letter-spacing: -0.01em;
+	line-height: 1.5;
+}
+
+::selection {
+	background: var(--accent-tint);
+	color: var(--ink);
+}
+
+/* theme switches swap every token at once — freeze transitions so the flip
+ * is one clean repaint instead of hundreds of mismatched color fades */
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+	transition: none !important;
+}
+
+/* Tailwind v4 resets buttons to cursor:default — anything clickable must
+ * invite the click */
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']),
+label:has(input),
+a {
+	cursor: pointer;
+}
+
+:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[contenteditable]:focus-visible {
+	outline: none;
+}
+
+/* ── shared helpers — the subset of canon's primitive-* classes the
+ * vendored components use; same vendoring contract as tokens.css ─── */
+.primitive-icon-button {
+	display: inline-flex;
+	width: 28px;
+	height: 28px;
+	align-items: center;
+	justify-content: center;
+	border-radius: var(--radius-control);
+}
+
+@keyframes fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes pop-in {
+	from {
+		opacity: 0;
+		transform: scale(0.95);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}

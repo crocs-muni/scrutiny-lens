@@ -34,9 +34,12 @@
     "@tabler/icons-svelte": "^3.46.0",
     "@xyflow/svelte": "^1.6.5",
     "ai": "^7.0.79",
+    "beautiful-ui-svelte": "file:../scrutiny-design-system",
+    "bits-ui": "^2.19.0",
     "isomorphic-dompurify": "^3.18.0",
     "marked": "^18.0.11",
     "nostr-tools": "^2.25.0",
+    "shadow-plugin": "^2.1.0",
     "zod": "^4.4.3"
   },
   "pnpm": {
