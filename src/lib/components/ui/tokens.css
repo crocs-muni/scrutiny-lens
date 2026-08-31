@@ -1,10 +1,10 @@
 /* ============================================================
    VENDORED TOKEN INFRASTRUCTURE (spec §9 two-tier rule)
-   Source of truth: beautiful-ui-svelte src/tokens/tokens.css
-   (sibling checkout ../scrutiny-design-system). Changes go BACK
-   upstream as PRs (aykoooo/beautiful-ui-svelte#1); this copy
-   exists so app-mutated vendored components never diverge from
-   the token contract. CRLF/LF differences aside, keep its content identical to canon.
+   Source of truth for token VALUES: beautiful-ui-svelte
+   src/tokens/tokens.css (sibling checkout ../scrutiny-design-system) —
+   copied, not imported, because canon is a faithful port that is never
+   customized for app needs; this copy is permanent. CRLF/LF differences
+   aside, keep its content identical to canon.
    ============================================================ */
 
 /* ============================================================

@@ -6,11 +6,11 @@
 	 * (issue #10) that canon does not model — a static brand header (no
 	 * workspace menu; "the menu carries no other settings entry", spec §9),
 	 * Investigations rows with timestamp + unseen dot + hover-close, the
-	 * Settings dock at the bottom, and a frameless 40px stub. Improvements
-	 * flow back upstream via the data-driven pass — tracked at
-	 * aykoooo/beautiful-ui-svelte#2 (umbrella: #1); when it lands, this
-	 * vendored copy deletes and the rail returns to source-path import —
-	 * a vendored copy is never a dead fork (spec §9).
+	 * Settings dock at the bottom, and a frameless 40px stub. 
+	 *
+	 * This vendored copy is PERMANENT app code (spec §9 tier two): canon
+	 * is a faithful port of beautiful-ui and is never customized for app
+	 * needs — app-mutated components live here, not upstream.
 	 *
 	 * Motion contract inherits canon's harness rules verbatim: width-only
 	 * 280ms collapse, copy fades/exits in 180ms, content stays at open
