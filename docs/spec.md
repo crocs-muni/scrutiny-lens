@@ -98,12 +98,14 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 - Result card anatomy (locked by the design board): title (AI, unmarked), snippet, identifier chips 0..n mono, warning-only status pill (shown only for retracted/provisional), icon+word counts (files / linked records / updates), publisher profile chip (kind-0 avatar+name, identicon fallback, fades in on fetch), whole-card click target with hover ring (no action buttons on faces).
 - Graph node anatomy (locked by the design board): every node carries a kind-mapped icon (Tabler icons; neutral tile, tinted stroke only when warn), a concise title, publisher avatar+name (npub prefix in mono as fallback), relative time, and `edited ×N` only when patches exist (neutral, ink-2 mono). Product/hub adds a one-line description + icon-number counts; a metadata spoke omits both. Dense mode = rendered-pixel floors (full card → icon+mono line → icon disc); selection/hover forces full detail at any zoom.
 - Relay health surface: no always-on indicators. Per-relay status lives in Settings → Relays; on degradation a dismissible banner under the center bar ("relay x unreachable — results from the rest"); the results footer carries the same note.
+- Rail chrome: the left rail's bottom slot is the Settings dock (; menu has no other settings entry) — stubs show it as a tile.
+- Keyboard: `Ctrl+\` sessions rail · `Ctrl+.` chat column · `Ctrl+Shift+I` DetailDrawer · `Ctrl+,` Settings. Every toggle shows its keycap in the tooltip; when ⌘K lands (deferred), all actions become palette commands.
 - Writing rule: **monospace = machine-made/verified (ids, tags, hashes, quotes); sans = AI-written prose.**
 - Components we expect to need from the library are tracked as aykoooo/beautiful-ui-svelte#1.
 
 ## 10. Scope
 
-- **Must**: search→cards, graph, InspectorStrip (detail + patch history + retraction + chain states), chat w/ verified citations, share link, honest fallbacks, settings.
+- **Must**: search→cards, graph, DetailDrawer (detail + patch history + retraction + chain states), chat w/ verified citations, share link, honest fallbacks, settings.
 - **Could**: table view toggle (SegmentedControl + RecordsTable), saved-session auto-title, command palette (⌘K — deferred, owner-liked).
 - **Won't (this cycle)**: Nostr login, trust lists, publishing events, SEO/event pages, profiles, citation hover flourish beyond the coordination store, Docker self-host bundle, multi-relay conflict UI beyond dedupe, mobile-specific work (baseline: usable at 360px, enhanced beyond).
 
@@ -111,7 +113,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 
 1. Shell: delete server, static build, **library data-driven pass (upstream)**, settings (endpoint/key/model/relays), IndexedDB persistence.
 2. Search → fetch (capability-aware) → cards (AI + fallback) + facet sidebar + edge states.
-3. Graph + InspectorStrip (detail, patch history, retractions, chain states).
+3. Graph + DetailDrawer (detail, patch history, retractions, chain states).
 4. Chat with verified citations + coordination store.
 5. Share links (`/event/<nevent1…>`; nginx fallback rule documented).
 

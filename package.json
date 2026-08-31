@@ -29,9 +29,9 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.37",
-    "@lucide/svelte": "^1.34.0",
     "@noble/hashes": "^2.0.1",
     "@scrutiny-fabric/core": "file:../scrutiny-fabric-tools/packages/core",
+    "@tabler/icons-svelte": "^3.46.0",
     "@xyflow/svelte": "^1.6.5",
     "ai": "^7.0.79",
     "isomorphic-dompurify": "^3.18.0",
