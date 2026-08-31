@@ -110,7 +110,7 @@
 		<span class="min-w-0 flex-1"></span>
 		<KeyHint
 			label="Detail drawer"
-			keys="Ctrl+Shift+I"
+			keys="Ctrl+;"
 			side="top"
 			class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
 			onclick={onToggle}

@@ -4,7 +4,7 @@
 /** One investigation in the flat sessions rail (spec §0 "Session"). */
 export interface SessionRow {
 	id: string;
-	/** The question as asked; "Untitled investigation" until the user asks. */
+	/** The question as asked; "Untitled session" until the user asks. */
 	title: string;
 	createdAt: number;
 	/** Unseen-update dot (SidebarRecents anatomy, issue #10). */
@@ -44,10 +44,10 @@ class ShellState {
 		this.settingsOpen = !this.settingsOpen;
 	}
 
-	newInvestigation() {
+	newSession() {
 		const row: SessionRow = {
 			id: crypto.randomUUID(),
-			title: 'Untitled investigation',
+			title: 'Untitled session',
 			createdAt: Date.now()
 		};
 		this.sessions.unshift(row);
@@ -88,8 +88,8 @@ export function resetShell() {
 	shell.drawerHeight = 320;
 }
 
-/** Keyboard map (spec §9): Ctrl+\ rail · Ctrl+. chat · Ctrl+Shift+I drawer ·
- * Ctrl+, settings. Every binding is ignored while typing. Returns true when
+/** Keyboard map (spec §9): Ctrl+\ rail · Ctrl+. chat · Ctrl+; drawer · Ctrl+, settings
+ * (Ctrl+; replaces Ctrl+Shift+I — that combo opens devtools; owner ruling). Every binding is ignored while typing. Returns true when
  * the event was consumed. */
 export function handleShellKeydown(event: KeyboardEvent): boolean {
 	// Esc dismisses the settings surface without touching column state.
@@ -108,7 +108,7 @@ export function handleShellKeydown(event: KeyboardEvent): boolean {
 	} else if (key === '.' && !event.shiftKey) {
 		if (!shell.session) return false;
 		shell.toggleChat();
-	} else if (key === 'i' && event.shiftKey) {
+	} else if (key === ';' && !event.shiftKey) {
 		if (!shell.session) return false;
 		shell.toggleDrawer();
 	} else if (key === ',' && !event.shiftKey) {

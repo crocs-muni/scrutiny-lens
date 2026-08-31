@@ -5,7 +5,7 @@
 	 * Vendored per the spec §9 two-tier rule: this rail carries app anatomy
 	 * (issue #10) that canon does not model — a static brand header (no
 	 * workspace menu; "the menu carries no other settings entry", spec §9),
-	 * Investigations rows with timestamp + unseen dot + hover-close, the
+	 * Sessions rows with timestamp + unseen dot + hover-close, the
 	 * Settings dock at the bottom, and a frameless 40px stub.
 	 *
 	 * This vendored copy is PERMANENT app code (spec §9 tier two): canon
@@ -19,7 +19,7 @@
 
 	import GlideHighlight from 'beautiful-ui-svelte/src/lib/GlideHighlight.svelte';
 	import {
-		IconAdjustmentsHorizontal,
+		IconSettings,
 		IconArrowBarToLeft,
 		IconArrowBarToRight,
 		IconChevronDown,
@@ -130,7 +130,7 @@
 					<IconPencil size={18} stroke-width={1.8} />
 				</span>
 				<span class="ml-1.5 min-w-0 flex-1 truncate text-[14px] font-medium text-ink-2"
-					>New investigation</span
+					>New session</span
 				>
 			</button>
 		</GlideHighlight>
@@ -152,7 +152,7 @@
 					<span class="flex shrink-0 transition-transform duration-150 {listOpen ? '' : '-rotate-90'}">
 						<IconChevronDown size={16} stroke-width={2} />
 					</span>
-					<span>Investigations</span>
+					<span>Sessions</span>
 				</button>
 
 				<button
@@ -185,8 +185,8 @@
 						onkeydown={(event) => {
 							if (event.key === 'Escape') closeSearch();
 						}}
-						placeholder="Search investigations"
-						aria-label="Search investigations"
+						placeholder="Search sessions"
+						aria-label="Search sessions"
 						class="ml-1.5 min-w-0 flex-1 bg-transparent text-[13px] font-medium text-ink outline-none placeholder:text-ink-3"
 					/>
 					<button
@@ -235,7 +235,7 @@
 							</button>
 							<button
 								type="button"
-								aria-label="Close investigation"
+								aria-label="Close session"
 								onclick={(event) => {
 									event.stopPropagation();
 									onClose(item.id);
@@ -247,7 +247,7 @@
 						</div>
 					{/each}
 					{#if query && visibleSessions.length === 0}
-						<div class="mx-2 px-2 py-2 text-[12.5px] text-ink-3">No investigations found</div>
+						<div class="mx-2 px-2 py-2 text-[12.5px] text-ink-3">No sessions found</div>
 					{/if}
 				</GlideHighlight>
 			{/if}
@@ -262,7 +262,7 @@
 				onclick={onSettings}
 			>
 				<span class="flex size-5 shrink-0 items-center justify-center text-ink-2">
-					<IconAdjustmentsHorizontal size={18} stroke-width={1.8} />
+					<IconSettings size={18} stroke-width={1.8} />
 				</span>
 				<span class="ml-1.5 min-w-0 flex-1 truncate text-[14px] font-medium text-ink-2">Settings</span>
 				<kbd class="shrink-0 font-mono text-[10px] text-ink-3">Ctrl+,</kbd>
@@ -287,7 +287,7 @@
 		>
 		<button
 			type="button"
-			aria-label="New investigation"
+			aria-label="New session"
 			onclick={onNew}
 			class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover-2 hover:text-ink"
 		>
@@ -300,7 +300,7 @@
 			class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover-2 hover:text-ink"
 			onclick={onSettings}
 		>
-			<IconAdjustmentsHorizontal size={17} stroke-width={1.8} />
+			<IconSettings size={17} stroke-width={1.8} />
 		</KeyHint>
 	</div>
 </aside>

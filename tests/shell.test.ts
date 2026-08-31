@@ -46,31 +46,29 @@ describe('keyboard map', () => {
 		expect(shell.settingsOpen).toBe(false);
 	});
 
-	it('Ctrl+. and Ctrl+Shift+I are inert until a session is open', () => {
+	it('Ctrl+. and Ctrl+; are inert until a session is open', () => {
 		expect(handleShellKeydown(key({ key: '.', ctrl: true }, nonTypingTarget))).toBe(false);
-		expect(handleShellKeydown(key({ key: 'I', ctrl: true, shift: true }, nonTypingTarget))).toBe(
-			false
-		);
+		expect(handleShellKeydown(key({ key: ';', ctrl: true }, nonTypingTarget))).toBe(false);
 		expect(shell.chatOpen).toBe(true);
 		expect(shell.drawerOpen).toBe(true);
 	});
 
 	it('Ctrl+. toggles chat once a session is open', () => {
-		shell.newInvestigation();
+		shell.newSession();
 		handleShellKeydown(key({ key: '.', ctrl: true }, nonTypingTarget));
 		expect(shell.chatOpen).toBe(false);
 		handleShellKeydown(key({ key: '.', ctrl: true }, nonTypingTarget));
 		expect(shell.chatOpen).toBe(true);
 	});
 
-	it('Ctrl+Shift+I toggles the DetailDrawer once a session is open', () => {
-		shell.newInvestigation();
-		handleShellKeydown(key({ key: 'I', ctrl: true, shift: true }, nonTypingTarget));
+	it('Ctrl+; toggles the DetailDrawer once a session is open', () => {
+		shell.newSession();
+		handleShellKeydown(key({ key: ';', ctrl: true }, nonTypingTarget));
 		expect(shell.drawerOpen).toBe(false);
 	});
 
 	it('ignores the map while typing in a field', () => {
-		shell.newInvestigation();
+		shell.newSession();
 		expect(handleShellKeydown(key({ key: '\\', ctrl: true }, typingTarget))).toBe(false);
 		expect(shell.railOpen).toBe(true);
 	});
@@ -85,16 +83,16 @@ describe('keyboard map', () => {
 });
 
 describe('session lifecycle', () => {
-	it('New investigation opens the session view with chat visible', () => {
-		shell.newInvestigation();
+	it('New session opens the session view with chat visible', () => {
+		shell.newSession();
 		expect(shell.view).toBe('session');
-		expect(shell.session?.title).toBe('Untitled investigation');
+		expect(shell.session?.title).toBe('Untitled session');
 		expect(shell.chatOpen).toBe(true);
 		expect(shell.sessions).toHaveLength(1);
 	});
 
 	it('picking a row marks it seen and reopens chat', () => {
-		shell.newInvestigation();
+		shell.newSession();
 		const id = shell.session!.id;
 		shell.closeSession(id); // back to search view
 		shell.sessions.unshift({ id, title: 'ROCA in Infineon chips', createdAt: Date.now(), unseen: true });
@@ -106,7 +104,7 @@ describe('session lifecycle', () => {
 	});
 
 	it('closing the active session returns to search view (chat unmounts)', () => {
-		shell.newInvestigation();
+		shell.newSession();
 		shell.closeSession(shell.session!.id);
 		expect(shell.view).toBe('search');
 		expect(shell.session).toBeNull();

@@ -26,7 +26,7 @@
 			sessions={shell.sessions}
 			activeId={shell.session?.id ?? null}
 			onToggle={() => shell.toggleRail()}
-			onNew={() => shell.newInvestigation()}
+			onNew={() => shell.newSession()}
 			onPick={(id) => shell.openSession(id)}
 			onClose={(id) => shell.closeSession(id)}
 			onSettings={() => shell.toggleSettings()}
