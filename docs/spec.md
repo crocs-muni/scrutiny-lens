@@ -88,7 +88,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 
 ## 9. UI
 
-- Consume `beautiful-ui-svelte` as the component library (local sibling dep now, git/npm when public). Its demo components need a data-driven pass and missing atoms ported — that work is tracked in THAT repo, budgeted inside §11 step 1. Zero-mutation canon components import by source path through the `file:` sibling-link (bui has no `exports` field — if a source-path import ever fails, the component VENDORS per the rule below instead of black-box config).
+- Consume `beautiful-ui-svelte` as the component library (local sibling dep now, git/npm when public). Missing atoms are ported into THIS app shadcn-style (copy-in), organized in `src/lib/components/ui/` so a design system can be extracted later — canon is never modified for app needs. Zero-mutation canon components import by source path through the `file:` sibling-link (bui has no `exports` field — if a source-path import ever fails, the component VENDORS per the rule below instead of black-box config).
 - Design board (`Downloads/Scrutiny Session Explorer/*.dc.html`) = wireframe (owner refines); beautiful-ui = skin; harness = vibe.
 - bits-ui headless for: Combobox (model picker), Tooltip, ScrollArea, Popover (share), Progress.
 - Port upstream atoms: Chip, StatusPill, ValuePill, EntityChip, TextRow, SegmentedControl, Switch, Shimmer.
@@ -113,7 +113,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 
 ## 11. Build order (each step ships usable)
 
-1. Shell: delete server, static build, **library data-driven pass (upstream)**, settings (endpoint/key/model/relays), IndexedDB persistence.
+1. Shell: delete server, static build, settings (endpoint/key/model/relays), IndexedDB persistence.
 2. Search → fetch (capability-aware) → cards (AI + fallback) + facet sidebar + edge states.
 3. Graph + DetailDrawer (detail, patch history, retractions, chain states).
 4. Chat with verified citations + coordination store.

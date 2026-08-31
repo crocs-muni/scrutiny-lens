@@ -28,7 +28,7 @@ The superseded 16-doc set was removed from the tree (git history preserves it). 
 
 ## UI rules
 
-- Component library: [beautiful-ui-svelte](https://github.com/aykoooo/beautiful-ui-svelte) (MIT, canon). Two-tier sourcing: zero-mutation canon components consumed via `file:` sibling-link (same mechanism as `@scrutiny-fabric/core`); components needing app mutation are vendored into `src/lib/components/ui/` WITH the token infrastructure (`tokens.css` + `primitive-*` + `.dark` variant). Every improvement flows back to canon via PR — vendoring is never a dead fork.
+- Component library: [beautiful-ui-svelte](https://github.com/aykoooo/beautiful-ui-svelte) (MIT, canon). Two-tier sourcing: zero-mutation canon components consumed via `file:` sibling-link (same mechanism as `@scrutiny-fabric/core`); components needing app mutation are vendored into `src/lib/components/ui/` WITH the token infrastructure (`tokens.css` + `primitive-*` + `.dark` variant). Canon is a faithful port and is never customized for app needs (owner ruling 2026-08-31): vendored copies are PERMANENT app code, organized shadcn-style so a design system can be extracted later. Never file upstream issues asking canon to become app-aware.
 - **bits-ui** headless primitives for Combobox/Tooltip/ScrollArea/Popover/Progress.
 - Graph canvas: `@xyflow/svelte`, in-app (not the library).
 - Writing rule: **monospace = machine-made/verified (ids, tags, hashes, quotes); sans = AI-written prose.**
