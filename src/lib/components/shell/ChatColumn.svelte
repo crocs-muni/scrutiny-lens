@@ -38,7 +38,7 @@
 	style:--chat-easing={MOTION.easing}
 >
 	<!-- open-width content: fixed 320px, clipped by the frame (no reflow) -->
-	<div class="chat-copy flex h-full w-[320px] shrink-0 flex-col">
+	<div class="chat-copy flex h-full w-[320px] shrink-0 flex-col" inert={collapsed}>
 		<header class="flex h-11 shrink-0 items-center border-b border-line px-3">
 			<span class="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">Chat</span>
 			<KeyHint
@@ -57,13 +57,13 @@
 	</div>
 
 	<!-- 48px card stub -->
-	<div class="chat-stub absolute inset-0 flex flex-col items-center py-2" aria-hidden={!collapsed}>
+	<div class="chat-stub absolute inset-0 flex flex-col items-center py-2" inert={!collapsed}>
 		<KeyHint
 			label="Chat column"
 			keys="Ctrl+."
 			side="left"
 			class="primitive-icon-button mb-2 shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
-			onclick={collapsed ? onToggle : undefined}
+			onclick={onToggle}
 		>
 			<IconArrowBarToLeft size={18} stroke-width={1.8} />
 		</KeyHint>

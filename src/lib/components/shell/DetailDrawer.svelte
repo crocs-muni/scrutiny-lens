@@ -49,7 +49,6 @@
 	let dragging = $state(false);
 
 	function startDrag(event: PointerEvent) {
-		if (!open) return;
 		event.preventDefault();
 		const startY = event.clientY;
 		const startHeight = height;

@@ -7,6 +7,9 @@
 	 * workspace menu; "the menu carries no other settings entry", spec §9),
 	 * Investigations rows with timestamp + unseen dot + hover-close, the
 	 * Settings dock at the bottom, and a frameless 40px stub. Improvements
+	 * flow back upstream via the data-driven pass — tracked at
+	 * aykoooo/beautiful-ui-svelte#2; when it lands, this vendored copy
+	 * deletes and the rail returns to source-path import. Improvements
 	 * flow back upstream as PRs (aykoooo/beautiful-ui-svelte#1) — this is
 	 * not a dead fork.
 	 *
@@ -97,7 +100,7 @@
 	style:--sidebar-easing={MOTION.easing}
 >
 	<!-- open-width column: stays 224px while the frame clips it (no reflow) -->
-	<div class="rail-copy flex h-full min-h-0 w-[224px] shrink-0 flex-col py-1.5">
+	<div class="rail-copy flex h-full min-h-0 w-[224px] shrink-0 flex-col py-1.5" inert={collapsed}>
 		<div class="mb-2 flex h-10 shrink-0 items-center px-2">
 			<span
 				class="flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-accent text-[13px] font-semibold text-white"
@@ -272,13 +275,13 @@
 	<!-- collapsed stub: 40px flat icon stack, fades in behind the copy exit -->
 	<div
 		class="rail-stub absolute inset-0 flex flex-col items-center gap-px py-1.5"
-		aria-hidden={!collapsed}
+		inert={!collapsed}
 	>
 		<KeyHint
 			label="Sessions rail"
 			keys="Ctrl+\"
 			class="primitive-icon-button mb-1 shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover-2 hover:text-ink"
-			onclick={collapsed ? onToggle : undefined}><IconArrowBarToRight size={18} stroke-width={1.8} /></KeyHint
+			onclick={onToggle}><IconArrowBarToRight size={18} stroke-width={1.8} /></KeyHint
 		>
 		<span
 			class="mb-1 flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-accent text-[12px] font-semibold text-white"
@@ -287,8 +290,7 @@
 		<button
 			type="button"
 			aria-label="New investigation"
-			tabindex={collapsed ? 0 : -1}
-			onclick={collapsed ? onNew : undefined}
+			onclick={onNew}
 			class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover-2 hover:text-ink"
 		>
 			<IconPencil size={17} stroke-width={1.8} />
@@ -298,7 +300,7 @@
 			label="Settings"
 			keys="Ctrl+,"
 			class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover-2 hover:text-ink"
-			onclick={collapsed ? onSettings : undefined}
+			onclick={onSettings}
 		>
 			<IconAdjustmentsHorizontal size={17} stroke-width={1.8} />
 		</KeyHint>
