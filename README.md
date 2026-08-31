@@ -11,6 +11,11 @@ Requires Node >=22.12 and the sibling `scrutiny-fabric-tools` checkout beside
 this repo (`@scrutiny-fabric/core` is a `file:` dependency — see spec §8). The
 sibling's `packages/core` must be **built** (`pnpm install && pnpm build`
 inside it) — its exports point at `dist/`.
+A second sibling, `scrutiny-design-system` (beautiful-ui-svelte), is also a
+`file:` dependency (spec §9): zero-mutation canon components are imported by
+source path from it, and Tailwind scans its `src/` (`@source` in `app.css`).
+Any deploy before these repos move to a public pin needs both checkouts
+present at build time.
 
 ```sh
 pnpm install
