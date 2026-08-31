@@ -6,7 +6,7 @@
 	 * (issue #10) that canon does not model — a static brand header (no
 	 * workspace menu; "the menu carries no other settings entry", spec §9),
 	 * Investigations rows with timestamp + unseen dot + hover-close, the
-	 * Settings dock at the bottom, and a frameless 40px stub. 
+	 * Settings dock at the bottom, and a frameless 40px stub.
 	 *
 	 * This vendored copy is PERMANENT app code (spec §9 tier two): canon
 	 * is a faithful port of beautiful-ui and is never customized for app
