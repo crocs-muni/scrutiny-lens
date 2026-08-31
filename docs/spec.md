@@ -28,6 +28,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 3. Chat quotes must match verbatim (whitespace-normalized substring) in an on-screen event's content, else the claim is dropped.
 4. AI output must pass its zod shape (schemas live in `src/lib/ai/shapes.ts`, the only copy; include length caps: titles ≤120, reasons ≤3, snippets ≤300). Failure → retry once → that item falls back (rule 5).
 5. Fallback = the event speaks for itself: its i-tags, type tag, first ~200 chars of content, marked "not interpreted". Never invented placeholder text. Skeleton on arrival and AI-down fallback are the same thing.
+6. The search pipeline's progress surface — phases, live counters, queries sent, records received, join/dedupe steps (TaskRows with expandable literal detail) — is computed deterministically from the real retrieval state. AI never writes status text there; honesty cells report degraded sources as-is.
 
 ## 3. Question → search → results
 
@@ -57,7 +58,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 
 ## 5. AI provider
 
-- Settings: endpoint (default `https://llm.ai.e-infra.cz/v1`), key (memory-only), model picked from the endpoint's live `/v1/models` list (searchable combobox), remembered locally. Temperature 0.2.
+- Settings: endpoint (default `https://llm.ai.e-infra.cz/v1`), key (memory-only), model picked from the endpoint's live `/v1/models` list (searchable combobox), remembered locally. Temperature 0.2. Appearance (light / dark / system) is also set here and remembered locally; the design system ships a `.dark` token variant.
 - In-product disclosure at the key field: "Everything you send — event contents, your questions, chat — goes to this endpoint provider."
 - Proof the model behaves: `tests/smoke/` = 5 canned questions + 5 **committed fixture events** (hashed, in-repo; live-fetch mode optional), one command, runs against the selected model. Pass = all outputs parse and fields are sane.
 
@@ -91,9 +92,10 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 - Design board (`Downloads/Scrutiny Session Explorer/*.dc.html`) = wireframe (owner refines); beautiful-ui = skin; harness = vibe.
 - bits-ui headless for: Combobox (model picker), Tooltip, ScrollArea, Popover (share), Progress.
 - Port upstream atoms: Chip, StatusPill, ValuePill, EntityChip, TextRow, SegmentedControl, Switch, Shimmer.
-- App shell: three retractable columns — left rail (sessions), center (graph canvas with a collapsible **InspectorStrip** above it showing graph summary or the selected node's detail/patch history), right (chat, first-class resident, not a drawer). Same shell hosts search (A) and results (B): center swaps search → results → session; facets on B are a collapsible second-left strip styled after shadcn-ui-blocks multi-facet-panel.
+- App shell: three retractable columns — left rail (sessions), center (graph canvas with a collapsible **InspectorStrip** above it showing graph summary or the selected node's detail/patch history), right (chat column, resident **only when a session is open** — hidden on the search and results views; a collapsed rail stub + `Ctrl+.` toggles it). Same shell hosts search (A) and results (B): center swaps search → results → session; facets on B are a collapsible second-left strip styled after shadcn-ui-blocks multi-facet-panel.
 - Citations: numbered inline pills à la Vercel AI Elements inline-citation (hover → source card with verbatim quote), plus the coordination store ringing the graph node.
 - New components: SidebarRecents (extend SidebarNav: query, timestamp, unseen dot, close), ResultCard (seed: RecommendationCard), FacetGroup (checkbox+count rows; seed: SearchList+ToolChips), ChatMessage + SourceList (citation pills), CitationMark (colored underline from GlideHighlight) **plus a citation-coordination store** linking pill ↔ prose span ↔ graph-node ring, InspectorStrip (top strip over the canvas: node detail + citations + patch history, collapsible like the side rails), Timeline (patch history entries), EmptyState, KeyField, RelayDot.
+- Result card anatomy (locked by the design board): title (AI, unmarked), snippet, identifier chips 0..n mono, warning-only status pill (shown only for retracted/provisional), icon+word counts (files / linked records / updates), publisher profile chip (kind-0 avatar+name, identicon fallback, fades in on fetch), whole-card click target with hover ring (no action buttons on faces).
 - Writing rule: **monospace = machine-made/verified (ids, tags, hashes, quotes); sans = AI-written prose.**
 - Components we expect to need from the library are tracked as aykoooo/beautiful-ui-svelte#1.
 
