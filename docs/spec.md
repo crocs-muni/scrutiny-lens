@@ -101,7 +101,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 - Graph node anatomy (locked by the design board): every node carries a kind-mapped icon (Tabler icons; neutral tile, tinted stroke only when warn), a concise title, publisher avatar+name (npub prefix in mono as fallback), relative time, and `edited ×N` only when patches exist (neutral, ink-2 mono). Product/hub adds a one-line description + icon-number counts; a metadata spoke omits both. Dense mode = rendered-pixel floors (full card → icon+mono line → icon disc); selection/hover forces full detail at any zoom.
 - Relay health surface: no always-on indicators. Per-relay status lives in Settings → Relays; on degradation a dismissible banner under the center bar ("relay x unreachable — results from the rest"); the results footer carries the same note.
 - Rail chrome: the left rail's bottom slot is the Settings dock (the menu carries no other settings entry) — stubs show it as a tile.
-- Keyboard: `Ctrl+\` sessions rail · `Ctrl+.` chat column · `Ctrl+Shift+I` DetailDrawer · `Ctrl+,` Settings. Every toggle shows its keycap in the tooltip; when ⌘K lands (deferred), all actions become palette commands.
+- Keyboard: `Ctrl+\` sessions rail · `Ctrl+.` chat column · `Ctrl+;` DetailDrawer · `Ctrl+,` Settings. Every toggle shows its keycap in the tooltip; when ⌘K lands (deferred), all actions become palette commands.
 - Writing rule: **monospace = machine-made/verified (ids, tags, hashes, quotes); sans = AI-written prose.**
 - Components we expect to need from the library are tracked as aykoooo/beautiful-ui-svelte#1.
 
