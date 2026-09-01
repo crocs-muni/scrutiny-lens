@@ -41,7 +41,7 @@ The superseded 16-doc set was removed from the tree (git history preserves it). 
 ## Workflow
 
 - **Issue first.** Every unit of work = a GitHub issue (fine-grained, per feature): title + ≤5 bullets (goal, acceptance, spec lines touched). No issue, no code.
-- **Branch** `<type>/<N>-<slug>` (feat/fix/chore/docs/test/refactor). Free to commit/push/open PRs on feature branches. Never push to main, never force-push.
+- **Branch** `<type>/<N>-<slug>` (feat/fix/chore/docs/test/refactor). Free to commit/push/open PRs on feature branches. Small changes (a bullet like the voice rule, a typo fix, a one-file chore) may be pushed straight to main as a plain commit; anything substantial takes the branch → PR path. Never force-push.
 - **TDD where it pays:** trust gates (zod shapes, verifier, citations, query translation, fabric seam, cache) get a failing test first. UI is browser-verified visually.
 - **Review pass before PR:** run `simplify`, then `code-review` (adversarial). Fix findings or file follow-ups.
 - **PR:** draft early `Refs #N`; body = What / Why / Verification / Out of scope (+ screenshots for UI); ready → `Closes #N`. Small, one idea, ~200–400 lines.
