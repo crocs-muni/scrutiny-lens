@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	clearAllLocalData,
 	dumpAllForTests,
+	initPersistence,
 	loadSettings,
 	registerSecret,
 	saveInterpretation,
@@ -14,6 +15,7 @@ import {
 const KEY = 'sk-SECRET-DO-NOT-LEAK-12345';
 
 beforeEach(async () => {
+	await initPersistence();
 	await clearAllLocalData();
 });
 
@@ -52,6 +54,27 @@ describe('API key never reaches a stored object (spec §6, ADR-018 pattern)', ()
 		await putSession({ id: 's2', title: `about ${unregistered}`, createdAt: 100 });
 		const dump = await dumpAllForTests();
 		expect(JSON.stringify(dump)).toContain(unregistered);
+	});
+
+	// Escaped secrets: a key containing " (or \, newline) never appears raw
+	// inside JSON.stringify output — the strip must cover the escaped form
+	// too, or it leaks verbatim (review H-2).
+	it('strips a secret that only exists in JSON-escaped form', async () => {
+		const escaped = 'sk-"esc"\\n-key-9876';
+		registerSecret(escaped);
+		await putSession({ id: 's3', title: `auth ${escaped}`, createdAt: 100 });
+		const serialized = JSON.stringify(await dumpAllForTests());
+		expect(serialized).not.toContain(escaped);
+		expect(serialized).not.toContain(JSON.stringify(escaped).slice(1, -1));
+	});
+
+	// Short secrets are refused at registration — otherwise 'sk-123' would
+	// redact innocent substrings out of unrelated payloads (review M-5).
+	it('refuses to register a short secret', async () => {
+		const short = 'sk-123';
+		registerSecret(short);
+		await putSession({ id: 's4', title: `about ${short}`, createdAt: 100 });
+		expect(JSON.stringify(await dumpAllForTests())).toContain(short);
 	});
 
 	it('leaves non-secret content untouched', async () => {

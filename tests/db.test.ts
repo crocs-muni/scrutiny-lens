@@ -1,6 +1,8 @@
 import 'fake-indexeddb/auto';
+import { openDB } from 'idb';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
+	DB_NAME,
 	_closeForTests,
 	appendDeadLetter,
 	clearAllLocalData,
@@ -15,7 +17,7 @@ import {
 	saveInterpretation,
 	saveSettings
 } from '$lib/db';
-import { clearDeadLetters, deadLetters, hydrateDeadLetters } from '$lib/ai/deadLetter';
+import { clearDeadLetters, deadLetters, hydrateDeadLetters, writeDeadLetter } from '$lib/ai/deadLetter';
 import type { DeadLetterEntry } from '$lib/ai/deadLetter';
 
 function letter(at: number): DeadLetterEntry {
@@ -32,7 +34,8 @@ function letter(at: number): DeadLetterEntry {
 }
 
 beforeEach(async () => {
-	await clearAllLocalData(); // wipes each test to empty, re-inits to persistent mode
+	await initPersistence();
+	await clearAllLocalData();
 });
 
 afterEach(() => {
@@ -80,11 +83,21 @@ describe('interpretations store (key eventId+model)', () => {
 		const rec = await getInterpretation('evt1', 'gpt-x');
 		expect(rec?.bySurface).toEqual({ card: { title: 'C' }, node: { title: 'N' } });
 	});
-
 	it('scopes by both key parts', async () => {
 		await saveInterpretation('evt1', 'gpt-x', 'card', { title: 'C' });
 		expect(await getInterpretation('evt1', 'other-model')).toBeNull();
 		expect(await getInterpretation('evt2', 'gpt-x')).toBeNull();
+	});
+
+	it('merges surfaces written concurrently without losing one (review H-3)', async () => {
+		await Promise.all([
+			saveInterpretation('evtC', 'm', 'card', { a: 1 }),
+			saveInterpretation('evtC', 'm', 'node', { b: 2 })
+		]);
+		expect((await getInterpretation('evtC', 'm'))?.bySurface).toEqual({
+			card: { a: 1 },
+			node: { b: 2 }
+		});
 	});
 });
 
@@ -131,9 +144,34 @@ describe('deadLetters ring', () => {
 		expect(deadLetters().length).toBe(1);
 		expect(deadLetters()[0].entityId).toBe('e1');
 	});
+	it('keeps boot-window mirror entries when hydrating (review L-8)', async () => {
+		await appendDeadLetter(letter(1));
+		writeDeadLetter({
+			entityType: 'card',
+			entityId: 'boot',
+			schemaVersion: 'v',
+			profile: 'p',
+			model: 'm',
+			payload: {},
+			reason: 'r'
+		});
+		await hydrateDeadLetters();
+		expect(deadLetters().map((e) => e.entityId)).toEqual(['e1', 'boot']);
+	});
 });
 
 describe('clear-all (spec §6)', () => {
+	it('clears all stores while another connection holds the DB open (review H-4)', async () => {
+		await saveSettings({ model: 'm1' });
+		const other = await openDB(DB_NAME, 1);
+		try {
+			await clearAllLocalData(); // store-clearing, not deleteDB, so nothing blocks
+			expect(isPersistent()).toBe(true);
+			expect(await loadSettings()).toBeNull();
+		} finally {
+			other.close();
+		}
+	});
 	it('wipes every store and re-opens an empty database', async () => {
 		await saveSettings({ model: 'm1' });
 		await putSession({ id: 's1', title: 'one', createdAt: 100 });

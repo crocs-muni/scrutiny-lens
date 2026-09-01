@@ -4,7 +4,7 @@
  * hydrates the mirror once at boot via hydrateDeadLetters().
  */
 
-import { appendDeadLetter, loadDeadLetters } from '$lib/db';
+import { DEAD_LETTER_CAP as MAX_ENTRIES, appendDeadLetter, loadDeadLetters } from '$lib/db';
 
 export interface DeadLetterEntry {
 	entityType: string;
@@ -17,7 +17,6 @@ export interface DeadLetterEntry {
 	at: number;
 }
 
-const MAX_ENTRIES = 200;
 const ring: DeadLetterEntry[] = [];
 
 export function writeDeadLetter(entry: Omit<DeadLetterEntry, 'at'>): void {
@@ -30,10 +29,15 @@ export function writeDeadLetter(entry: Omit<DeadLetterEntry, 'at'>): void {
 }
 
 /** Hydrates the mirror from the persisted ring; the layout calls this once
- * after initPersistence(). Sync readers (and tests) keep working without it. */
+ * after initPersistence(). Sync readers (and tests) keep working without it.
+ * Entries written during the boot window (mirrored but maybe not yet
+ * persisted) are newer than everything stored, so they get appended — never
+ * evicted by hydration (review L-8). */
 export async function hydrateDeadLetters(): Promise<void> {
 	const persisted = await loadDeadLetters();
-	ring.splice(0, ring.length, ...persisted.slice(-MAX_ENTRIES));
+	const lastPersistedAt = persisted.length > 0 ? persisted[persisted.length - 1].at : -Infinity;
+	const bootWindow = ring.filter((e) => e.at > lastPersistedAt);
+	ring.splice(0, ring.length, ...persisted.slice(-(MAX_ENTRIES - bootWindow.length)), ...bootWindow);
 }
 
 export function deadLetters(): readonly DeadLetterEntry[] {

@@ -15,7 +15,9 @@
 		// clobbering it — its fire-and-forget put may land after listSessions.
 		const persisted = await listSessions();
 		const known = new Set(persisted.map((s) => s.id));
-		shell.sessions = [...persisted, ...shell.sessions.filter((s) => !known.has(s.id))];
+		shell.sessions = [...persisted, ...shell.sessions.filter((s) => !known.has(s.id))].toSorted(
+			(a, b) => b.createdAt - a.createdAt
+		);
 		await hydrateDeadLetters();
 	});
 </script>
