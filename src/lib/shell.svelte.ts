@@ -1,5 +1,9 @@
 // Shell state (spec §9): three retractable columns + DetailDrawer + keyboard
-// map. In-memory only — IndexedDB persistence lands in #12 (spec §11 step 1).
+// map. Runes state is the in-memory truth; session mutations additionally
+// persist fire-and-forget via $lib/db (issue #12) and the layout hydrates
+// the rail from the store at boot.
+
+import { deleteSession, putSession } from '$lib/db';
 
 /** One investigation in the flat sessions rail (spec §0 "Session"). */
 export interface SessionRow {
@@ -51,6 +55,7 @@ class ShellState {
 			createdAt: Date.now()
 		};
 		this.sessions.unshift(row);
+		void putSession(row);
 		this.activate(row);
 	}
 
@@ -64,11 +69,13 @@ class ShellState {
 		const row = this.sessions.find((s) => s.id === id);
 		if (!row) return;
 		row.unseen = false;
+		void putSession(row);
 		this.activate(row);
 	}
 
 	closeSession(id: string) {
 		this.sessions = this.sessions.filter((s) => s.id !== id);
+		void deleteSession(id);
 		if (this.session?.id === id) {
 			this.session = null;
 			this.view = 'search';
