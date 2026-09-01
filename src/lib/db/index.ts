@@ -237,7 +237,11 @@ export async function loadDeadLetters(): Promise<DeadLetterEntry[]> {
  * in-memory wipe. */
 export async function clearAllLocalData(): Promise<void> {
 	await attempt(async (d) => {
-		const names = ['settings', 'interpretations', 'sessions', 'deadLetters'] as const;
+		// Store list comes from the live schema, not a constant: a future v2
+		// events store can't be silently skipped by clear-all. Materialize to
+		// a plain array first: fake-indexeddb rejects its own objectStoreNames
+		// object as the transaction scope (browsers accept it).
+		const names = Array.from(d.objectStoreNames);
 		const tx = d.transaction(names, 'readwrite');
 		await Promise.all(names.map((n) => tx.objectStore(n).clear()));
 		await tx.done;
