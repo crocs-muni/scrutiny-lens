@@ -48,6 +48,7 @@ The superseded 16-doc set was removed from the tree (git history preserves it). 
 - **Merge by agent only after owner's explicit chat approval.** Never push to main directly.
 - **Board:** labels = type + `in-progress`/`blocked` only; `Stuck:` comment when blocked. No milestones.
 - **Voice:** conventional commits, imperative, ≤72-char subject; no sign-offs or AI attribution; no slop words ("comprehensive", "robust", "leverage", "seamless", "This PR"); spec changes are separate `docs:` commits, never smuggled into code PRs.
+- **GitHub artifacts read as owner-written.** Anything posted under the owner's account — issue comments, PR bodies, review replies — is first-person or plain impersonal: decisions phrased as the owner's own. Never third-person about the owner ("owner ruling", "owner decision"), never agent process narration, and explain jargon plainly (the reader is the owner). (Ruled 2026-09-02 after the #12/PR-25 rewrites.)
 
 ## SDK feedback loop (desired, not optional)
 
