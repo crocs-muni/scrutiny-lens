@@ -129,6 +129,18 @@ export function handleShellKeydown(event: KeyboardEvent): boolean {
 	return true;
 }
 
+/** Boot hydration merge (issue #12): the persisted list is the newest-first
+ * base; live entries created before hydration finished (a pre-hydration
+ * newSession whose put hasn't flushed) are kept — deduped by id, everything
+ * sorted newest-first (round-2 review: layout sort was previously untested
+ * UI code). */
+export function mergeSessionLists(persisted: SessionRow[], live: SessionRow[]): SessionRow[] {
+	const known = new Set(persisted.map((s) => s.id));
+	return [...persisted, ...live.filter((s) => !known.has(s.id))].toSorted(
+		(a, b) => b.createdAt - a.createdAt
+	);
+}
+
 /** Relative time for rail rows — machine-made value, mono by the writing
  * rule (spec §9). Matches the design board's "2w ago" shape. */
 export function formatRel(createdAt: number, now = Date.now()): string {

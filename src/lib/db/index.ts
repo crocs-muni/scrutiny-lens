@@ -134,20 +134,31 @@ async function db(): Promise<IDBPDatabase<LensDB> | undefined> {
 
 /** Single failure semantics for the whole layer (spec §6, review H-1): any
  * request-level IDB error — quota, abort, a closed connection — degrades to
- * the memory-only contract instead of rejecting at the call site. */
+ * the memory-only contract instead of rejecting at the call site. The user
+ * never sees it; the developer hears about it (review T-5: a typo'd store
+ * name would otherwise die silently behind a green suite). */
 async function attempt<T>(op: (d: IDBPDatabase<LensDB>) => Promise<T>, fallback: T): Promise<T> {
 	try {
 		const d = await db();
 		return d ? await op(d) : fallback;
-	} catch {
+	} catch (err) {
+		console.warn('[db] op failed, degrading to memory-only fallback —', err);
 		return fallback;
 	}
 }
 
+/** One transaction like saveInterpretation (review T-1): the settings flow
+ * fires concurrent patches (endpoint save racing appearance toggle), and
+ * two auto-commit transactions would lose one. */
 export async function saveSettings(patch: Partial<PersistedSettings>): Promise<void> {
 	await attempt(async (d) => {
-		const existing = (await d.get('settings', SETTINGS_KEY))?.value ?? {};
-		await d.put('settings', { key: SETTINGS_KEY, value: normalize({ ...existing, ...patch }) });
+		const tx = d.transaction('settings', 'readwrite');
+		const existing = (await tx.store.get(SETTINGS_KEY))?.value ?? {};
+		await tx.store.put({
+			key: SETTINGS_KEY,
+			value: normalize({ ...existing, ...patch })
+		});
+		await tx.done;
 	}, undefined);
 }
 
@@ -206,8 +217,10 @@ export async function listSessions(): Promise<PersistedSession[]> {
 	return attempt(async (d) => (await d.getAllFromIndex('sessions', 'createdAt')).reverse(), []);
 }
 
-/** Appends and trims to the newest DEAD_LETTER_CAP inside one transaction
- * (ring semantics from issue #12). Callers treat this as fire-and-forget. */
+/** Appends and trims inside one transaction, keeping the DEAD_LETTER_CAP
+ * most recently APPENDED entries (cursor order = insertion order; identical
+ * to newest-by-`at` in real flow since `at` is stamped at write time —
+ * review T-4). Callers treat this as fire-and-forget. */
 export async function appendDeadLetter(entry: DeadLetterEntry): Promise<void> {
 	await attempt(async (d) => {
 		const tx = d.transaction('deadLetters', 'readwrite');

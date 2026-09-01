@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte';
 	import { initPersistence, listSessions } from '$lib/db';
 	import { hydrateDeadLetters } from '$lib/ai/deadLetter';
-	import { shell } from '$lib/shell.svelte';
+	import { mergeSessionLists, shell } from '$lib/shell.svelte';
 
 	let { children } = $props();
 
@@ -13,11 +13,7 @@
 		await initPersistence();
 		// Keep a session created before hydration finishes instead of
 		// clobbering it — its fire-and-forget put may land after listSessions.
-		const persisted = await listSessions();
-		const known = new Set(persisted.map((s) => s.id));
-		shell.sessions = [...persisted, ...shell.sessions.filter((s) => !known.has(s.id))].toSorted(
-			(a, b) => b.createdAt - a.createdAt
-		);
+		shell.sessions = mergeSessionLists(await listSessions(), shell.sessions);
 		await hydrateDeadLetters();
 	});
 </script>

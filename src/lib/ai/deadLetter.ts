@@ -36,7 +36,12 @@ export function writeDeadLetter(entry: Omit<DeadLetterEntry, 'at'>): void {
 export async function hydrateDeadLetters(): Promise<void> {
 	const persisted = await loadDeadLetters();
 	const lastPersistedAt = persisted.length > 0 ? persisted[persisted.length - 1].at : -Infinity;
-	const bootWindow = ring.filter((e) => e.at > lastPersistedAt);
+	// >=, not >: a boot entry stamped in the same millisecond as the newest
+	// persisted row must survive (review T-3); entries that already persisted
+	// are filtered by identity so they can't duplicate.
+	const keyOf = (e: DeadLetterEntry) => `${e.at}${e.entityType}${e.entityId}`;
+	const persistedKeys = new Set(persisted.map(keyOf));
+	const bootWindow = ring.filter((e) => e.at >= lastPersistedAt && !persistedKeys.has(keyOf(e)));
 	ring.splice(0, ring.length, ...persisted.slice(-(MAX_ENTRIES - bootWindow.length)), ...bootWindow);
 }
 

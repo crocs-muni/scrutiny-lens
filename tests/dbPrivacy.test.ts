@@ -85,4 +85,14 @@ describe('API key never reaches a stored object (spec §6, ADR-018 pattern)', ()
 			model: 'gpt-x'
 		});
 	});
+
+	// Surgical-strip guarantee (review T-2): the tests above prove the key is
+	// GONE; this proves everything around it SURVIVES — the defense removes
+	// only the key substring, not the payload's legitimate bytes.
+	it('strips only the secret substring, preserving surrounding content', async () => {
+		registerSecret(KEY);
+		await putSession({ id: 's9', title: `before ${KEY} after`, createdAt: 100 });
+		const sessions = (await dumpAllForTests()).sessions as { title: string }[];
+		expect(sessions[0].title).toBe('before  after');
+	});
 });

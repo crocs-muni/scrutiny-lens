@@ -7,6 +7,7 @@ import {
 	appendDeadLetter,
 	clearAllLocalData,
 	deleteSession,
+	dumpAllForTests,
 	getInterpretation,
 	initPersistence,
 	isPersistent,
@@ -73,6 +74,20 @@ describe('settings store (spec §6)', () => {
 		_closeForTests();
 		await initPersistence();
 		expect((await loadSettings())?.model).toBe('m1');
+		// cross-wiring guard: the row must actually live in the settings store
+		expect((await dumpAllForTests()).settings).toHaveLength(1);
+	});
+
+	it('merges concurrent patches without losing one (review T-1)', async () => {
+		await Promise.all([
+			saveSettings({ appearance: 'dark' }),
+			saveSettings({ endpoint: 'https://a/v1', model: 'm1' })
+		]);
+		expect(await loadSettings()).toEqual({
+			appearance: 'dark',
+			endpoint: 'https://a/v1',
+			model: 'm1'
+		});
 	});
 });
 
@@ -133,6 +148,33 @@ describe('deadLetters ring', () => {
 		expect(rows[199].at).toBe(205);
 	});
 
+	it('trims by append order, not by `at` (contract pin, review T-4)', async () => {
+		// Out-of-order `at` values: the ring keeps the most recently APPENDED,
+		// even when an early-appended entry carries a later timestamp.
+		for (const at of [100, 5, 50]) await appendDeadLetter(letter(at));
+		expect((await loadDeadLetters()).map((e) => e.at)).toEqual([100, 5, 50]);
+	});
+
+	it('keeps a boot entry stamped at the SAME ms as the last persisted (review T-3)', async () => {
+		const at = Date.now();
+		await appendDeadLetter(letter(at));
+		clearDeadLetters();
+		writeDeadLetter({
+			entityType: 'card',
+			entityId: 'boot-same-ms',
+			schemaVersion: 'v',
+			profile: 'p',
+			model: 'm',
+			payload: {},
+			reason: 'r'
+		});
+		// Force the boot entry to the exact boundary timestamp — immune to
+		// clock drift between the two stamping operations.
+		deadLetters()[0].at = at;
+		await hydrateDeadLetters();
+		expect(deadLetters().map((e) => e.entityId)).toEqual([`e${at}`, 'boot-same-ms']);
+	});
+
 	it('hydrates the sync mirror from the store after a reload', async () => {
 		// Awaited put: writeDeadLetter's persist is fire-and-forget by design
 		// (spec §6 best-effort), so driving it here would race _closeForTests.
@@ -161,6 +203,11 @@ describe('deadLetters ring', () => {
 });
 
 describe('clear-all (spec §6)', () => {
+	it('wipes interpretations too (round-2 coverage hole)', async () => {
+		await saveInterpretation('evt1', 'm', 'card', { title: 'C' });
+		await clearAllLocalData();
+		expect(await getInterpretation('evt1', 'm')).toBeNull();
+	});
 	it('clears all stores while another connection holds the DB open (review H-4)', async () => {
 		await saveSettings({ model: 'm1' });
 		const other = await openDB(DB_NAME, 1);
