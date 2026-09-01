@@ -2,7 +2,7 @@
 // chat column and detail drawer, rail session lifecycle, relative-time shape.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { formatRel, handleShellKeydown, resetShell, shell } from '../src/lib/shell.svelte';
+import { formatRel, handleShellKeydown, mergeSessionLists, resetShell, shell, type SessionRow } from '../src/lib/shell.svelte';
 
 function key(
 	init: { key: string; ctrl?: boolean; meta?: boolean; shift?: boolean; alt?: boolean },
@@ -123,5 +123,19 @@ describe('formatRel', () => {
 		[400 * 86_400_000, '1y ago']
 	])('maps %ims → %s', (delta, expected) => {
 		expect(formatRel(now - delta, now)).toBe(expected);
+	});
+});
+
+describe('mergeSessionLists (boot hydration, issue #12)', () => {
+	const row = (id: string, createdAt: number): SessionRow => ({ id, title: id, createdAt });
+
+	it('keeps pre-hydration live sessions, dedupes by id, sorts newest-first', () => {
+		const persisted = [row('persisted-new', 300), row('persisted-old', 100)];
+		const live = [row('boot-created', 200), row('persisted-old', 100)];
+		expect(mergeSessionLists(persisted, live).map((s) => s.id)).toEqual([
+			'persisted-new',
+			'boot-created',
+			'persisted-old'
+		]);
 	});
 });
