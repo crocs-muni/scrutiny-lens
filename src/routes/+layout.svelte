@@ -12,7 +12,7 @@
 	onMount(async () => {
 		await initPersistence();
 		// Keep a session created before hydration finishes instead of
-		// clobbering it (it will have persisted itself by then).
+		// clobbering it — its fire-and-forget put may land after listSessions.
 		const persisted = await listSessions();
 		const known = new Set(persisted.map((s) => s.id));
 		shell.sessions = [...persisted, ...shell.sessions.filter((s) => !known.has(s.id))];

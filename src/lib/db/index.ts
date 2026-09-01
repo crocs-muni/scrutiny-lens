@@ -68,7 +68,7 @@ export function registerSecret(secret: string): void {
 function stripSecrets<T>(value: T): T {
 	if (secrets.size === 0) return value;
 	let text = JSON.stringify(value);
-	for (const secret of secrets) text = text.split(secret).join('');
+	for (const secret of secrets) text = text.replaceAll(secret, '');
 	return JSON.parse(text) as T;
 }
 
