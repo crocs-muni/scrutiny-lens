@@ -82,8 +82,14 @@ export interface Transport {
 	/** One callback per relay as its slice settles (completion order), the
 	 * merged result resolving with the Promise. Skeletons/indicators need to
 	 * paint at the FIRST relay's EOSE — Promise.all would gate them on the
-	 * straggler (issue #28 critique A3). */
+	 * straggler (issue #28 critique A3). Sugar over fetchRouted with one
+	 * default route across every configured relay. */
 	fetchProgressive(filters: Filter[], onSlice: (slice: FetchSlice) => void): Promise<FetchResult>;
+	/** Route-aware fan-out (issue #28): different relay groups get different
+	 * filters (NIP-50 vs fullScanFilter vs i-tag) — routes execute
+	 * independently and concurrently, slices carry their route label so the
+	 * pipeline can attribute counts honestly. */
+	fetchRouted(routes: FetchRoute[], onSlice: (slice: FetchSlice) => void): Promise<FetchResult>;
 	/** NIP-50 capability tri-state from the relay information document
 	 * (NIP-11), cached per relay: 'supports' | 'lacks' | 'unknown'. Fetch is
 	 * non-blocking; the document is advisory, never authoritative — an
@@ -96,11 +102,20 @@ export interface Transport {
 }
 
 /** Per-relay fetch slice: the events this relay returned plus its status,
- * delivered in completion order to fetchProgressive's callback. */
+ * delivered in completion order to fetchRouted's callback. */
 export interface FetchSlice {
 	url: string;
 	events: NostrEvent[];
 	status: RelayStatus;
+	route?: string;
+}
+
+/** One fan-out leg of fetchRouted: the filter set and the relay urls it
+ * targets, carrying a label the caller invented for attribution. */
+export interface FetchRoute {
+	label: string;
+	urls: string[];
+	filters: Filter[];
 }
 
 /** NIP-50 capability from the relay information document (NIP-11): 'unknown'
@@ -235,35 +250,41 @@ class RelayTransport implements Transport {
 		filters: Filter[],
 		onSlice: (slice: FetchSlice) => void
 	): Promise<FetchResult> {
-		const filter = filters.length > 1 ? mergeFilters(...filters) : (filters[0] ?? {});
+		return this.fetchRouted([{ label: 'default', urls: this.urls, filters }], onSlice);
+	}
+
+	async fetchRouted(routes: FetchRoute[], onSlice: (slice: FetchSlice) => void): Promise<FetchResult> {
 		const settled = await Promise.all(
-			this.urls.map(async (url) => {
-				try {
-					const relay = await withTimeout(this.ensure(url), CONNECT_TIMEOUT_MS, url, 'connect');
-					const events = await withTimeout(
-						this.pool.querySync([url], filter, { maxWait: FETCH_TIMEOUT_MS }),
-						FETCH_TIMEOUT_MS,
-						url,
-						'fetch'
-					);
-					const status: RelayStatus = { url, status: 'ok' as const, count: events.length };
-					onSlice({ url, events, status });
-					return { status, events };
-				} catch (error) {
-					const timedOut = error instanceof TransportTimeoutError;
-					const status: RelayStatus = {
-						url,
-						status: timedOut ? ('timeout' as const) : ('refused' as const),
-						count: 0,
-						lastError: errorMessage(error)
-					};
-					onSlice({ url, events: [], status });
-					return { status, events: [] as NostrEvent[] };
-				}
+			routes.flatMap((route) => {
+				const filter = route.filters.length > 1 ? mergeFilters(...route.filters) : (route.filters[0] ?? {});
+				return route.urls.map(async (url) => {
+					try {
+						const relay = await withTimeout(this.ensure(url), CONNECT_TIMEOUT_MS, url, 'connect');
+						const events = await withTimeout(
+							this.pool.querySync([url], filter, { maxWait: FETCH_TIMEOUT_MS }),
+							FETCH_TIMEOUT_MS,
+							url,
+							'fetch'
+						);
+						const status: RelayStatus = { url, status: 'ok' as const, count: events.length };
+						onSlice({ url, events, status, route: route.label });
+						return { status, events };
+					} catch (error) {
+						const timedOut = error instanceof TransportTimeoutError;
+						const status: RelayStatus = {
+							url,
+							status: timedOut ? ('timeout' as const) : ('refused' as const),
+							count: 0,
+							lastError: errorMessage(error)
+						};
+						onSlice({ url, events: [], status, route: route.label });
+						return { status, events: [] as NostrEvent[] };
+					}
+				});
 			})
 		);
-		// Completion order varies; the merged set dedupes in CONFIG order,
-		// same contract as fetch() (first occurrence wins).
+		// Completion order varies; the merged set dedupes in ROUTE-input order,
+		// same first-wins contract as fetch().
 		const seen = new Set<string>();
 		const events: NostrEvent[] = [];
 		for (const { events: batch } of settled) {
