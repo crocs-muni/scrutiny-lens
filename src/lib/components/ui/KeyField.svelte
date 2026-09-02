@@ -14,7 +14,6 @@
 		id?: string;
 		value: string;
 		placeholder?: string;
-		'aria-label'?: string;
 		/** Fired on every keystroke — the caller arms the spec §6 redaction
 		 * strip here. The field itself never writes to storage. */
 		oninput: (value: string) => void;

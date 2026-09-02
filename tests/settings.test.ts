@@ -1,4 +1,4 @@
-// Settings flow (issue #11, spec §5/§6): runestone over the #12 settings
+// Settings flow (issue #11, spec §5/§6): runes state over the #12 settings
 // store — defaults → hydrate → persist-on-change; the API key stays
 // memory-only and arms the redaction strip on entry.
 

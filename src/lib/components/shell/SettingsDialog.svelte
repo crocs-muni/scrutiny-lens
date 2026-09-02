@@ -22,7 +22,7 @@
 	import { fetchModels } from '$lib/ai/models';
 	import KeyField from '$lib/components/ui/KeyField.svelte';
 	import { RELAY_MAX, RELAY_MIN, type Appearance } from '$lib/config';
-	import { clearAllLocalData, isPersistent } from '$lib/db';
+	import { clearAllLocalData } from '$lib/db';
 	import { settings } from '$lib/settings.svelte';
 
 	interface Props {
@@ -113,10 +113,23 @@
 
 	let relayDrafts = $state<string[]>(padRelayDrafts([...settings.relays]));
 	let relayError = $state('');
+	// Backdrop close applies ONLY when the press itself started on the
+	// backdrop — a text-selection drag that leaves the dialog would
+	// otherwise close it with uncommitted drafts (review #11).
+	let backdropPressed = false;
 
 	async function commitRelays(): Promise<void> {
+		// Blank drafts (padded-to-floor rows, or a row the user emptied) are
+		// "not entered yet", never a payload — committing them as entries would
+		// throw a spurious validation error on an innocent blur (review #11).
+		const drafts = relayDrafts.map((u) => u.trim()).filter((u) => u !== '');
+		if (drafts.length === settings.relays.length && drafts.every((u, i) => u === settings.relays[i])) {
+			relayError = '';
+			return;
+		}
 		try {
-			await settings.setRelays(relayDrafts);
+			await settings.setRelays(drafts);
+			relayDrafts = padRelayDrafts([...drafts]); // drop consumed blanks
 			relayError = '';
 		} catch (error) {
 			relayError = error instanceof Error ? error.message : String(error);
@@ -143,7 +156,11 @@
 <div
 	class="fixed inset-0 z-50 flex items-center justify-center bg-black/20"
 	style:animation="fade-in 180ms ease-out both"
-	onclick={(event) => event.target === event.currentTarget && onClose()}
+	onclick={(event) => {
+		if (backdropPressed && event.target === event.currentTarget) onClose();
+		backdropPressed = false;
+	}}
+	onmousedown={(event) => (backdropPressed = event.target === event.currentTarget)}
 	role="presentation"
 >
 	<div
@@ -218,7 +235,7 @@
 							placeholder={modelState === 'loading' ? 'Loading models…' : 'Search models'}
 							defaultValue={modelInput}
 							oninput={(event) => (modelInput = event.currentTarget.value)}
-							class="min-w-0 flex-1 bg-transparent px-2 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-ink-3"
+							class="min-w-0 flex-1 bg-transparent px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none placeholder:text-ink-3"
 						/>
 						<Combobox.Trigger
 							class="primitive-icon-button mr-0.5 text-ink-3 hover:bg-hover hover:text-ink"
@@ -328,11 +345,7 @@
 		<section>
 			<h3 class="mb-2 text-[12px] font-semibold tracking-wide text-ink-3 uppercase">Local data</h3>
 			<p class="mb-2 text-[11.5px] leading-relaxed text-ink-3">
-				{#if isPersistent()}
-					Settings, sessions, and interpretations live unencrypted in this browser's IndexedDB; the browser has granted persistent storage.
-				{:else}
-					Settings, sessions, and interpretations live unencrypted in this browser's IndexedDB, best-effort — the browser may evict them, and private windows keep nothing.
-				{/if}
+				Settings, sessions, and interpretations live unencrypted in this browser's IndexedDB, best-effort — the browser may evict them, and private windows keep nothing.
 			</p>
 			<button
 				type="button"

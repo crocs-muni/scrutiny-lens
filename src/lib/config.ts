@@ -7,6 +7,7 @@
 // No env import: $env/static/public typegen only includes vars present at
 // svelte-kit sync time, so referencing an unset var breaks `pnpm check` on
 // fresh clones; import.meta.env inlines the same way without that hazard.
+
 /** Relay pool bounds (spec §8: 2–4 entries). The settings editor and the
  * settings store share these — the UI greys the row controls at the bounds
  * and setRelays throws outside them. */
@@ -39,5 +40,5 @@ export type Appearance = 'light' | 'dark' | 'system';
 /** Defaults the settings store overlays. The AI-endpoint env var may point at
  * a trailing-slash URL — normalize once here so fetch paths join cleanly. */
 export const DEFAULT_ENDPOINT = (import.meta.env.PUBLIC_LLM_ENDPOINT?.trim() || SPEC_ENDPOINT).replace(/\/+$/, '');
-export const DEFAULT_RELAYS = parseRelayUrls(import.meta.env.PUBLIC_RELAY_URLS ?? '');
+export const DEFAULT_RELAYS = parseRelayUrls(import.meta.env.PUBLIC_RELAY_URLS ?? '').filter(isValidRelayUrl);
 export const DEFAULT_APPEARANCE: Appearance = 'system';

@@ -52,7 +52,7 @@ describe('env defaults', () => {
 		expect(DEFAULT_ENDPOINT).toBe('https://llm.ai.e-infra.cz/v1');
 	});
 
-	it('parses DEFAULT_RELAYS from env without invalid entries surviving', () => {
-		for (const url of DEFAULT_RELAYS) expect(typeof url).toBe('string');
+	it('DEFAULT_RELAYS carries only valid relay URLs (env entries are filtered)', () => {
+		for (const url of DEFAULT_RELAYS) expect(isValidRelayUrl(url)).toBe(true);
 	});
 });

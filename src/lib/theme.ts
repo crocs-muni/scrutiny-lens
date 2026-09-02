@@ -9,7 +9,7 @@ import type { Appearance } from '$lib/config';
 
 /** Reactive media query — read synchronously inside applyTheme so the
  * layout's theme $effect tracks both the setting and the OS preference. */
-export const prefersDark = new MediaQuery('(prefers-color-scheme: dark)');
+const prefersDark = new MediaQuery('(prefers-color-scheme: dark)');
 
 export function applyTheme(appearance: Appearance): void {
 	if (typeof document === 'undefined') return;
@@ -17,5 +17,8 @@ export function applyTheme(appearance: Appearance): void {
 	const root = document.documentElement;
 	root.classList.add('theme-switching');
 	root.classList.toggle('dark', dark);
-	requestAnimationFrame(() => root.classList.remove('theme-switching'));
+	// rAF callbacks run BEFORE the next frame's style recalc — one rAF would
+	// drop the freeze before the class flip is ever painted. Keep it through
+	// the painted frame.
+	requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switching')));
 }

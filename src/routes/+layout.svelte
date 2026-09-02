@@ -19,10 +19,13 @@
 	// silently to memory-only, so nothing in here can throw.
 	onMount(async () => {
 		await initPersistence();
+		// Settings first: the theme/relay/endpoint defaults must be the
+		// persisted ones before any dialog opens (a pre-hydration edit would
+		// otherwise be clobbered, review round #11).
+		await settings.hydrate();
 		// Keep a session created before hydration finishes instead of
 		// clobbering it — its fire-and-forget put may land after listSessions.
 		shell.sessions = mergeSessionLists(await listSessions(), shell.sessions);
-		await settings.hydrate();
 		await hydrateDeadLetters();
 	});
 </script>
