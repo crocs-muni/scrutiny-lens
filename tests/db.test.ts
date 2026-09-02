@@ -318,7 +318,7 @@ describe('schema upgrade (v1 → v2 convergence)', () => {
 
 	it('adds the createdAt index to a sessions store that lacks it', async () => {
 		// sessions exists but an older checkout never created its 'createdAt'
-		// index (spec §5 sidebar recents order) — listSessions would otherwise
+		// index (the sidebar's newest-first order, issue #10) — listSessions would otherwise
 		// NotFoundError on getAllFromIndex and degrade to [].
 		await seedLegacy(
 			(db) => {
