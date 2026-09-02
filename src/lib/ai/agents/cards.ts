@@ -61,7 +61,7 @@ export const ICON_TOKENS = [
 export type IconToken = (typeof ICON_TOKENS)[number];
 export const IconTokenEnum = z.enum(ICON_TOKENS);
 
-export type CardStatus = 'active' | 'archived' | 'retracted' | 'unknown';
+export type CardStatus = 'active' | 'retracted' | 'unknown';
 export type MatchBand = 'high' | 'medium' | 'low';
 
 export interface Snippet {
@@ -106,7 +106,7 @@ export const CardVMSchema = z.object({
 	identifiers: z.array(z.string().min(1)).min(1).max(2),
 	scheme: z.string().max(60).optional(),
 	assurance: z.string().regex(/^EAL[1-7]\+?$/).optional(),
-	status: z.enum(['active', 'archived', 'retracted', 'unknown']),
+	status: z.enum(['active', 'retracted', 'unknown']),
 	metaSegments: z.array(z.string()),
 	matchBand: z.enum(['high', 'medium', 'low']),
 	matchReasons: z.array(z.string().max(120)).max(3),
@@ -192,14 +192,12 @@ function dedupe(values: string[]): string[] {
 function deriveStatus(event: NostrEvent): CardStatus {
 	const ctx = [...tagValues(event, 'status'), ...tagValues(event, 'lifecycle')].join(' ').toLowerCase();
 	if (/retract/.test(ctx)) return 'retracted';
-	if (/archiv/.test(ctx)) return 'archived';
 	if (/activ/.test(ctx)) return 'active';
 	return 'unknown';
 }
 
 function statusLabel(status: CardStatus): string | undefined {
 	if (status === 'active') return 'Active';
-	if (status === 'archived') return 'Archived';
 	if (status === 'retracted') return 'Retracted';
 	return undefined;
 }
@@ -247,11 +245,9 @@ export function metaSegmentsRule(fields: {
 		const s = fields.status.trim();
 		const titled = /^active$/i.test(s)
 			? 'Active'
-			: /^archived$/i.test(s)
-				? 'Archived'
-				: /^retracted$/i.test(s)
-					? 'Retracted'
-					: s;
+			: /^retracted$/i.test(s)
+				? 'Retracted'
+				: s;
 		segments.push(titled);
 	}
 	return segments;

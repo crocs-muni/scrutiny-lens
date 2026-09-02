@@ -77,8 +77,9 @@ function routeSearch(
 ): FetchRoute[] {
 	const label = `${search.kind}:${search.value}`;
 	if (search.kind === 'tag') {
-		// i-tag filters are NIP-01: every relay answers them (spec §8.1 step 2).
-		return [{ label, urls: relays, filters: [indexerFilter(search.value)] }];
+		// nostr-tools Filter vs core EventFilter: same wire surface, so the cast
+		// is safe — the builder's shape is the nostr type's readonly version.
+		return [{ label, urls: relays, filters: [indexerFilter(search.value) as Filter] }];
 	}
 	// freetext: the relay capability hint decides NIP-50 vs full scan. An
 	// 'unknown' relay gets the search anyway — absent info never means
@@ -86,9 +87,9 @@ function routeSearch(
 	const lacks = relays.filter((u) => (caps.get(u) ?? 'unknown') === 'lacks');
 	const routes: FetchRoute[] = [];
 	const nip50 = relays.filter((u) => (caps.get(u) ?? 'unknown') !== 'lacks');
-	if (nip50.length > 0) routes.push({ label, urls: nip50, filters: [searchFilter(search.value)] });
+	if (nip50.length > 0) routes.push({ label, urls: nip50, filters: [searchFilter(search.value) as Filter] });
 	if (lacks.length > 0) {
-		routes.push({ label, urls: lacks, filters: [fullScanFilter()] });
+		routes.push({ label, urls: lacks, filters: [fullScanFilter() as Filter] });
 		for (const url of lacks) {
 			notices.push({
 				kind: 'capability',

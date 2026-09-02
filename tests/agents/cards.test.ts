@@ -232,10 +232,12 @@ describe('metaSegmentsRule', () => {
 		]);
 		expect(metaSegmentsRule({ scheme: 'BSI · Germany' })).toEqual(['BSI · Germany']);
 		expect(metaSegmentsRule({})).toEqual([]);
-		expect(metaSegmentsRule({ scheme: 'BSI · Germany', assurance: 'EAL4+', status: 'archived' })).toEqual([
+		// statuses get no title-case label beyond the two protocol ones —
+		// 'archived' is gone from the vocabulary (spec §2 rule 2).
+		expect(metaSegmentsRule({ scheme: 'BSI · Germany', assurance: 'EAL4+', status: 'retracted' })).toEqual([
 			'BSI · Germany',
 			'EAL4+',
-			'Archived'
+			'Retracted'
 		]);
 	});
 });

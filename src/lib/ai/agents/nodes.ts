@@ -211,7 +211,7 @@ function vulnIndicator(event: NostrEvent): { identifier: string; identifierKind:
 function deriveStatus(event: NostrEvent, retracted: boolean): z.infer<typeof StatusEnum> {
 	if (retracted) return 'retracted';
 	const v = tagValues(event, 'status')[0]?.toLowerCase();
-	if (v === 'active' || v === 'archived') return v;
+	if (v === 'active') return v;
 	return 'unknown';
 }
 

@@ -249,7 +249,7 @@ describe('runSearch — progressive emission (spec §7: skeletons instantly)', (
 			admit: () => ({ ok: true }),
 			emit: (e) => sequence.push(e)
 		});
-		const skeletons = sequence.filter((e): e is { type: 'skeleton'; cards: Array<{ id: string; interpreted: boolean }> } => e.type === 'skeleton');
+		const skeletons = sequence.filter((e): e is Extract<PipelineEvent, { type: 'skeleton' }> => e.type === 'skeleton');
 		expect(skeletons.length).toBeGreaterThan(0);
 		expect(skeletons.every((s) => s.cards.every((c) => c.interpreted === false))).toBe(true);
 	});
