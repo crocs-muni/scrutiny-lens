@@ -57,9 +57,15 @@ Subpath hosting anywhere (`/~user/lens/`) requires rebuilding with
 
 ## Configuration
 
-Config surface lands with issue #11 (`PUBLIC_RELAY_URLS` defaults, settings
-dialog). The AI key will be entered in settings, kept in memory for the tab
-only, and sent only to the endpoint the user configures.
+All configuration lives in the app's Settings dialog (endpoint, API key,
+model, relay pool, appearance). Two env vars seed first-run defaults —
+copy `.env.example` to `.env`:
+
+- `PUBLIC_RELAY_URLS` — comma-separated 2–4 default relay URLs.
+- `PUBLIC_LLM_ENDPOINT` — optional override of the spec §5 AI endpoint.
+
+The API key is entered in settings only, kept in memory for the tab, and
+sent only to the endpoint the user configures (spec §6).
 
 ## License
 
