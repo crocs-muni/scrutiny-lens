@@ -32,6 +32,9 @@ importers:
       bits-ui:
         specifier: ^2.19.0
         version: 2.19.0(@internationalized/date@3.12.3)(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@7.2.0(svelte@5.56.10)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)))(svelte@5.56.10)(typescript@6.0.3)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)))(svelte@5.56.10)
+      flexsearch:
+        specifier: ^0.8.212
+        version: 0.8.212
       idb:
         specifier: ^8.0.3
         version: 8.0.3
@@ -886,6 +889,9 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  flexsearch@0.8.212:
+    resolution: {integrity: sha512-wSyJr1GUWoOOIISRu+X2IXiOcVfg9qqBRyCPRUdLMIGJqPzMo+jMRlvE83t14v1j0dRMEaBbER/adQjp6Du2pw==}
 
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
@@ -2108,6 +2114,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
       picomatch: 4.0.5
+
+  flexsearch@0.8.212: {}
 
   fsevents@2.3.3:
     optional: true

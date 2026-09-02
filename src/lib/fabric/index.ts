@@ -58,6 +58,11 @@ import {
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { z } from 'zod';
+import { tTags } from '@scrutiny-fabric/core';
+
+/** Every value of the `t` tag on the event — core's derivation, never
+ * hand-rolled, per AGENTS.md's "all protocol work via @scrutiny-fabric/core". */
+export { tTags };
 
 /* ── Shared types: docs/types.md is the canon; re-stated here so the seam is
  * self-contained and callers import one place. ──────────────────────────────*/

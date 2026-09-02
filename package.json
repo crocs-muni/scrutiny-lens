@@ -37,6 +37,7 @@
     "ai": "^7.0.79",
     "beautiful-ui-svelte": "file:../scrutiny-design-system",
     "bits-ui": "^2.19.0",
+    "flexsearch": "^0.8.212",
     "idb": "^8.0.3",
     "isomorphic-dompurify": "^3.18.0",
     "marked": "^18.0.11",

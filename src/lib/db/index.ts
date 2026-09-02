@@ -1,8 +1,9 @@
 /**
  * IndexedDB persistence layer (spec §6; issue #12).
  * Row store: `idb` — chosen over Dexie/raw/SQLite in the decision thread on
- * issue #12. Search is NOT part of this layer: the events cache + FlexSearch
- * engine ride on top of it in a later issue (spec §11 step 2).
+ * issue #12. Search is NOT part of this layer: the events cache (issue #27)
+ * is rows only — the FlexSearch engine rides on top via the $lib/search
+ * seam (spec §11 step 2).
  *
  * Contract (spec §6):
  *  - Unencrypted by design; anything on this device/profile can read it.
@@ -17,9 +18,11 @@
  */
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { DeadLetterEntry } from '$lib/ai/deadLetter';
+import { tTags } from '$lib/fabric';
+import type { NostrEvent } from '$lib/fabric';
 
 export const DB_NAME = 'scrutiny-lens';
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 const SETTINGS_KEY = 'app';
 
 /** Ring size for the dead-letter store; deadLetter.ts imports this so the
@@ -54,11 +57,25 @@ export interface PersistedSession {
 	unseen?: boolean;
 }
 
+/** Cached fetched event (issue #27, spec §11 step 2). `ttags` is the derived
+ * list of t-tag VALUES the multiEntry index keys on — IDB has no nested-
+ * array keyPath, so the derivation denormalizes on write. No ring cap (the
+ * #12 ruling): writes ride the same attempt() degrade contract, so a
+ * QuotaExceededError skips the write and the app moves on. */
+export interface CachedEvent extends NostrEvent {
+	ttags: string[];
+}
+
 interface LensDB extends DBSchema {
 	settings: { key: string; value: { key: string; value: Partial<PersistedSettings> } };
 	interpretations: { key: [string, string]; value: PersistedInterpretation };
 	sessions: { key: string; value: PersistedSession; indexes: { createdAt: number } };
 	deadLetters: { key: number; value: DeadLetterEntry };
+	events: {
+		key: string;
+		value: CachedEvent;
+		indexes: { ttags: string; created_at: number };
+	};
 }
 
 let conn: IDBPDatabase<LensDB> | undefined;
@@ -135,6 +152,25 @@ async function open(): Promise<void> {
 				}
 				if (!db.objectStoreNames.contains('deadLetters')) {
 					db.createObjectStore('deadLetters', { keyPath: 'id', autoIncrement: true });
+				}
+				if (!db.objectStoreNames.contains('events')) {
+					// v3 (issue #27): the local events cache. Both indexes are
+					// cheap to rebuild — the cache is re-populated from relays.
+					const events = db.createObjectStore('events', { keyPath: 'id' });
+					events.createIndex('ttags', 'ttags', { multiEntry: true });
+					events.createIndex('created_at', 'created_at');
+				} else {
+					// Foreign older schemas may hold an 'events' store with no
+					// (or stale) indexes — degrade would otherwise silently eat
+					// tag and chronological reads forever (same hole class as
+					// the sessions createdAt backfill above).
+					const events = transaction.objectStore('events');
+					if (!events.indexNames.contains('ttags')) {
+						events.createIndex('ttags', 'ttags', { multiEntry: true });
+					}
+					if (!events.indexNames.contains('created_at')) {
+						events.createIndex('created_at', 'created_at');
+					}
 				}
 			}
 		});
@@ -264,6 +300,43 @@ export async function loadDeadLetters(): Promise<DeadLetterEntry[]> {
 	return attempt(async (d) => await d.getAll('deadLetters'), []);
 }
 
+/** Caches a fetched event (issue #27). Immutability means upsert-by-id; the
+ * derived ttags array feeds the multiEntry index. As everywhere in this
+ * layer, a write failure — quota exceeded included — degrades silently
+ * (spec §6): the event is simply not cached. Returns the redacted row as
+ * stored (never the raw event), or null on a skipped write — the search
+ * seam needs both to index exactly what the cache holds. */
+export async function cacheEvent(event: NostrEvent): Promise<CachedEvent | null> {
+	const row: CachedEvent = {
+		...event,
+		ttags: tTags(event)
+	};
+	return attempt(async (d) => {
+		const normalized = normalize(row);
+		await d.put('events', normalized);
+		return normalized;
+	}, null);
+}
+
+export async function getEvent(id: string): Promise<CachedEvent | null> {
+	return attempt(async (d) => (await d.get('events', id)) ?? null, null);
+}
+
+/** Event ids carrying a t-tag value — deterministic tag lookup stays out of
+ * the search engine by spec §3 ("post-filters on the result set"). */
+export async function getEventsByTag(value: string): Promise<string[]> {
+	return attempt(
+		async (d) => (await d.getAllKeysFromIndex('events', 'ttags', value)).map(String),
+		[]
+	);
+}
+
+/** Every cached event oldest-first (created_at index) — the search seam
+ * hydrates its engine from this list at boot (issue #27). */
+export async function listEvents(): Promise<CachedEvent[]> {
+	return attempt(async (d) => await d.getAllFromIndex('events', 'created_at'), []);
+}
+
 /** "Clear all local data" (spec §6). Records are cleared through our own
  * connection in one transaction — NOT via deleteDB: a delete blocked by
  * another tab's open connection pends forever AND wedges every later open
@@ -273,10 +346,11 @@ export async function loadDeadLetters(): Promise<DeadLetterEntry[]> {
  * in-memory wipe. */
 export async function clearAllLocalData(): Promise<void> {
 	await attempt(async (d) => {
-		// Store list comes from the live schema, not a constant: a future v2
-		// events store can't be silently skipped by clear-all. Materialize to
-		// a plain array first: fake-indexeddb rejects its own objectStoreNames
-		// object as the transaction scope (browsers accept it).
+		// Store list comes from the live schema, not a constant: a later
+		// schema's store (the v3 events store landed this way) can never be
+		// silently skipped by clear-all. Materialize to a plain array first:
+		// fake-indexeddb rejects its own objectStoreNames object as the
+		// transaction scope (browsers accept it).
 		const names = Array.from(d.objectStoreNames);
 		const tx = d.transaction(names, 'readwrite');
 		await Promise.all(names.map((n) => tx.objectStore(n).clear()));
