@@ -5,7 +5,8 @@ import {
 	FETCH_TIMEOUT_MS,
 	COUNT_TIMEOUT_MS,
 	type PoolLike,
-	type RelayLike
+	type RelayLike,
+	type FetchSlice
 } from '$lib/net/transport';
 import type { NostrEvent } from 'nostr-tools/core';
 import type { Filter } from 'nostr-tools/filter';
@@ -193,5 +194,113 @@ describe('relay transport', () => {
 			expect(relay.close).toHaveBeenCalledTimes(1);
 		}
 		expect(pool.destroy).toHaveBeenCalledTimes(1);
+	});
+});
+
+// ── Issue #28: capability detection + progressive per-relay slices ──────────
+
+describe('relay capability detection (NIP-11 tri-state, issue #28)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function withInfoDocument(body: unknown, status = 200) {
+		const spy = vi.fn(async () => new Response(JSON.stringify(body), { status }));
+		vi.stubGlobal('fetch', spy);
+		return spy;
+	}
+
+	it('reports "supports" when supported_nips includes 50', async () => {
+		const spy = withInfoDocument({ supported_nips: [1, 50] });
+		const transport = createTransport({ urls: ['wss://a'] }, () => new FakePool({}));
+		expect(await transport.capability('wss://a')).toBe('supports');
+		expect(spy).toHaveBeenCalledTimes(1);
+	});
+
+	it('reports "lacks" when the info document responds without 50', async () => {
+		withInfoDocument({ supported_nips: [1, 9] });
+		const transport = createTransport({ urls: ['wss://b'] }, () => new FakePool({}));
+		expect(await transport.capability('wss://b')).toBe('lacks');
+	});
+
+	it('reports "unknown" when the info document is unreachable (CORS/404/timeout)', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => {
+				throw new TypeError('Failed to fetch');
+			})
+		);
+		const transport = createTransport({ urls: ['wss://c'] }, () => new FakePool({}));
+		expect(await transport.capability('wss://c')).toBe('unknown');
+	});
+
+	it('hits the http(s) mirror of the ws(s) URL with the NIP-11 accept header', async () => {
+		const spy = withInfoDocument({ supported_nips: [50] });
+		const transport = createTransport({ urls: ['wss://relay.example:8080/x'] }, () => new FakePool({}));
+		await transport.capability('wss://relay.example:8080/x');
+		const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+		expect(url).toBe('https://relay.example:8080/x');
+		expect((init.headers as Record<string, string>)['Accept']).toContain('application/nostr+json');
+	});
+
+	it('fetches the info document once per relay (cached)', async () => {
+		const spy = withInfoDocument({ supported_nips: [50] });
+		const transport = createTransport({ urls: ['wss://a'] }, () => new FakePool({}));
+		await transport.capability('wss://a');
+		await transport.capability('wss://a');
+		expect(spy).toHaveBeenCalledTimes(1);
+	});
+
+	it('a pending query returns immediately-cached tri-state of "unknown"', async () => {
+		const never = new Promise<Response>(() => {});
+		vi.stubGlobal('fetch', vi.fn(() => never));
+		const transport = createTransport({ urls: ['wss://d'] }, () => new FakePool({}));
+		expect(transport.capabilitySync('wss://d')).toBe('unknown');
+	});
+});
+
+describe('fetchProgressive (issue #28: per-relay EOSE slices)', () => {
+	it('delivers a slice per relay completion before the merged result', async () => {
+		vi.useFakeTimers();
+		const eFast = makeEvent('11'.repeat(32));
+		const eSlow = makeEvent('22'.repeat(32));
+		const pool = new FakePool({
+			'wss://slow': { kind: 'ok', events: [eSlow] },
+			'wss://fast': { kind: 'ok', events: [eFast] }
+		});
+		// Delayed 'slow' via fake timers: slices must arrive in COMPLETION
+		// order, not config order.
+		const base = pool.querySync.bind(pool);
+		pool.querySync = async (urls, filter) => {
+			await new Promise((r) => setTimeout(r, urls[0] === 'wss://slow' ? 40 : 0));
+			return base(urls, filter);
+		};
+		const transport = createTransport({ urls: ['wss://slow', 'wss://fast'] }, () => pool);
+
+		const slices: FetchSlice[] = [];
+		const pending = transport.fetchProgressive([{ kinds: [1] }], (slice) => slices.push(slice));
+
+		await vi.advanceTimersByTimeAsync(50);
+		const result = await pending;
+		expect(slices.map((s) => s.url)).toEqual(['wss://fast', 'wss://slow']);
+		expect(slices[0].events.map((e) => e.id)).toEqual([eFast.id]);
+		expect(slices[1].events.map((e) => e.id)).toEqual([eSlow.id]);
+		expect(result.events.map((e) => e.id)).toEqual([eSlow.id, eFast.id]); // config order dedupe
+	});
+
+	it('a failed relay arrives as a slice carrying its error status, not silence', async () => {
+		const e = makeEvent('33'.repeat(32));
+		const pool = new FakePool({
+			'wss://good': { kind: 'ok', events: [e] },
+			'wss://bad': { kind: 'refused' }
+		});
+		const transport = createTransport({ urls: ['wss://good', 'wss://bad'] }, () => pool);
+
+		const slices: FetchSlice[] = [];
+		const result = await transport.fetchProgressive([{}], (slice) => slices.push(slice));
+
+		expect(slices).toHaveLength(2);
+		expect(slices.find((s) => s.url === 'wss://bad')?.status.status).toBe('refused');
+		expect(result.events.map((e2) => e2.id)).toEqual([e.id]);
 	});
 });
