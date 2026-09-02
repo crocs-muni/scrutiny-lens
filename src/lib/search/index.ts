@@ -11,7 +11,7 @@
  * cover it.
  */
 
-import { cacheEvent, listEvents, tTagsOf } from '$lib/db';
+import { cacheEvent, listEvents} from '$lib/db';
 import type { NostrEvent } from '$lib/fabric';
 
 /** The narrow contract any engine swap must satisfy. */
@@ -50,7 +50,10 @@ async function createFlexSearchEngine(): Promise<EventsSearch> {
 
 let enginePromise: Promise<EventsSearch> | null = null;
 
-/** Lazily creates the engine and hydrates it from the events cache. */
+/** Lazily creates the engine and hydrates it from the events cache. A
+ * REJECTED creation (stale chunk after a deploy, flaky network, engine
+ * constructor throwing) is dropped so the next call retries — the memoized
+ * rejection would otherwise poison search for the session's lifetime. */
 function engine(): Promise<EventsSearch> {
 	enginePromise ??= (async () => {
 		const search = await createFlexSearchEngine();
@@ -59,26 +62,43 @@ function engine(): Promise<EventsSearch> {
 		}
 		return search;
 	})();
+	enginePromise.catch(() => {
+		enginePromise = null;
+	});
 	return enginePromise;
+}
+
+/** Degrade posture matches $lib/db's attempt() (spec §6): the user never
+ * sees an engine failure (empty/"local cache only" results are honest),
+ * the developer hears about it. */
+function warn(error: unknown): void {
+	console.warn(`[search] engine unavailable — ${error instanceof Error ? error.message : String(error)}`);
 }
 
 const DEFAULT_LIMIT = 50;
 
 /** Ranked, typo-tolerant id matches over the local cache. */
 export async function searchText(query: string, limit = DEFAULT_LIMIT): Promise<string[]> {
-	return (await engine()).search(query, limit);
+	try {
+		return (await engine()).search(query, limit);
+	} catch (error) {
+		warn(error);
+		return [];
+	}
 }
 
-/** Write-through set: keeps the row cache and the search index from ever
- * diverging (issue #27 — "fetched events land in the store"). Both write
- * paths degrade silently when their store is unavailable. */
+/** Write-through set: both halves see exactly the same, redacted row —
+ * indexEvent adds only what the cache actually stored (never the raw
+ * event), and an add is skipped when the write degraded (spec §6), so the
+ * store and the engine can't diverge. */
 export async function indexEvent(event: NostrEvent): Promise<void> {
-	await cacheEvent(event);
-	(await engine()).add({
-		id: event.id,
-		content: event.content,
-		tags: tTagsOf(event)
-	});
+	const row = await cacheEvent(event);
+	if (row === null) return;
+	try {
+		(await engine()).add({ id: row.id, content: row.content, tags: row.ttags });
+	} catch (error) {
+		warn(error);
+	}
 }
 
 /** Test seam — drops the engine and its hydration promise. */

@@ -164,6 +164,18 @@ async function open(): Promise<void> {
 					const events = db.createObjectStore('events', { keyPath: 'id' });
 					events.createIndex('ttags', 'ttags', { multiEntry: true });
 					events.createIndex('created_at', 'created_at');
+				} else {
+					// Foreign older schemas may hold an 'events' store with no
+					// (or stale) indexes — degrade would otherwise silently eat
+					// tag and chronological reads forever (same hole class as
+					// the sessions createdAt backfill above).
+					const events = transaction.objectStore('events');
+					if (!events.indexNames.contains('ttags')) {
+						events.createIndex('ttags', 'ttags', { multiEntry: true });
+					}
+					if (!events.indexNames.contains('created_at')) {
+						events.createIndex('created_at', 'created_at');
+					}
 				}
 			}
 		});
@@ -296,13 +308,19 @@ export async function loadDeadLetters(): Promise<DeadLetterEntry[]> {
 /** Caches a fetched event (issue #27). Immutability means upsert-by-id; the
  * derived ttags array feeds the multiEntry index. As everywhere in this
  * layer, a write failure — quota exceeded included — degrades silently
- * (spec §6): the event is simply not cached. */
-export async function cacheEvent(event: NostrEvent): Promise<void> {
+ * (spec §6): the event is simply not cached. Returns the redacted row as
+ * stored (never the raw event), or null on a skipped write — the search
+ * seam needs both to index exactly what the cache holds. */
+export async function cacheEvent(event: NostrEvent): Promise<CachedEvent | null> {
 	const row: CachedEvent = {
 		...event,
 		ttags: tTagsOf(event)
 	};
-	await attempt(async (d) => void (await d.put('events', normalize(row))), undefined);
+	return attempt(async (d) => {
+		const normalized = normalize(row);
+		await d.put('events', normalized);
+		return normalized;
+	}, null);
 }
 
 export async function getEvent(id: string): Promise<CachedEvent | null> {

@@ -87,6 +87,28 @@ describe('events store (spec §6)', () => {
 		expect(await getEvent('e1')).toBeNull();
 		expect(await listEvents()).toEqual([]);
 	});
+	it('converges an existing events store that lacks its indexes', async () => {
+		// A foreign v2 schema with an 'events' store but no indexes: without
+		// backfill, tag and chronological reads degrade to [] forever.
+		_closeForTests();
+		await deleteDB(DB_NAME);
+		const legacy = await openDB(DB_NAME, 2, {
+			upgrade(db) {
+				db.createObjectStore('settings', { keyPath: 'key' });
+				db.createObjectStore('interpretations', { keyPath: ['eventId', 'model'] });
+				const sessions = db.createObjectStore('sessions', { keyPath: 'id' });
+				sessions.createIndex('createdAt', 'createdAt');
+				db.createObjectStore('deadLetters', { keyPath: 'id', autoIncrement: true });
+				db.createObjectStore('events', { keyPath: 'id' });
+			}
+		});
+		legacy.close();
+		await initPersistence();
+
+		await cacheEvent(event('e1'));
+		expect(await getEventsByTag('cve-2017-15361')).toEqual(['e1']);
+		expect((await listEvents()).map((e) => e.id)).toEqual(['e1']);
+	});
 });
 
 describe('schema upgrade (v2 → v3: events store, issue #27)', () => {
