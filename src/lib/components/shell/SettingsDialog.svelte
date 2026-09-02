@@ -34,6 +34,18 @@
 	// ── AI provider ──────────────────────────────────────────────────────────
 
 	let endpointDraft = $state(settings.endpoint);
+	// Focus management for the hand-rolled modal: land in the first field on
+	// open (the background is inert, +page.svelte),
+	// put focus back where it came from on unmount.
+	let endpointEl: HTMLInputElement | null = $state(null);
+	let returnFocusTo: Element | null = null;
+	$effect(() => {
+		if (returnFocusTo === null) returnFocusTo = document.activeElement;
+		endpointEl?.focus();
+		return () => {
+			(returnFocusTo as HTMLElement | null)?.focus?.();
+		};
+	});
 
 	function commitEndpoint(): void {
 		const endpoint = endpointDraft.trim();
@@ -115,13 +127,13 @@
 	let relayError = $state('');
 	// Backdrop close applies ONLY when the press itself started on the
 	// backdrop — a text-selection drag that leaves the dialog would
-	// otherwise close it with uncommitted drafts (review #11).
+	// otherwise close it with uncommitted drafts.
 	let backdropPressed = false;
 
 	async function commitRelays(): Promise<void> {
 		// Blank drafts (padded-to-floor rows, or a row the user emptied) are
 		// "not entered yet", never a payload — committing them as entries would
-		// throw a spurious validation error on an innocent blur (review #11).
+		// throw a spurious validation error on an innocent blur.
 		const drafts = relayDrafts.map((u) => u.trim()).filter((u) => u !== '');
 		if (drafts.length === settings.relays.length && drafts.every((u, i) => u === settings.relays[i])) {
 			relayError = '';
@@ -188,6 +200,7 @@
 			<label for="settings-endpoint" class="mb-1 block text-[12.5px] text-ink-2">Endpoint</label>
 			<input
 				id="settings-endpoint"
+				bind:this={endpointEl}
 				bind:value={endpointDraft}
 				onblur={commitEndpoint}
 				onkeydown={(event) => event.key === 'Enter' && commitEndpoint()}
@@ -219,6 +232,7 @@
 				<Combobox.Root
 					type="single"
 					value={settings.model}
+					allowDeselect={false}
 					onValueChange={(value) => {
 						void settings.setModel(value);
 						// bits-ui mirrors the picked label into its internal input
@@ -265,7 +279,11 @@
 									</Combobox.Item>
 								{:else}
 									<div class="px-2 py-1.5 text-[12.5px] text-ink-3">
-										{modelState === 'error' ? modelError : 'No matching models.'}
+										{modelState === 'loading'
+											? 'Loading models…'
+											: modelState === 'error'
+												? modelError
+												: 'No matching models.'}
 									</div>
 								{/each}
 							</Combobox.Viewport>

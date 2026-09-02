@@ -37,7 +37,6 @@
 	/>
 	<button
 		type="button"
-		tabindex={-1}
 		aria-label={revealed ? 'Hide API key' : 'Show API key'}
 		onclick={() => (revealed = !revealed)}
 		class="primitive-icon-button mr-0.5 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"

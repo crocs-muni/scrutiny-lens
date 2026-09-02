@@ -20,7 +20,8 @@
 <svelte:window onkeydown={handleShellKeydown} />
 
 <Tooltip.Provider delayDuration={350}>
-	<div class="flex h-dvh w-full gap-3 p-3">
+	<!-- inert while settings is open: keyboard focus stays inside the modal. -->
+	<div class="flex h-dvh w-full gap-3 p-3" inert={shell.settingsOpen ? true : undefined}>
 		<SidebarRecents
 			collapsed={!shell.railOpen}
 			sessions={shell.sessions}

@@ -21,7 +21,7 @@
 		await initPersistence();
 		// Settings first: the theme/relay/endpoint defaults must be the
 		// persisted ones before any dialog opens (a pre-hydration edit would
-		// otherwise be clobbered, review round #11).
+		// otherwise be clobbered).
 		await settings.hydrate();
 		// Keep a session created before hydration finishes instead of
 		// clobbering it — its fire-and-forget put may land after listSessions.

@@ -46,6 +46,16 @@ describe('keyboard map', () => {
 		expect(shell.settingsOpen).toBe(false);
 	});
 
+	it('Esc already consumed by a floating layer does not also close settings', () => {
+		// bits-ui layers (e.g. the model combobox) preventDefault a consumed
+		// Escape — the shell must not treat it as a dialog dismiss too.
+		handleShellKeydown(key({ key: ',', ctrl: true }, nonTypingTarget));
+		const event = key({ key: 'Escape' }, nonTypingTarget);
+		event.preventDefault();
+		expect(handleShellKeydown(event)).toBe(false);
+		expect(shell.settingsOpen).toBe(true);
+	});
+
 	it('Ctrl+. and Ctrl+; are inert until a session is open', () => {
 		expect(handleShellKeydown(key({ key: '.', ctrl: true }, nonTypingTarget))).toBe(false);
 		expect(handleShellKeydown(key({ key: ';', ctrl: true }, nonTypingTarget))).toBe(false);

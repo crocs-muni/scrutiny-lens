@@ -24,10 +24,10 @@ export const defaultSettings = {
 };
 
 class Settings {
-	endpoint = $state(DEFAULT_ENDPOINT);
-	model = $state('');
-	relays = $state<string[]>([...DEFAULT_RELAYS]);
-	appearance = $state<Appearance>(DEFAULT_APPEARANCE);
+	endpoint = $state(defaultSettings.endpoint);
+	model = $state(defaultSettings.model);
+	relays = $state<string[]>([...defaultSettings.relays]);
+	appearance = $state<Appearance>(defaultSettings.appearance);
 	/** Memory-only by spec §6; registerSecret strips it from every write path. */
 	apiKey = $state('');
 

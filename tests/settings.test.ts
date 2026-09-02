@@ -104,7 +104,7 @@ describe('API key (spec §6: memory-only, strip armed)', () => {
 	it('registerSecret is called when the key is set — later writes are stripped', async () => {
 		settings.setApiKey(KEY);
 		// Any later write accidentally embedding the key is redacted (spec §6;
-		// the db layer only redacts REGISTered secrets — this proves #11 wired it).
+		// the db layer only redacts registered secrets — this proves #11 wired it).
 		await putSession({ id: 's1', title: `investigation ${KEY} note`, createdAt: 1 });
 		expect(JSON.stringify(await dumpAllForTests())).not.toContain(KEY);
 	});
