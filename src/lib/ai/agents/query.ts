@@ -1,285 +1,174 @@
 /**
- * W4 · Query agent — free-text query → interpretation + relay filter plan.
- *
- * The LLM only proposes the FILTER PLAN, as a bare JSON array (the "plain-text
- * JSON-array workaround": small models emit a flat array far more reliably than
- * a nested wrapper object; the boundary zod-gates it anyway). Everything else
- * in the returned interpretation — steps, interpretation/summary text, and the
- * queryType classification — is derived deterministically from the validated
- * plan, so the UI narration can never drift from the filters that will run.
- *
- * Validation contract (J1 AC7): identifier filters whose `prefix:value` prefix
- * is not in KNOWN_INDEXER_PREFIXES are rejected with a reason; the rejection is
- * visible as an InterpretingStep. An empty post-validation plan degrades to a
- * single free-text filter over the raw query — the batch never returns nothing
- * to search.
+ * Query translation (issue #28, spec §1/§3): identifiers route DIRECTLY to
+ * tag searches, never through AI; prose goes through one zod-gated AI call
+ * (≤3 searches, prefixes open per IR-4); no key / AI-down → one free-text
+ * search, never nothing.
  */
 
 import { z } from 'zod';
-import {
-	generateStructured,
-	type AIResult,
-	type AIKind,
-	type CallLLM
-} from '../output';
-import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
+import type { CallLLM, AIResult } from '$lib/ai/output';
+import { generateStructured } from '$lib/ai/output';
+import type { ProviderOverrideInput } from '$lib/ai/provider';
 
-/** Indexer prefixes the query agent MAY emit (docs/types.md §Indexer prefixes). */
-export const KNOWN_INDEXER_PREFIXES = ['cc', 'cve', 'cpe', 'cwe', 'vendor', 'pp'] as const;
-const KNOWN_PREFIXES: readonly string[] = KNOWN_INDEXER_PREFIXES;
+export type SearchRequest = { kind: 'tag' | 'text'; value: string; source: 'identifier' | 'ai' | 'fallback' };
+export type SearchPlan = { searches: SearchRequest[] };
 
-export type QueryType = 'identifier' | 'vulnerability' | 'certificate' | 'product' | 'base';
-
-/** Query agent output filter (docs/types.md §Wire types). */
-export interface SearchFilter {
-	mode: 'browse' | 'identifier' | 'freetext';
-	identifier?: string;
-	search?: string;
-	types?: string[];
-}
-
-/** InterpretingVM step (view-models.md §3.1). */
-export interface InterpretingStep {
-	kind: 'recognized' | 'queried' | 'widened' | 'traversing' | 'resolved';
-	label: string;
-	detail?: string;
-	prefix?: string;
-	value?: string;
-}
-
-export interface QueryInterpretation {
-	filters: SearchFilter[];
-	queryType: QueryType;
-	interpretation: string;
-	steps: InterpretingStep[];
-	summary: string;
-}
-
-export interface InterpretQueryOptions {
-	query: string;
-	profile?: string;
-	provider?: { name?: string; baseUrl?: string; model?: string; apiKey?: string };
-	/** Test seam for offline tests. */
-	callLLM?: CallLLM;
-}
+/** Indexer prefixes AI is GUIDED toward (protocol passes unknown through opaque — spec §3). */
+export const GUIDED_PREFIXES = [
+	'cve',
+	'cwe',
+	'cpe',
+	'purl',
+	'cc',
+	'fips',
+	'fcc-id',
+	'swid',
+	'gtin',
+	'pp',
+	'vendor',
+	'scheme',
+	'cc-cert-id',
+	'cc-scheme'
+] as const;
 
 /* ------------------------------------------------------------------ *
- * LLM boundary schema — the bare filter array
+ * Deterministic: identifier detection (spec §2 rule 2 — never AI)
  * ------------------------------------------------------------------ */
 
-const FilterDraft = z.object({
-	mode: z.enum(['browse', 'identifier', 'freetext']),
-	identifier: z.string().min(1).optional(),
-	search: z.string().min(1).optional(),
-	types: z.array(z.string().min(1)).optional()
-});
-const FilterPlanSchema = z.array(FilterDraft).max(8);
+// Bare CVE / GHSA tokens in prose (per spec §1 these route directly to tag
+// searches; typed prefix:value tokens do too, opaquely per IR-4).
+const CVE_RE = /\bCVE-\d{4}-\d{4,7}\b/gi;
+const GHSA_RE = /\bGHSA(?:-[A-Za-z0-9]{4}){3}\b/gi;
+const PURL_RE = /\bpkg:[A-Za-z0-9+._/-]+@[^\s,;"'<>]+/gi;
+const PREFIX_VALUE_RE = /\b[A-Za-z0-9-]+:[^\s,;"'<>]+/g;
 
-const QUERY_PLAN_INSTRUCTIONS = [
-	'You are the SCRUTINY Lens query interpreter. Turn the user query into a relay filter plan.',
-	'',
-	'Respond with a BARE JSON ARRAY of filter objects — no prose, no markdown fences, no wrapper object. Each filter is one of:',
-	'- {"mode":"identifier","identifier":"<prefix>:<value>"} — when the query names a known identifier. Allowed prefixes ONLY: cc, cve, cpe, cwe, vendor, pp. Keep casing/values exactly as written (e.g. cve:CVE-2017-15361, cc:BSI-DSZ-CC-0814-2012, cpe:2.3:h:infineon:*).',
-	'- {"mode":"freetext","search":"<terms>"} — for conceptual/product queries; keep the query’s salient terms (product names, vendors, attack names).',
-	'- {"mode":"browse","types":["<prefix>"]} — when the user only wants to browse one category.',
-	'',
-	'You MAY combine identifier filters with one freetext filter for the remaining concepts. Identifiers first. Never invent a prefix outside the allowed list; leave unrecognized tokens to the freetext filter instead. Return an exact identifier only when it actually appears in the query.'
+export function detectIdentifiers(question: string): string[] {
+	const out = new Set<string>();
+	for (const m of question.matchAll(CVE_RE)) out.add(`cve:${m[0].replace(/cve/i, 'CVE')}`);
+	for (const m of question.matchAll(GHSA_RE)) out.add(`ghsa:${m[0].replace(/ghsa/i, 'GHSA')}`);
+	const purls = new Set<string>([...question.matchAll(PURL_RE)].map((m) => m[0]));
+	for (const purl of purls) out.add(`purl:${purl}`);
+	for (const m of question.matchAll(PREFIX_VALUE_RE)) {
+		// pkg: tokens are already countable as purls; skip duplicates.
+		if (!purls.has(m[0])) out.add(m[0]);
+	}
+	return [...out];
+}
+
+/** The shared prefix:value grammar used for validation (never rejecting an
+ * unknown prefix — IR-4's pass-through guarantee). */
+const TAG_VALUE = /^[a-z0-9-]+:\S+$/i;
+
+// eslint-disable-next-line no-unused-vars
+const isTag = (v: string): boolean => TAG_VALUE.test(v);
+
+/* ------------------------------------------------------------------ *
+ * LLM plan (one call, ≤3, guided toward the guided prefixes — spec §5)
+ * ------------------------------------------------------------------ */
+
+const SearchDraft = z.object({
+	kind: z.enum(['tag', 'text']),
+	value: z.string().min(1).max(300)
+});
+const SearchPlanSchema = z.array(SearchDraft).min(1).max(3);
+
+const INSTRUCTIONS = [
+	'Turn the user question into searches for a nostr security-asset intelligence relay.',
+	'Emit ≤3 searches, prefix:value or free text, guided toward these prefixes when plausible:',
+	GUIDED_PREFIXES.join(', '),
+	'Do not interpret interrogative wrapper language (a "still certified" clause becomes a post-filter, not a search).',
+	'No other prose.'
 ].join('\n');
 
-/* ------------------------------------------------------------------ *
- * Deterministic: prefix validation
- * ------------------------------------------------------------------ */
-
-const PREFIX_VALUE = /^([A-Za-z][A-Za-z0-9-]*):(\S+)$/;
-
-interface Rejection {
-	identifier: string;
-	prefix: string;
-	reason: string;
+export interface TranslateOptions {
+	question: string;
+	provider?: ProviderOverrideInput;
+	callLLM: CallLLM;
+	signal?: AbortSignal;
+	profile?: string;
 }
-
-/**
- * Validate an LLM-proposed plan against KNOWN_INDEXER_PREFIXES. Unknown-prefix
- * identifier filters (e.g. `xyz:123`) are rejected with a reason; everything
- * well-formed survives, deduplicated.
- */
-export function validatePlan(plan: SearchFilter[]): { filters: SearchFilter[]; rejections: Rejection[] } {
-	const filters: SearchFilter[] = [];
-	const rejections: Rejection[] = [];
-	const seen = new Set<string>();
-
-	for (const f of plan) {
-		if (f.mode === 'identifier') {
-			const id = (f.identifier ?? '').trim();
-			const m = PREFIX_VALUE.exec(id);
-			if (m) {
-				const prefix = m[1].toLowerCase();
-				if (!KNOWN_PREFIXES.includes(prefix)) {
-					rejections.push({
-						identifier: id,
-						prefix,
-						reason: `Unknown indexer prefix "${prefix}" (allowed: ${KNOWN_INDEXER_PREFIXES.join(', ')})`
-					});
-					continue;
-				}
-			}
-			const filter: SearchFilter = { mode: 'identifier', identifier: id };
-			const key = JSON.stringify(filter);
-			if (!seen.has(key)) {
-				seen.add(key);
-				filters.push(filter);
-			}
-			continue;
-		}
-		const filter: SearchFilter = { mode: f.mode };
-		if (f.search !== undefined) filter.search = f.search;
-		if (f.types !== undefined) filter.types = f.types;
-		const key = JSON.stringify(filter);
-		if (!seen.has(key)) {
-			seen.add(key);
-			filters.push(filter);
-		}
-	}
-
-	return { filters, rejections };
-}
-
-/* ------------------------------------------------------------------ *
- * Deterministic: queryType classification
- * ------------------------------------------------------------------ */
-
-const IDENTIFIER_TOKEN = /\b(?:cc|cve|cpe|cwe|vendor|pp):[^\s,;]+/gi;
-
-/**
- * Classify the query:
- * - exactly one `{prefix:value}` token and the whole query IS that token → 'identifier'
- * - mentions a CVE → 'vulnerability'
- * - mentions a certificate → 'certificate'
- * - a bare keyword (one word, nothing recognized) → 'base'
- * - otherwise → 'product'
- */
-export function classifyQueryType(query: string): QueryType {
-	const trimmed = query.trim();
-	IDENTIFIER_TOKEN.lastIndex = 0;
-	const matches = trimmed.match(IDENTIFIER_TOKEN) ?? [];
-	if (matches.length === 1 && trimmed === matches[0]) return 'identifier';
-	if (/cve/i.test(trimmed)) return 'vulnerability';
-	if (/cert/i.test(trimmed)) return 'certificate';
-	if (/^\S+$/.test(trimmed)) return 'base';
-	return 'product';
-}
-
-/* ------------------------------------------------------------------ *
- * Deterministic: steps + narrative (view-models.md caps: label ≤120, summary ≤300)
- * ------------------------------------------------------------------ */
 
 function clip(s: string, max: number): string {
 	return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
-function stepForFilter(f: SearchFilter, query: string): InterpretingStep {
-	if (f.mode === 'identifier' && f.identifier) {
-		const m = PREFIX_VALUE.exec(f.identifier);
-		const label = m
-			? `Recognized ${f.identifier} as ${m[1].toLowerCase()} identifier`
-			: `Recognized ${f.identifier}`;
-		const step: InterpretingStep = { kind: 'recognized', label: clip(label, 120) };
-		if (m) {
-			step.prefix = m[1].toLowerCase();
-			step.value = m[2];
-		} else {
-			step.value = f.identifier;
+async function translateViaAi(reminder: string, opts: TranslateOptions): Promise<SearchRequest[]> {
+	if (!opts.provider) return [];
+	const result = await generateStructured({
+		schema: SearchPlanSchema,
+		system: INSTRUCTIONS,
+		messages: [{ role: 'user', content: reminder }],
+		provider: opts.provider,
+		callLLM: opts.callLLM,
+		abortSignal: opts.signal,
+		temperature: 0.2
+	});
+	if (!result.ok) return [];
+	return result.result.flatMap((draft) => {
+		const value = draft.value.trim();
+		if (value === '') return [];
+		if (draft.kind === 'tag') {
+			return TAG_VALUE.test(value) ? [{ kind: 'tag', value: clip(value, 120), source: 'ai' } as SearchRequest] : [];
 		}
-		return step;
-	}
-	if (f.mode === 'freetext') {
-		const search = f.search ?? query;
-		return { kind: 'queried', label: clip(`Free-text search for "${search}"`, 120) };
-	}
-	const types = f.types?.length ? ` (${f.types.join(', ')})` : '';
-	return { kind: 'queried', label: clip(`Browsing catalog${types}`, 120) };
-}
-
-function finalize(query: string, plan: SearchFilter[]): QueryInterpretation {
-	const { filters, rejections } = validatePlan(plan);
-
-	// Empty post-validation plan → honest fallback: one free-text filter.
-	if (filters.length === 0) {
-		filters.push({ mode: 'freetext', search: query });
-	}
-
-	const steps: InterpretingStep[] = filters.map((f) => stepForFilter(f, query));
-	for (const r of rejections) {
-		steps.push({
-			kind: 'resolved',
-			label: clip(`Rejected ${r.identifier}: ${r.reason}`, 120),
-			prefix: r.prefix,
-			value: r.identifier
-		});
-	}
-
-	const queryType = classifyQueryType(query);
-
-	const recognized = filters.filter((f) => f.mode === 'identifier' && f.identifier);
-	const free = filters.find((f) => f.mode === 'freetext');
-	let interpretation: string;
-	if (recognized.length > 0) {
-		interpretation = `Recognized ${recognized.map((f) => f.identifier).join(', ')}`;
-		if (free?.search) interpretation += `; searching "${free.search}"`;
-	} else if (free?.search) {
-		interpretation = `Searching "${free.search}"`;
-	} else {
-		interpretation = `Browsing catalog${filters[0].types?.length ? ` (${filters[0].types.join(', ')})` : ''}`;
-	}
-
-	const parts: string[] = [];
-	for (const f of filters) {
-		if (f.mode === 'identifier') parts.push(`identifier filter ${f.identifier}`);
-		if (f.mode === 'freetext') parts.push(`free-text filter "${f.search ?? query}"`);
-		if (f.mode === 'browse') parts.push(`browse filter${f.types?.length ? ` (${f.types.join(', ')})` : ''}`);
-	}
-	const rejectedNote =
-		rejections.length > 0
-			? ` Rejected ${rejections.length} unsupported-prefix filter(s): ${rejections.map((r) => r.identifier).join(', ')}.`
-			: '';
-	const summary = clip(`Query type: ${queryType}. Plan: ${parts.join('; ')}.${rejectedNote}`, 300);
-
-	return { filters, queryType, interpretation, steps, summary };
+		return [{ kind: 'text', value: clip(value, 120), source: 'ai' } as SearchRequest];
+	});
 }
 
 /* ------------------------------------------------------------------ *
- * interpretQuery
+ * translateQuestion (deterministic ordering: identifiers → AI → fallback)
  * ------------------------------------------------------------------ */
 
-function mapKind(kind: AIKind): AIKind {
-	// Task contract: unreachable/timeout both surface as 'unreachable'.
-	if (kind === 'timeout') return 'unreachable';
-	return kind;
-}
+export async function translateQuestion(opts: TranslateOptions): Promise<AIResult<SearchPlan>> {
+	const question = opts.question.trim();
+	if (question === '') return { ok: true, result: { searches: [] } };
 
-export async function interpretQuery(
-	opts: InterpretQueryOptions
-): Promise<AIResult<QueryInterpretation>> {
-	const query = opts.query.trim();
-	const profile = opts.profile ?? DEFAULT_PROFILE;
-	const system = buildSystemPrompt({ profile, extra: QUERY_PLAN_INSTRUCTIONS });
+	const identifiers = detectIdentifiers(question)
+		.map((v) => v.trim())
+		.filter((v) => v !== '');
 
-	const res = await generateStructured({
-		schema: FilterPlanSchema,
-		system,
-		messages: [
-			{
-				role: 'user',
-				content: `User query:\n${query}\n\nRespond with the bare JSON array of filters only.`
+	// When the whole question is identifiers, no AI call at all (spec §1).
+	const prose = question
+		.split(/\s+/)
+		.filter((tok) => !identifiers.some((id) => id.startsWith(tok.split(':')[0] + ':') || tok === id))
+		.join(' ')
+		.trim();
+
+	const proseRemaining = prose !== '' && prose !== question && identifiers.length > 0 ? prose : (identifiers.length === 0 ? question : '');
+
+	if (identifiers.length > 0 && (proseRemaining === '' || proseRemaining.split(/\s+/).every((tok) => identifiers.some((id) => id.includes(tok))))) {
+		return {
+			ok: true,
+			result: {
+				searches: identifiers.map((value) => ({
+					kind: 'tag',
+					value,
+					source: 'identifier'
+				}))
 			}
-		],
-		provider: opts.provider,
-		callLLM: opts.callLLM
-	});
-
-	if (!res.ok) {
-		return { ok: false, kind: mapKind(res.kind), message: res.message };
+		};
 	}
 
-	return { ok: true, result: finalize(query, res.result) };
+	let aiSearches: SearchRequest[] = [];
+	let fallbackUsed = false;
+	if (proseRemaining !== '') {
+		aiSearches = await translateViaAi(proseRemaining, opts);
+		if (aiSearches.length === 0) {
+			fallbackUsed = true;
+		}
+	}
+
+	// Total ≤3 (spec §3): identifiers take priority over AI-planned searches.
+	const capped = [
+		...identifiers.map((value) => ({ kind: 'tag' as const, value, source: 'identifier' as const })),
+		...aiSearches
+	].slice(0, 3);
+
+	if (fallbackUsed && capped.length === 0) {
+		return {
+			ok: true,
+			result: { searches: [{ kind: 'text', value: clip(question, 300), source: 'fallback' }] }
+		};
+	}
+
+	return { ok: true, result: { searches: capped } };
 }

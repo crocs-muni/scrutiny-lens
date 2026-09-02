@@ -1,9 +1,15 @@
-import { describe, it, expect} from 'vitest';
+// Query translation (issue #28, spec §1/§3): identifiers route DIRECTLY to
+// tag searches, never through AI; prose goes through one zod-gated AI call
+// (≤3 searches, prefixes open per IR-4); no key / AI-down → one free-text
+// search, never nothing. Decision clauses never become extra searches.
+
+import { describe, expect, it } from 'vitest';
 import type { CallLLM, CallLLMArgs } from '$lib/ai/output';
 import {
-	interpretQuery,
-	classifyQueryType,
-	KNOWN_INDEXER_PREFIXES
+	GUIDED_PREFIXES,
+	detectIdentifiers,
+	translateQuestion,
+	type SearchRequest
 } from '$lib/ai/agents/query';
 
 const PROVIDER = { baseUrl: 'https://llm.example.com/v1', model: 'test-model', apiKey: 'test-key' };
@@ -24,189 +30,140 @@ function throwing(message: string): CallLLM {
 	};
 }
 
-describe('interpretQuery — valid plan', () => {
-	it('returns ok with validated filters, steps, and narrative', async () => {
-		const { call } = fakeLLM(
-			'[{"mode":"identifier","identifier":"cve:CVE-2017-15361"},{"mode":"freetext","search":"ROCA Infineon"}]'
-		);
-		const res = await interpretQuery({
-			query: 'ROCA vulnerability in Infineon chips, see cve:CVE-2017-15361',
-			profile: 'smartcard',
-			provider: PROVIDER,
-			callLLM: call
-		});
+describe('detectIdentifiers (spec §1: route directly, never through AI)', () => {
+	it('picks up a bare CVE id', () => {
+		expect(detectIdentifiers('ROCA in CVE-2017-15361 chips')).toEqual(['cve:CVE-2017-15361']);
+	});
 
+	it('picks up GHSA and purl forms', () => {
+		expect(detectIdentifiers('GHSA-jfh8-c2jp-5v3q exposure')).toEqual(['ghsa:GHSA-jfh8-c2jp-5v3q']);
+		expect(detectIdentifiers('pkg:npm/lodash@4.17.20')).toEqual(['purl:pkg:npm/lodash@4.17.20']);
+	});
+
+	it('passes arbitrary typed prefix:value through opaquely (spec §3, IR-4)', () => {
+		expect(detectIdentifiers('xyz:123 what')).toEqual(['xyz:123']);
+	});
+
+	it('finds nothing in plain prose', () => {
+		expect(detectIdentifiers('is the NXP JCOP4 still certified?')).toEqual([]);
+	});
+
+	it('documents the guided prefix list from spec §3', () => {
+		expect(GUIDED_PREFIXES).toContain('cve');
+		expect(GUIDED_PREFIXES).toContain('cc-cert-id');
+	});
+});
+
+describe('translateQuestion — identifier-only questions skip AI entirely', () => {
+	it('a bare identifier produces one tag search, zero model calls', async () => {
+		const { call, calls } = fakeLLM('[]');
+		const res = await translateQuestion({ question: 'CVE-2017-15361', provider: PROVIDER, callLLM: call });
 		expect(res.ok).toBe(true);
 		if (!res.ok) return;
-		const r = res.result;
-		expect(r.filters).toEqual([
-			{ mode: 'identifier', identifier: 'cve:CVE-2017-15361' },
-			{ mode: 'freetext', search: 'ROCA Infineon' }
+		expect(calls).toHaveLength(0);
+		expect(res.result.searches).toEqual([
+			{ kind: 'tag', value: 'cve:CVE-2017-15361', source: 'identifier' } satisfies SearchRequest
 		]);
-		expect(r.queryType).toBe('vulnerability');
-		expect(
-			r.steps.some(
-				(s) => s.kind === 'recognized' && s.prefix === 'cve' && s.value === 'CVE-2017-15361'
-			)
-		).toBe(true);
-		expect(r.steps.some((s) => s.kind === 'queried' && s.label.includes('ROCA Infineon'))).toBe(true);
-		expect(r.interpretation).toContain('cve:CVE-2017-15361');
-		expect(r.summary.length).toBeLessThanOrEqual(300);
-		for (const s of r.steps) expect(s.label.length).toBeLessThanOrEqual(120);
 	});
 
-	it('exports exactly the six known indexer prefixes', () => {
-		expect([...KNOWN_INDEXER_PREFIXES]).toEqual(['cc', 'cve', 'cpe', 'cwe', 'vendor', 'pp']);
+	it('typed prefix:value (unknown prefix) is also AI-free (IR-4)', async () => {
+		const { call, calls } = fakeLLM('[]');
+		const res = await translateQuestion({ question: 'pp:ANSSI-CC-2024/55', provider: PROVIDER, callLLM: call });
+		expect(calls).toHaveLength(0);
+		expect(res.ok && res.result.searches).toEqual([
+			{ kind: 'tag', value: 'pp:ANSSI-CC-2024/55', source: 'identifier' }
+		]);
 	});
 });
 
-describe('interpretQuery — queryType classification', () => {
-	async function typeOf(query: string, plan: string): Promise<string> {
-		const { call } = fakeLLM(plan);
-		const res = await interpretQuery({ query, provider: PROVIDER, callLLM: call });
-		expect(res.ok).toBe(true);
-		if (!res.ok) throw new Error('unreachable');
-		return res.result.queryType;
-	}
-
-	it('identifier form: exactly one {prefix:value} and the whole query is it', async () => {
-		await expect(
-			typeOf('cve:CVE-2017-15361', '[{"mode":"identifier","identifier":"cve:CVE-2017-15361"}]')
-		).resolves.toBe('identifier');
-	});
-
-	it('vulnerability: query mentions a CVE', async () => {
-		await expect(
-			typeOf(
-				'CVE-2017-15361 ROCA in Infineon chips',
-				'[{"mode":"freetext","search":"Infineon ROCA"}]'
-			)
-		).resolves.toBe('vulnerability');
-	});
-
-	it('certificate: query mentions a certificate', async () => {
-		await expect(
-			typeOf(
-				'CC certificate for Infineon M7794',
-				'[{"mode":"freetext","search":"Infineon M7794"}]'
-			)
-		).resolves.toBe('certificate');
-	});
-
-	it('product: product terms without identifier/cert/cve', async () => {
-		await expect(
-			typeOf('Infineon M7794 smartcard', '[{"mode":"freetext","search":"Infineon M7794 smartcard"}]')
-		).resolves.toBe('product');
-	});
-
-	it('base: bare keyword only', async () => {
-		await expect(typeOf('smartcard', '[{"mode":"browse","types":["cc"]}]')).resolves.toBe('base');
-	});
-
-	it('direct classification matches the agent output', () => {
-		expect(classifyQueryType('cve:CVE-2017-15361')).toBe('identifier');
-		expect(classifyQueryType('cve-2017-15361 infineon')).toBe('vulnerability');
-		expect(classifyQueryType('smartcard')).toBe('base');
-	});
-});
-
-describe('interpretQuery — prefix validation', () => {
-	it('rejects unknown indexer prefixes with a reason, keeps valid filters', async () => {
-		const { call } = fakeLLM(
-			'[{"mode":"identifier","identifier":"xyz:ABC-1"},{"mode":"identifier","identifier":"cve:CVE-2017-15361"}]'
-		);
-		const res = await interpretQuery({
-			query: 'cve:CVE-2017-15361',
-			provider: PROVIDER,
-			callLLM: call
-		});
-
-		expect(res.ok).toBe(true);
-		if (!res.ok) return;
-		const r = res.result;
-		expect(r.filters).toEqual([{ mode: 'identifier', identifier: 'cve:CVE-2017-15361' }]);
-		const rejection = r.steps.find(
-			(s) => s.label.includes('xyz:ABC-1') && /Unknown indexer prefix "xyz"/.test(s.label)
-		);
-		expect(rejection).toBeDefined();
-		expect(r.summary).toContain('xyz:ABC-1');
-	});
-
-	it('accepts unprefixed identifiers as raw identifier filters', async () => {
-		const { call } = fakeLLM('[{"mode":"identifier","identifier":"CVE-2017-15361"}]');
-		const res = await interpretQuery({
-			query: 'CVE-2017-15361',
-			provider: PROVIDER,
-			callLLM: call
-		});
-		expect(res.ok).toBe(true);
-		if (!res.ok) return;
-		expect(res.result.filters).toEqual([{ mode: 'identifier', identifier: 'CVE-2017-15361' }]);
-	});
-
-	it('falls back to a free-text filter when every planned filter is rejected', async () => {
-		const { call } = fakeLLM('[{"mode":"identifier","identifier":"xyz:ABC-1"}]');
-		const res = await interpretQuery({ query: 'mystery thing', provider: PROVIDER, callLLM: call });
-		expect(res.ok).toBe(true);
-		if (!res.ok) return;
-		expect(res.result.filters).toEqual([{ mode: 'freetext', search: 'mystery thing' }]);
-	});
-});
-
-describe('interpretQuery — schema gate and degradation', () => {
-	it('schema failure after exactly one repair retry', async () => {
-		const { call, calls } = fakeLLM('not json at all', 'still not json');
-		const res = await interpretQuery({
-			query: 'ROCA',
-			provider: PROVIDER,
-			callLLM: call
-		});
-
-		expect(calls).toHaveLength(2);
-		expect(res.ok).toBe(false);
-		if (res.ok) return;
-		expect(res.kind).toBe('schema_failure');
-	});
-
-	it('one retry succeeds → ok (repair appended zod issue text)', async () => {
+describe('translateQuestion — prose goes through one gated call (≤3)', () => {
+	it('pure prose: one AI call, accepted tag + text searches', async () => {
 		const { call, calls } = fakeLLM(
-			'garbage',
-			'[{"mode":"freetext","search":"ROCA"}]'
+			'[{"kind":"text","value":"NXP JCOP4 certification"},{"kind":"tag","value":"vendor:NXP"}]'
 		);
-		const res = await interpretQuery({ query: 'ROCA', provider: PROVIDER, callLLM: call });
-		expect(calls).toHaveLength(2);
-		expect(calls[1].messages.at(-1)?.content).toContain('failed validation');
-		expect(res.ok).toBe(true);
-	});
-
-	it('LLM timeout surfaces as unreachable', async () => {
-		const res = await interpretQuery({
-			query: 'ROCA',
+		const res = await translateQuestion({
+			question: 'is the NXP JCOP4 still certified?',
 			provider: PROVIDER,
-			callLLM: throwing('request timed out')
+			callLLM: call
 		});
-		expect(res.ok).toBe(false);
-		if (res.ok) return;
-		expect(res.kind).toBe('unreachable');
+		expect(calls).toHaveLength(1);
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		expect(res.result.searches).toEqual([
+			{ kind: 'text', value: 'NXP JCOP4 certification', source: 'ai' },
+			{ kind: 'tag', value: 'vendor:NXP', source: 'ai' }
+		]);
 	});
 
-	it('transport failure surfaces as unreachable', async () => {
-		const res = await interpretQuery({
-			query: 'ROCA',
+	it('identifiers come first; the plan is capped at 3 searches (spec §3)', async () => {
+		const { call } = fakeLLM(
+			JSON.stringify([
+				{ kind: 'text', value: 'a' },
+				{ kind: 'text', value: 'b' },
+				{ kind: 'text', value: 'c' },
+				{ kind: 'text', value: 'd' }
+			])
+		);
+		const res = await translateQuestion({
+			question: 'CVE-2017-15361 vulnerability details',
+			provider: PROVIDER,
+			callLLM: call
+		});
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		expect(res.result.searches[0]).toEqual({ kind: 'tag', value: 'cve:CVE-2017-15361', source: 'identifier' });
+		expect(res.result.searches.length).toBeLessThanOrEqual(3);
+	});
+
+	it('an unknown prefix from the model is accepted (open prefix list)', async () => {
+		const { call } = fakeLLM('[{"kind":"tag","value":"weirdprefix:abc"}]');
+		const res = await translateQuestion({ question: 'try weirdprefix:abc', provider: PROVIDER, callLLM: call });
+		expect(res.ok && res.result.searches).toContainEqual({ kind: 'tag', value: 'weirdprefix:abc', source: 'ai' });
+	});
+
+	it('malformed model entries are dropped (no "gotcha" fabricated fallback)', async () => {
+		const { call } = fakeLLM('[{"kind":"tag","value":"not a tag"},{"kind":"tag","value":"cve:x"}]');
+		const res = await translateQuestion({ question: 'inject malformed', provider: PROVIDER, callLLM: call });
+		expect(res.ok && res.result.searches).toEqual([{ kind: 'tag', value: 'cve:x', source: 'ai' }]);
+	});
+});
+
+describe('translateQuestion — deterministic fallbacks (spec §2 rule 5 spirit)', () => {
+	it('schema failure retries once, then degrades to one free-text search', async () => {
+		const { call, calls } = fakeLLM('not json at all', 'also not json');
+		const res = await translateQuestion({ question: 'ROCA chips', provider: PROVIDER, callLLM: call });
+		expect(calls).toHaveLength(2);
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		expect(res.result.searches).toEqual([{ kind: 'text', value: 'ROCA chips', source: 'fallback' }]);
+	});
+
+	it('AI unreachable → one free-text search, not an error', async () => {
+		const res = await translateQuestion({
+			question: 'ROCA chips',
 			provider: PROVIDER,
 			callLLM: throwing('ECONNREFUSED')
 		});
-		expect(res.ok).toBe(false);
-		if (res.ok) return;
-		expect(res.kind).toBe('unreachable');
+		expect(res.ok && res.result.searches).toEqual([{ kind: 'text', value: 'ROCA chips', source: 'fallback' }]);
 	});
 
-	it('no API key surfaces as no_key without calling the LLM', async () => {
+	it('no provider configured → question becomes one free-text search, no call', async () => {
 		const { call, calls } = fakeLLM('[]');
-		const res = await interpretQuery({ query: 'ROCA', callLLM: call });
+		const res = await translateQuestion({ question: 'ROCA chips', provider: undefined, callLLM: call });
 		expect(calls).toHaveLength(0);
-		expect(res.ok).toBe(false);
-		if (res.ok) return;
-		expect(res.kind).toBe('no_key');
+		expect(res.ok && res.result.searches).toEqual([{ kind: 'text', value: 'ROCA chips', source: 'fallback' }]);
+	});
+
+	it('an empty prose remainder after identifier extraction is not searched again', async () => {
+		const { calls, call } = fakeLLM('[]');
+		const res = await translateQuestion({
+			question: 'CVE-2017-15361',
+			provider: PROVIDER,
+			callLLM: call
+		});
+		expect(calls).toHaveLength(0);
+		expect(res.ok && res.result.searches).toEqual([
+			{ kind: 'tag', value: 'cve:CVE-2017-15361', source: 'identifier' }
+		]);
 	});
 });
