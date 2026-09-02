@@ -56,12 +56,6 @@ export interface PersistedSession {
 	createdAt: number;
 	unseen?: boolean;
 }
-/** Derives the t-tag values indexed under `ttags` — wraps core's `tTags`
- * (per AGENTS.md all protocol work goes through @scrutiny-fabric/core) so
- * the db layer and the search seam drive from one derivation. */
-export function tTagsOf(event: NostrEvent): string[] {
-	return tTags(event);
-}
 
 /** Cached fetched event (issue #27, spec §11 step 2). `ttags` is the derived
  * list of t-tag VALUES the multiEntry index keys on — IDB has no nested-
@@ -315,7 +309,7 @@ export async function loadDeadLetters(): Promise<DeadLetterEntry[]> {
 export async function cacheEvent(event: NostrEvent): Promise<CachedEvent | null> {
 	const row: CachedEvent = {
 		...event,
-		ttags: tTagsOf(event)
+		ttags: tTags(event)
 	};
 	return attempt(async (d) => {
 		const normalized = normalize(row);
