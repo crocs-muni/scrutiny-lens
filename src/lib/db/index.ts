@@ -18,6 +18,7 @@
  */
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { DeadLetterEntry } from '$lib/ai/deadLetter';
+import { tTags } from '$lib/fabric';
 import type { NostrEvent } from '$lib/fabric';
 
 export const DB_NAME = 'scrutiny-lens';
@@ -55,11 +56,11 @@ export interface PersistedSession {
 	createdAt: number;
 	unseen?: boolean;
 }
-/** Derives the t-tag values indexed under `ttags` — one derivation, shared
- * by the db write path and the search seam so the engine and the index can
- * never disagree on what was indexed. */
+/** Derives the t-tag values indexed under `ttags` — wraps core's `tTags`
+ * (per AGENTS.md all protocol work goes through @scrutiny-fabric/core) so
+ * the db layer and the search seam drive from one derivation. */
 export function tTagsOf(event: NostrEvent): string[] {
-	return event.tags.filter((t) => t[0] === 't' && t[1] !== undefined).map((t) => t[1]);
+	return tTags(event);
 }
 
 /** Cached fetched event (issue #27, spec §11 step 2). `ttags` is the derived
