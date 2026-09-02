@@ -104,7 +104,13 @@ export function handleShellKeydown(event: KeyboardEvent): boolean {
 	// Esc dismisses the settings surface without touching column state.
 	if (event.key === 'Escape' && !event.ctrlKey && !event.metaKey && !event.altKey) {
 		if (!shell.settingsOpen) return false;
+		// bits-ui's floating layers (the model combobox) preventDefault an
+		// Escape they consume — then it must NOT also close the dialog.
+		if (event.defaultPrevented) return false;
 		event.preventDefault();
+		// Commits are blur-triggered; unmounting keeps focus in place, so a
+		// typed-but-unblurred field would drop its text. Blur first.
+		(globalThis.document?.activeElement as HTMLElement | null)?.blur?.();
 		shell.settingsOpen = false;
 		return true;
 	}

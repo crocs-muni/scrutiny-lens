@@ -1,8 +1,9 @@
 import 'fake-indexeddb/auto';
-import { openDB } from 'idb';
+import { openDB, deleteDB, type IDBPDatabase } from 'idb';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
 	DB_NAME,
+	DB_VERSION,
 	_closeForTests,
 	appendDeadLetter,
 	clearAllLocalData,
@@ -16,7 +17,8 @@ import {
 	loadSettings,
 	putSession,
 	saveInterpretation,
-	saveSettings
+	saveSettings,
+	type PersistedSettings
 } from '$lib/db';
 import { clearDeadLetters, deadLetters, hydrateDeadLetters, writeDeadLetter } from '$lib/ai/deadLetter';
 import type { DeadLetterEntry } from '$lib/ai/deadLetter';
@@ -210,7 +212,7 @@ describe('clear-all (spec §6)', () => {
 	});
 	it('clears all stores while another connection holds the DB open (review H-4)', async () => {
 		await saveSettings({ model: 'm1' });
-		const other = await openDB(DB_NAME, 1);
+		const other = await openDB(DB_NAME, DB_VERSION);
 		try {
 			await clearAllLocalData(); // store-clearing, not deleteDB, so nothing blocks
 			expect(isPersistent()).toBe(true);
@@ -250,5 +252,86 @@ describe('silent degrade (spec §6)', () => {
 		} finally {
 			globalThis.indexedDB = real;
 		}
+	});
+});
+
+describe('schema upgrade (v1 → v2 convergence)', () => {
+	const LEGACY_SETTINGS: PersistedSettings = {
+		model: 'm1',
+		endpoint: 'https://a/v1',
+		relays: [],
+		appearance: 'dark'
+	};
+
+	/** Drops whatever the shared beforeEach created, then stands up a legacy
+	 * v1 DB with the given stores. fake-indexeddb persists DBs by name within
+	 * a file run, so the old database must be deleted first — opening a
+	 * *lower* version against an existing higher-version DB just reopens the
+	 * higher one, which is exactly the downgrade scenario under test. */
+	async function seedLegacy(
+		upgrade: (db: IDBPDatabase) => void,
+		seed?: (db: IDBPDatabase) => Promise<void>
+	) {
+		_closeForTests();
+		await deleteDB(DB_NAME);
+		const legacy = await openDB(DB_NAME, 1, { upgrade });
+		await seed?.(legacy);
+		legacy.close();
+		await initPersistence();
+	}
+
+	it('converges a partial foreign schema onto the four-store set (issue #12 deferred upgrade)', async () => {
+		// An older checkout's DB that never matched our store layout: only a
+		// 'legacy' store, none of the four we actually use. Pre-fix this makes
+		// every transaction NotFoundError, so the layer silently degrades to
+		// memory-only and the round-trip below returns null.
+		await seedLegacy((db) => db.createObjectStore('legacy', { keyPath: 'id' }));
+		await saveSettings({ ...LEGACY_SETTINGS });
+		expect(await loadSettings()).toEqual({ ...LEGACY_SETTINGS });
+		// Foreign stores from the older checkout are left in place — the layer
+		// only reads its own four — so assert presence, not an exact store set.
+		const dump = await dumpAllForTests();
+		for (const store of ['deadLetters', 'interpretations', 'sessions', 'settings']) {
+			expect(dump[store]).toBeDefined();
+		}
+	});
+
+	it('preserves a settings record across a healthy v1 → v2 upgrade', async () => {
+		await seedLegacy(
+			(db) => {
+				db.createObjectStore('settings', { keyPath: 'key' });
+				db.createObjectStore('interpretations', { keyPath: ['eventId', 'model'] });
+				const sessions = db.createObjectStore('sessions', { keyPath: 'id' });
+				sessions.createIndex('createdAt', 'createdAt');
+				db.createObjectStore('deadLetters', { keyPath: 'id', autoIncrement: true });
+			},
+			async (db) => {
+				await db.put('settings', { key: 'app', value: { model: 'm1' } });
+			}
+		);
+		// The convergence upgrade must not drop data that already exists.
+		expect(await loadSettings()).toEqual({ model: 'm1' });
+		await clearAllLocalData();
+		expect(await loadSettings()).toBeNull();
+		expect(isPersistent()).toBe(true);
+	});
+
+	it('adds the createdAt index to a sessions store that lacks it', async () => {
+		// sessions exists but an older checkout never created its 'createdAt'
+		// index (spec §5 sidebar recents order) — listSessions would otherwise
+		// NotFoundError on getAllFromIndex and degrade to [].
+		await seedLegacy(
+			(db) => {
+				db.createObjectStore('settings', { keyPath: 'key' });
+				db.createObjectStore('interpretations', { keyPath: ['eventId', 'model'] });
+				db.createObjectStore('sessions', { keyPath: 'id' });
+				db.createObjectStore('deadLetters', { keyPath: 'id', autoIncrement: true });
+			},
+			async (db) => {
+				await db.put('sessions', { id: 's1', title: 'one', createdAt: 100 });
+			}
+		);
+		expect(await listSessions()).toEqual([{ id: 's1', title: 'one', createdAt: 100 }]);
+		expect(isPersistent()).toBe(true);
 	});
 });

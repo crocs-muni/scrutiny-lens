@@ -6,11 +6,11 @@
 	 * while a session is open. */
 
 	import { Tooltip } from 'bits-ui';
-	import { IconX } from '@tabler/icons-svelte';
 	import { handleShellKeydown, shell } from '$lib/shell.svelte';
 	import SidebarRecents from '$lib/components/ui/SidebarRecents.svelte';
 	import DetailDrawer from '$lib/components/shell/DetailDrawer.svelte';
 	import ChatColumn from '$lib/components/shell/ChatColumn.svelte';
+	import SettingsDialog from '$lib/components/shell/SettingsDialog.svelte';
 
 	let centerHeight = $state(0);
 	// The drawer may grow until the canvas keeps a usable strip.
@@ -20,7 +20,8 @@
 <svelte:window onkeydown={handleShellKeydown} />
 
 <Tooltip.Provider delayDuration={350}>
-	<div class="flex h-dvh w-full gap-3 p-3">
+	<!-- inert while settings is open: keyboard focus stays inside the modal. -->
+	<div class="flex h-dvh w-full gap-3 p-3" inert={shell.settingsOpen ? true : undefined}>
 		<SidebarRecents
 			collapsed={!shell.railOpen}
 			sessions={shell.sessions}
@@ -66,37 +67,7 @@
 		{/if}
 	</div>
 
-	<!-- Settings surface chrome; endpoint/key/model/relay controls land in #11. -->
 	{#if shell.settingsOpen}
-		<div
-			class="fixed inset-0 z-50 flex items-center justify-center bg-black/20"
-			style:animation="fade-in 180ms ease-out both"
-			onclick={(event) => event.target === event.currentTarget && shell.toggleSettings()}
-			role="presentation"
-		>
-			<div
-				class="w-80 rounded-window bg-surface p-4 shadow-overlay"
-				style:animation="pop-in 180ms cubic-bezier(0.23,1,0.32,1) both"
-				role="dialog"
-				aria-modal="true"
-				aria-label="Settings"
-			>
-				<div class="mb-2 flex items-center">
-					<span class="flex-1 text-[14px] font-semibold text-ink">Settings</span>
-					<button
-						type="button"
-						aria-label="Close settings"
-						onclick={() => shell.toggleSettings()}
-						class="primitive-icon-button text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
-					>
-						<IconX size={16} stroke-width={2} />
-					</button>
-				</div>
-				<p class="text-[12.5px] leading-relaxed text-ink-2">
-					AI endpoint, API key, model picker, and the relay pool arrive in #11 (spec §5). The
-					key never persists — memory only.
-				</p>
-			</div>
-		</div>
+		<SettingsDialog onClose={() => shell.toggleSettings()} />
 	{/if}
 </Tooltip.Provider>

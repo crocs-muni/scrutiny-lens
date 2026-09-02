@@ -19,7 +19,7 @@ import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { DeadLetterEntry } from '$lib/ai/deadLetter';
 
 export const DB_NAME = 'scrutiny-lens';
-const DB_VERSION = 1;
+export const DB_VERSION = 2;
 const SETTINGS_KEY = 'app';
 
 /** Ring size for the dead-letter store; deadLetter.ts imports this so the
@@ -107,12 +107,35 @@ async function open(): Promise<void> {
 	try {
 		if (typeof indexedDB === 'undefined') return; // node without shim, very old private modes
 		conn = await openDB<LensDB>(DB_NAME, DB_VERSION, {
-			upgrade(db) {
-				db.createObjectStore('settings', { keyPath: 'key' });
-				db.createObjectStore('interpretations', { keyPath: ['eventId', 'model'] });
-				const sessions = db.createObjectStore('sessions', { keyPath: 'id' });
-				sessions.createIndex('createdAt', 'createdAt');
-				db.createObjectStore('deadLetters', { keyPath: 'id', autoIncrement: true });
+			upgrade(db, _oldVersion, _newVersion, transaction) {
+				// Converge any pre-existing (v1) database onto the full schema
+				// instead of assuming a fresh create. createObjectStore inside
+				// an upgrade throws NotFoundError if the store already exists,
+				// so a browser holding a v1 'scrutiny-lens' DB from an older
+				// checkout would otherwise fail the whole upgrade and silently
+				// degrade to memory-only — the deferred schema-upgrade test
+				// promised on issue #12 (see that thread). Guard every create.
+				if (!db.objectStoreNames.contains('settings')) {
+					db.createObjectStore('settings', { keyPath: 'key' });
+				}
+				if (!db.objectStoreNames.contains('interpretations')) {
+					db.createObjectStore('interpretations', { keyPath: ['eventId', 'model'] });
+				}
+				if (!db.objectStoreNames.contains('sessions')) {
+					const sessions = db.createObjectStore('sessions', { keyPath: 'id' });
+					sessions.createIndex('createdAt', 'createdAt');
+				} else if (!transaction.objectStore('sessions').indexNames.contains('createdAt')) {
+					// An older checkout's sessions store may predate the
+					// createdAt index (the sidebar's newest-first order, issue #10); add it
+					// from the upgrade transaction. Existing stores are only reachable via the
+					// versionchange transaction's objectStore() — createIndex on an
+					// already-complete row layout would throw ConstraintError, so
+					// the contains() guard both avoids that and stays a no-op.
+					transaction.objectStore('sessions').createIndex('createdAt', 'createdAt');
+				}
+				if (!db.objectStoreNames.contains('deadLetters')) {
+					db.createObjectStore('deadLetters', { keyPath: 'id', autoIncrement: true });
+				}
 			}
 		});
 		persistent = true;
