@@ -20,7 +20,7 @@ import { translateQuestion, type SearchRequest } from '$lib/ai/agents/query';
 import { indexEvent, searchText } from '$lib/search';
 import { getEvent, getEventsByTag } from '$lib/db';
 
-export type Phase = 'translate' | 'capability' | 'fetch' | 'done';
+export type Phase = 'translate' | 'fetch' | 'done';
 
 export interface PipelineNotice {
 	kind: 'capability' | 'truncated' | 'invalid-skipped' | 'cache';
@@ -201,8 +201,9 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 			}
 			admittedSet.set(event.id, event);
 			skeletons.push(skeletonOf(event));
-			// fire-and-forget cache write — degrades silently (spec §6); the
-			// session settles once every queued write lands.
+			// Cache write settles by session end (pendingWrites below) — the
+			// degrade contract stays silent per spec §6, and the next run's
+			// cache-first read must see these events to honor '#28 repeat-query'.
 			pendingWrites.push(indexEvent(event).catch(() => {}));
 		}
 		if (skeletons.length > 0) emit({ type: 'skeleton', cards: skeletons });
