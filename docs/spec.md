@@ -36,7 +36,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 - `#i` tag queries and free-text (NIP-50) are **optional relay features**: app detects relay capability, falls back to `fullScanFilter` when needed, and tells the user ("relay X lacks search support") — never confuses that with "no matches".
 - Result set may be relay-truncated: UI always shows "fetched N (relays may hold more)" when a limit is hit.
 - Facet sidebar = computed from fetched events' tags, never AI. OR within a facet, AND across facets, selections as removable chips.
-- Cards dedupe by product (one card per root product event, with its bound metadata). A cohort line summarizes the set ("12 products · 4 vendors · 2 retracted").
+- Cards dedupe by product (one card per root product event, with its bound metadata). A cohort line summarizes the set by event type ("8 products · 8 metadata").
 - Results view: cards; table toggle is a Could (§10).
 
 ## 4. Edge states (complete table)
