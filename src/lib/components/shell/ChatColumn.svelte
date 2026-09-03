@@ -1,20 +1,27 @@
 <script lang="ts">
 	/* CHAT COLUMN — resident only while a session is open (spec §9); the
-	 * parent unmounts it on the search/results views. Collapsed state is a
-	 * 48px card stub with the copy exiting first (issue #10 harness rule).
-	 * Chat content (messages, composer, citations) arrives with the chat
+	 * parent unmounts it on the search/results views (search/results hide
+	 * the column; the J2 board's results-view stub is stale per spec §9).
+	 * Collapsed state is a 48px card stub carrying ONE element — the chat
+	 * icon as the toggle, unread dot reserved on its corner (owner ruling
+	 * 2026-09-03, "B"): board E2's vertical label + decorative bottom icon
+	 * read as two competing affordances live. Copy exits first (issue #10
+	 * harness rule). Chat content (messages, composer, citations) arrives with the chat
 	 * step (spec §11 step 4) — this file is chrome only. */
 
-	import { IconArrowBarToLeft, IconArrowBarToRight, IconMessage } from '@tabler/icons-svelte';
+	import { IconArrowBarToRight, IconMessage } from '@tabler/icons-svelte';
 	import KeyHint from './KeyHint.svelte';
 	import { COLLAPSE } from '../ui/motion';
 
 	interface Props {
 		collapsed: boolean;
 		onToggle: () => void;
+		/** Unread-activity dot on the collapsed stub's icon; arrives with
+		 * the chat step (#30) — reserved now per the stub's closed form. */
+		unread?: boolean;
 	}
 
-	let { collapsed, onToggle }: Props = $props();
+	let { collapsed, onToggle, unread = false }: Props = $props();
 
 	// Width-only 280ms; copy fades in 180ms ahead of it (issue #10).
 	const MOTION = {
@@ -54,24 +61,25 @@
 		</div>
 	</div>
 
-	<!-- 48px card stub -->
+	<!-- 48px card stub: one element (identity + action + unread slot). -->
 	<div class="chat-stub absolute inset-0 flex flex-col items-center py-2" inert={!collapsed}>
 		<KeyHint
 			label="Chat column"
 			keys="Ctrl+."
 			side="left"
-			class="primitive-icon-button mb-2 shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
+			class="primitive-icon-button mt-0.5 shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
 			onclick={onToggle}
 		>
-			<IconArrowBarToLeft size={18} stroke-width={1.8} />
+			<span class="relative inline-flex">
+				<IconMessage size={18} stroke-width={1.8} />
+				{#if unread}
+					<span
+						class="absolute -top-0.5 -right-0.5 h-[7px] w-[7px] rounded-full bg-orange"
+						aria-hidden="true"
+					></span>
+				{/if}
+			</span>
 		</KeyHint>
-		<span
-			class="flex-1 text-[11px] font-medium tracking-[0.18em] text-ink-3 select-none [writing-mode:vertical-rl]"
-			aria-hidden="true">CHAT</span
-		>
-		<span class="primitive-icon-button shrink-0 text-ink-3" aria-hidden="true">
-			<IconMessage size={17} stroke-width={1.8} />
-		</span>
 	</div>
 </aside>
 
