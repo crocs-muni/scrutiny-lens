@@ -29,7 +29,7 @@
 	<h1 class="mt-1 mb-6 text-[27px] font-semibold tracking-[-0.02em]">
 		What are you investigating?
 	</h1>
-	<SearchComposer onSubmit={onSearch} />
+	<SearchComposer onSubmit={onSearch} {onSettings} />
 	<div class="mt-6">
 		<SearchSuggestions {relayCaution} onPick={onSearch} />
 	</div>
