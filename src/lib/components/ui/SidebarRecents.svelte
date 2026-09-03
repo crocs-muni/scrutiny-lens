@@ -3,8 +3,9 @@
 	 * (beautiful-ui-svelte/src/components/SidebarNav/SidebarNav.svelte).
 	 *
 	 * Vendored per the spec §9 two-tier rule: this rail carries app anatomy
-	 * (issue #10) that canon does not model — a static brand header (no
-	 * workspace menu; "the menu carries no other settings entry", spec §9),
+	 * (issue #10) that canon does not model — a brand header that navigates home
+	 * (owner ruling 2026-09-03; no S logo chip), no workspace menu ("the
+	 * menu carries no other settings entry", spec §9),
 	 * Sessions rows with timestamp + unseen dot + hover-close, the
 	 * Settings dock at the bottom, and a frameless 40px stub.
 	 *
@@ -37,6 +38,7 @@
 		activeId: string | null;
 		onToggle: () => void;
 		onNew: () => void;
+		onHome: () => void;
 		onPick: (id: string) => void;
 		onClose: (id: string) => void;
 		onSettings: () => void;
@@ -48,6 +50,7 @@
 		activeId,
 		onToggle,
 		onNew,
+		onHome,
 		onPick,
 		onClose,
 		onSettings
@@ -100,13 +103,16 @@
 	<!-- open-width column: stays 224px while the frame clips it (no reflow) -->
 	<div class="rail-copy flex h-full min-h-0 w-[224px] shrink-0 flex-col py-1.5" inert={collapsed}>
 		<div class="mb-2 flex h-10 shrink-0 items-center px-2">
-			<span
-				class="flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-accent text-[13px] font-semibold text-white"
-				aria-hidden="true">S</span
+			<!-- brand = the home affordance (owner ruling 2026-09-03: plain
+				text, no logo chip) — "home" is the search hero. -->
+			<button
+				type="button"
+				title="Home"
+				onclick={onHome}
+				class="min-w-0 flex-1 truncate rounded-control px-1 text-left text-[14px] font-semibold text-ink"
 			>
-			<span class="ml-2 min-w-0 flex-1 truncate text-[14px] font-semibold text-ink"
-				>Scrutiny Lens</span
-			>
+				Scrutiny Lens
+			</button>
 			<KeyHint
 				label="Sessions rail"
 				keys="Ctrl+\"
@@ -280,10 +286,6 @@
 			keys="Ctrl+\"
 			class="primitive-icon-button mb-1 shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover-2 hover:text-ink"
 			onclick={onToggle}><IconArrowBarToRight size={18} stroke-width={1.8} /></KeyHint
-		>
-		<span
-			class="mb-1 flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-accent text-[12px] font-semibold text-white"
-			aria-hidden="true">S</span
 		>
 		<button
 			type="button"

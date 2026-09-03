@@ -48,6 +48,14 @@ class ShellState {
 		this.settingsOpen = !this.settingsOpen;
 	}
 
+	/** Home = the search hero (owner ruling 2026-09-03): "New session" and
+	 * the rail brand both land here; the session list is untouched, so the
+	 * previous investigation keeps filling in the background. */
+	home() {
+		this.session = null;
+		this.view = 'search';
+	}
+
 	newSession(title = 'Untitled session') {
 		// issue #37: the J1 composer names the row by the question asked;
 		// the rail's "New investigation" button keeps the placeholder.
