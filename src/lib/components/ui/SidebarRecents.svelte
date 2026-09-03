@@ -37,7 +37,8 @@
 		sessions: SessionRow[];
 		activeId: string | null;
 		onToggle: () => void;
-		onNew: () => void;
+		/** "New session" and the brand both mean home (the search hero —
+		 * sessions materialize only on submit, owner ruling 2026-09-03). */
 		onHome: () => void;
 		onPick: (id: string) => void;
 		onClose: (id: string) => void;
@@ -49,7 +50,6 @@
 		sessions,
 		activeId,
 		onToggle,
-		onNew,
 		onHome,
 		onPick,
 		onClose,
@@ -129,7 +129,7 @@
 			<button
 				data-row
 				type="button"
-				onclick={onNew}
+				onclick={onHome}
 				class="sidebar-action-row relative z-10 mx-2 flex h-8 items-center rounded-control px-2 text-left transition-transform duration-150 active:scale-[0.98]"
 			>
 				<span class="flex size-5 shrink-0 items-center justify-center text-ink-2">
@@ -290,7 +290,7 @@
 		<button
 			type="button"
 			aria-label="New session"
-			onclick={onNew}
+			onclick={onHome}
 			class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover-2 hover:text-ink"
 		>
 			<IconPencil size={17} stroke-width={1.8} />
