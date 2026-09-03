@@ -30,7 +30,7 @@
 	});
 
 	const rows = $derived(derivePhaseRows(input));
-	const done = $derived(investigation.phase === 'done' || investigation.error !== null);
+	const done = $derived(investigation.phase === 'done' && investigation.error === null);
 
 	/* Expandable rows: default open while their phase runs (the literal
 	 * layer is live then), default closed once done; clicks override the
