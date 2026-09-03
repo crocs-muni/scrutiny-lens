@@ -35,6 +35,7 @@
 
 	let draft = $state('');
 	let modelOpen = $state(false);
+	let inputEl: HTMLTextAreaElement | null = null;
 
 	let models = $state<string[]>([]);
 	let modelsStatus = $state<'idle' | 'loading' | 'ok' | 'error'>('idle');
@@ -84,6 +85,9 @@
 	function selectModel(id: string): void {
 		void settings.setModel(id);
 		modelOpen = false;
+		// canon parity (PromptBar.svelte:489): focus returns to the input —
+		// otherwise the next Enter re-opens the menu instead of sending.
+		inputEl?.focus();
 	}
 
 	/* Canon's outside-click close, scoped to this composer. */
@@ -104,6 +108,7 @@
 		<!-- svelte-ignore a11y_autofocus — the hero composer IS the page's
 			purpose (spotlight pattern); focus lands where the only action is. -->
 		<textarea
+			bind:this={inputEl}
 			bind:value={draft}
 			{onkeydown}
 			rows="2"
@@ -123,11 +128,13 @@
 					aria-expanded={modelOpen}
 					aria-label="Choose model"
 					onclick={toggleModels}
-					class="flex h-7 shrink-0 items-center gap-1 rounded-control px-1.5 font-mono text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink {modelOpen
+					class="flex h-7 shrink-0 items-center gap-1 rounded-control px-1.5 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink {modelOpen
 						? 'bg-hover text-ink'
 						: ''}"
 				>
-					{settings.model || 'Choose model'}
+					<span class={settings.model ? 'font-mono' : ''}>
+						{settings.model || 'Choose model'}
+					</span>
 					<IconChevronDown size={11} stroke={2.4} class="text-ink-3" />
 				</button>
 

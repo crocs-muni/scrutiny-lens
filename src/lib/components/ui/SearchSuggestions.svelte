@@ -62,6 +62,7 @@
 				data-menu-row
 				type="button"
 				class="relative z-10 flex min-h-9 w-full items-center gap-2.5 rounded-control px-2 py-1.5 text-left text-[14px] text-ink"
+				style:animation="fade-in 200ms ease-out both"
 				onclick={() => onPick(suggestion)}
 			>
 				<IconSearch size={15} stroke={1.9} class="shrink-0 text-ink-2" />

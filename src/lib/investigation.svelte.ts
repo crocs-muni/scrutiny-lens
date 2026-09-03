@@ -94,7 +94,7 @@ class Investigation {
 		const callLLM: CallLLM = defaultCallLLM;
 
 		try {
-			this.result = await runSearch({
+			const session = await runSearch({
 				question,
 				relays: settings.relays,
 				provider,
@@ -103,6 +103,10 @@ class Investigation {
 				signal: controller.signal,
 				emit: (event) => this.applyEvent(controller, event)
 			});
+			// The transport never sees the abort signal, so a superseded
+			// run RESOLVES instead of throwing — the terminal write takes
+			// the same identity guard as the sibling writes (review P1).
+			if (this.controller === controller) this.result = session;
 		} catch (err) {
 			// Deliberate aborts are not errors; real failures settle into the
 			// §4 error surface's input instead of an unhandled rejection.
