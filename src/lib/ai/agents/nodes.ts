@@ -50,7 +50,7 @@ export const META_TYPES = ['report', 'target', 'maintenance', 'sbom', 'advisory'
 export type MetadataMetaType = (typeof META_TYPES)[number];
 const MetaTypeEnum = z.enum(META_TYPES);
 
-const StatusEnum = z.enum(['active', 'archived', 'retracted', 'unknown']);
+const StatusEnum = z.enum(['active', 'retracted', 'unknown']);
 const EAL = /^EAL[1-7]\+?$/;
 
 const BaseFields = {
@@ -211,7 +211,7 @@ function vulnIndicator(event: NostrEvent): { identifier: string; identifierKind:
 function deriveStatus(event: NostrEvent, retracted: boolean): z.infer<typeof StatusEnum> {
 	if (retracted) return 'retracted';
 	const v = tagValues(event, 'status')[0]?.toLowerCase();
-	if (v === 'active' || v === 'archived') return v;
+	if (v === 'active') return v;
 	return 'unknown';
 }
 

@@ -58,11 +58,20 @@ import {
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { z } from 'zod';
-import { tTags } from '@scrutiny-fabric/core';
+import { tTags, indexerFilter, searchFilter, fullScanFilter } from '@scrutiny-fabric/core';
 
 /** Every value of the `t` tag on the event — core's derivation, never
  * hand-rolled, per AGENTS.md's "all protocol work via @scrutiny-fabric/core". */
 export { tTags };
+
+/** Relay filter builders (§8.1 of the protocol spec): exact i-tag, NIP-50
+ * freetext fallback, and last-resort full scan. Re-exported here so the
+ * pipeline (issue #28) never hand-rolls a filter. */
+export { indexerFilter, searchFilter, fullScanFilter };
+
+/** tagValues(event, key) — every value slot of every tag with that key. The
+ * pipeline's skeleton sources index i-tags with it (never hand-rolled). */
+export { tagValues } from '@scrutiny-fabric/core';
 
 /* ── Shared types: docs/types.md is the canon; re-stated here so the seam is
  * self-contained and callers import one place. ──────────────────────────────*/

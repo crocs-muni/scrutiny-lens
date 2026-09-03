@@ -10,7 +10,7 @@ export const CC_VOCAB_APPENDIX = [
 	'- Assurance strings match `^EAL[1-7]\\+?$` (`EAL4+` = "EAL4 augmented", not a level).',
 	'- Canonical category strings come from the CC portal, e.g. `ICs, Smart Cards and Smart Card-Related Devices and Systems`.',
 	'- Indexer prefixes: `cc`, `cve`, `cwe`, `cpe`, `vendor`, `pp` (Protection Profile).',
-	'- Lifecycle: `Active` / `Archived`; scheme withdrawal maps to `archived`. `Maintenance` is a metadata kind, never a status.',
+	'Lifecycle: protocol status is ONLY `active` or `retracted` (kind-5). No other status value exists; spec §2 rule 2 is explicit: \'archived\' is NOT a protocol status and does not exist. `Maintenance` is a metadata kind, never a status.',
 ].join('\n');
 
 /** Named profile lens deltas copied from the profiles in docs/profiles.md. */

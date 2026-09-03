@@ -79,8 +79,53 @@ export interface CountResult {
 export interface Transport {
 	fetch(filters: Filter[]): Promise<FetchResult>;
 	count(filters: Filter[]): Promise<CountResult>;
+	/** One callback per relay as its slice settles (completion order), the
+	 * merged result resolving with the Promise. Skeletons/indicators need to
+	 * paint at the FIRST relay's EOSE — Promise.all would gate them on the
+	 * straggler (issue #28 critique A3). Sugar over fetchRouted with one
+	 * default route across every configured relay. */
+	fetchProgressive(filters: Filter[], onSlice: (slice: FetchSlice) => void): Promise<FetchResult>;
+	/** Route-aware fan-out (issue #28): different relay groups get different
+	 * filters (NIP-50 vs fullScanFilter vs i-tag) — routes execute
+	 * independently and concurrently, slices carry their route label so the
+	 * pipeline can attribute counts honestly. */
+	fetchRouted(routes: FetchRoute[], onSlice: (slice: FetchSlice) => void): Promise<FetchResult>;
+	/** NIP-50 capability tri-state from the relay information document
+	 * (NIP-11), cached per relay: 'supports' | 'lacks' | 'unknown'. Fetch is
+	 * non-blocking; the document is advisory, never authoritative — an
+	 * 'unknown' relay may still answer search filters (nips#1319, nostrability
+	 * #308). */
+	capability(url: string): Promise<RelayCapability>;
+	/** Immediately-known capability ('unknown' until the async probe settles). */
+	capabilitySync(url: string): RelayCapability;
 	close(): Promise<void>;
 }
+
+/** Per-relay fetch slice: the events this relay returned plus its status,
+ * delivered in completion order to fetchRouted's callback. */
+export interface FetchSlice {
+	url: string;
+	events: NostrEvent[];
+	status: RelayStatus;
+	route?: string;
+}
+
+/** One fan-out leg of fetchRouted: the filter set and the relay urls it
+ * targets, carrying a label the caller invented for attribution. */
+export interface FetchRoute {
+	label: string;
+	urls: string[];
+	filters: Filter[];
+}
+
+/** NIP-50 capability from the relay information document (NIP-11): 'unknown'
+ * covers CORS/404/timeout — the honest state, distinct from 'lacks' which
+ * requires definite capability information. */
+export type RelayCapability = 'supports' | 'lacks' | 'unknown';
+
+/** Per-relay NIP-11 info-document timeout (ms): advisory probe, must be
+ * cheap relative to CONNECT/FETCH. */
+export const INFO_TIMEOUT_MS = 2_000;
 
 /**
  * Minimal pool surface used by the transport. Structurally satisfied by
@@ -152,6 +197,102 @@ class RelayTransport implements Transport {
 		const relay = await this.pool.ensureRelay(url, { connectionTimeout: CONNECT_TIMEOUT_MS });
 		this.relays.set(url, relay);
 		return relay;
+	}
+
+	// ── Capability (NIP-11, advisory — the probe result never gates a fetch) ──
+
+	private readonly capabilities = new Map<string, Promise<RelayCapability>>();
+	private readonly capabilityState = new Map<string, RelayCapability>();
+
+	private httpsUrl(url: string): string {
+		return url.replace(/^wss:/i, 'https:').replace(/^ws:/i, 'http:');
+	}
+
+	capabilitySync(url: string): RelayCapability {
+		return this.capabilityState.get(url) ?? 'unknown';
+	}
+
+	capability(url: string): Promise<RelayCapability> {
+		let cached = this.capabilities.get(url);
+		if (!cached) {
+			cached = this.probeCapability(url);
+			this.capabilities.set(url, cached);
+		}
+		return cached;
+	}
+
+	private async probeCapability(url: string): Promise<RelayCapability> {
+		let state: RelayCapability = 'unknown';
+		try {
+			// AbortSignal.timeout aborts the socket itself; json() is inside the
+			// budget — a header-prompt, body-stalling reply must not hang the
+			// probe forever (that would wedge capability lookups downstream).
+			const info = (await fetch(this.httpsUrl(url), {
+				headers: { Accept: 'application/nostr+json' },
+				signal: AbortSignal.timeout(INFO_TIMEOUT_MS)
+			}).then((r) => (r.ok ? r.json() : null))) as { supported_nips?: unknown } | null;
+			if (info && Array.isArray(info.supported_nips)) {
+				state = info.supported_nips.includes(50) ? 'supports' : 'lacks';
+			}
+		} catch {
+			// CORS / 404 / timeout stays 'unknown' — honest "couldn't verify",
+			// distinct from 'lacks' which requires definite info (issue #28).
+		}
+		this.capabilityState.set(url, state);
+		return state;
+	}
+
+	// ── Progressive fetch: first-relay-first, stragglers never gate paint ───
+
+	async fetchProgressive(
+		filters: Filter[],
+		onSlice: (slice: FetchSlice) => void
+	): Promise<FetchResult> {
+		return this.fetchRouted([{ label: 'default', urls: this.urls, filters }], onSlice);
+	}
+
+	async fetchRouted(routes: FetchRoute[], onSlice: (slice: FetchSlice) => void): Promise<FetchResult> {
+		const settled = await Promise.all(
+			routes.flatMap((route) => {
+				const filter = route.filters.length > 1 ? mergeFilters(...route.filters) : (route.filters[0] ?? {});
+				return route.urls.map(async (url) => {
+					try {
+						const relay = await withTimeout(this.ensure(url), CONNECT_TIMEOUT_MS, url, 'connect');
+						const events = await withTimeout(
+							this.pool.querySync([url], filter, { maxWait: FETCH_TIMEOUT_MS }),
+							FETCH_TIMEOUT_MS,
+							url,
+							'fetch'
+						);
+						const status: RelayStatus = { url, status: 'ok' as const, count: events.length };
+						onSlice({ url, events, status, route: route.label });
+						return { status, events };
+					} catch (error) {
+						const timedOut = error instanceof TransportTimeoutError;
+						const status: RelayStatus = {
+							url,
+							status: timedOut ? ('timeout' as const) : ('refused' as const),
+							count: 0,
+							lastError: errorMessage(error)
+						};
+						onSlice({ url, events: [], status, route: route.label });
+						return { status, events: [] as NostrEvent[] };
+					}
+				});
+			})
+		);
+		// Completion order varies; the merged set dedupes in ROUTE-input order,
+		// same first-wins contract as fetch().
+		const seen = new Set<string>();
+		const events: NostrEvent[] = [];
+		for (const { events: batch } of settled) {
+			for (const event of batch) {
+				if (seen.has(event.id)) continue;
+				seen.add(event.id);
+				events.push(event);
+			}
+		}
+		return { events, relays: settled.map((s) => s.status) };
 	}
 
 	private async runPerRelay<T>(
