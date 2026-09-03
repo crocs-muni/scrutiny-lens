@@ -76,8 +76,11 @@ export interface GenerateStructuredOptions<T> {
 	callLLM?: CallLLM;
 }
 
-/** Default transport: resolve provider → openai-compatible → generateText → .text */
-async function defaultCallLLM({ provider, system, messages, temperature, signal }: CallLLMArgs): Promise<string> {
+/** Default transport: resolve provider → openai-compatible → generateText → .text.
+ * Exported: the app-level investigation orchestrator starts runSearch with
+ * exactly this transport (issue #37) — it used to be private to the
+ * generateStructured seam. */
+export async function defaultCallLLM({ provider, system, messages, temperature, signal }: CallLLMArgs): Promise<string> {
 	const p = createOpenAICompatible({
 		baseURL: provider.baseUrl,
 		name: provider.name,

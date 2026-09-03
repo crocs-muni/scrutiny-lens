@@ -48,10 +48,22 @@ class ShellState {
 		this.settingsOpen = !this.settingsOpen;
 	}
 
-	newSession() {
+	/** Home = the search hero (owner ruling 2026-09-03): "New session" and
+	 * the rail brand both land here; the session list is untouched, so the
+	 * previous investigation keeps filling in the background. */
+	home() {
+		this.session = null;
+		this.view = 'search';
+	}
+
+	newSession(title = 'Untitled session') {
+		// issue #37: the investigation orchestrator is the only production
+		// caller and always passes the question; the default title is the
+		// test seam's convenience (the rail's New-session row now opens the
+		// hero instead of minting an empty session).
 		const row: SessionRow = {
 			id: crypto.randomUUID(),
-			title: 'Untitled session',
+			title,
 			createdAt: Date.now()
 		};
 		this.sessions.unshift(row);
