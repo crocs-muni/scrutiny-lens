@@ -163,6 +163,40 @@ describe('runSearch — capability-aware routing (spec §3)', () => {
 		});
 		expect(transport.captured.flat().some((f) => typeof f.search === 'string')).toBe(true);
 	});
+
+	it('pure tag questions skip the NIP-11 probe entirely (spec §7: instant skeletons)', async () => {
+		const capabilitySpy = vi.fn(async (_url: string) => 'unknown' as const);
+		const transport = new FakeTransport({ 'wss://a': { events: [] } });
+		transport.capability = capabilitySpy;
+		await runSearch({
+			question: 'CVE-2017-15361',
+			relays: ['wss://a'],
+			provider: PROVIDER,
+			callLLM: llmPlan('[]'),
+			transport,
+			admit: () => ({ ok: true })
+		});
+		expect(capabilitySpy).not.toHaveBeenCalled();
+	});
+
+	it('unknown-capability relay runs BOTH legs (never a false no-matches notice, spec §3/§4)', async () => {
+		const transport = new FakeTransport({
+			'wss://capable': { events: [] },
+			'wss://mystery': { events: [event('m1')] }
+		}, { 'wss://capable': 'supports' });
+		const session = await runSearch({
+			question: 'ROCA chips',
+			relays: ['wss://capable', 'wss://mystery'],
+			provider: PROVIDER,
+			callLLM: llmPlan('[{"kind":"text","value":"ROCA"}]'),
+			transport,
+			admit: () => ({ ok: true })
+		});
+		expect(session.notices.some((n) => n.kind === 'capability' && n.message.includes('wss://mystery') && n.message.includes('couldn\'t be verified'))).toBe(true);
+		// Unverifiable → both legs present: the NIP-50 search and the tag scan.
+		expect(transport.captured.flat().some((f) => typeof f.search === 'string')).toBe(true);
+		expect(transport.captured.flat().some((f) => f.search === undefined && Array.isArray(f['#t']))).toBe(true);
+	});
 });
 
 describe('runSearch — admit, cache, and skipped counts (spec §4)', () => {

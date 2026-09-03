@@ -126,6 +126,20 @@ describe('translateQuestion — prose goes through one gated call (≤3)', () =>
 		const res = await translateQuestion({ question: 'inject malformed', provider: PROVIDER, callLLM: call });
 		expect(res.ok && res.result.searches).toEqual([{ kind: 'tag', value: 'cve:x', source: 'ai' }]);
 	});
+
+	it('a mixed bare-identifier + prose question keeps BOTH searches (spec §1/§3, review R2)', async () => {
+		const { call, calls } = fakeLLM('[{"kind":"text","value":"Infineon chips"}]');
+		const res = await translateQuestion({
+			question: 'CVE-2017-15361 in Infineon chips',
+			provider: PROVIDER,
+			callLLM: call
+		});
+		expect(calls).toHaveLength(1); // prose part is translated, not dropped
+		expect(res.ok && res.result.searches).toEqual([
+			{ kind: 'tag', value: 'cve:CVE-2017-15361', source: 'identifier' },
+			{ kind: 'text', value: 'Infineon chips', source: 'ai' }
+		]);
+	});
 });
 
 describe('translateQuestion — deterministic fallbacks (spec §2 rule 5 spirit)', () => {

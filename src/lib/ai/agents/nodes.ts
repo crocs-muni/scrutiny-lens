@@ -50,7 +50,7 @@ export const META_TYPES = ['report', 'target', 'maintenance', 'sbom', 'advisory'
 export type MetadataMetaType = (typeof META_TYPES)[number];
 const MetaTypeEnum = z.enum(META_TYPES);
 
-const StatusEnum = z.enum(['active', 'archived', 'retracted', 'unknown']);
+const StatusEnum = z.enum(['active', 'retracted', 'unknown']);
 const EAL = /^EAL[1-7]\+?$/;
 
 const BaseFields = {

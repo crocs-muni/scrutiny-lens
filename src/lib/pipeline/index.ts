@@ -80,21 +80,35 @@ function routeSearch(
 		// i-tag filters are NIP-01: every relay answers them (spec §3).
 		return [{ label, urls: relays, filters: [indexerFilter(search.value) as Filter] }];
 	}
-	// freetext: capability decides NIP-50 vs fullscan per relay group.
-	const bip50: string[] = [];
+	// freetext routing per relay group, leg labels UNIQUE — truncation COUNT
+	// math borrows across legs when two legs share 'text:value' (review R2).
+	const routes: FetchRoute[] = [];
+	const nip50: string[] = [];
+	const fullscan: string[] = [];
 	for (const url of relays) {
 		const cap = caps.get(url) ?? 'unknown';
-		if (cap !== 'lacks') bip50.push(url);
-		else
+		if (cap === 'lacks') {
 			notices.push({
 				kind: 'capability',
 				message: `relay ${url} lacks search support — falling back to a tag scan`
 			});
+			fullscan.push(url);
+		} else if (cap === 'unknown') {
+			// Unverifiable → run BOTH legs: an unresponsive-but-capable relay
+			// keeps its NIP-50 answer; an incapable one is still covered by the
+			// tag scan. Dedupes downstream (spec §3 never-blank).
+			notices.push({
+				kind: 'capability',
+				message: `relay ${url}'s search support couldn't be verified — trying NIP-50 and a tag scan`
+			});
+			nip50.push(url);
+			fullscan.push(url);
+		} else {
+			nip50.push(url);
+		}
 	}
-	const routes: FetchRoute[] = [];
-	if (bip50.length > 0) routes.push({ label, urls: bip50, filters: [searchFilter(search.value) as Filter] });
-	const lacks = relays.filter((u) => (caps.get(u) ?? 'unknown') === 'lacks');
-	if (lacks.length > 0) routes.push({ label, urls: lacks, filters: [fullScanFilter() as Filter] });
+	if (nip50.length > 0) routes.push({ label: `${label}:nip50`, urls: nip50, filters: [searchFilter(search.value) as Filter] });
+	if (fullscan.length > 0) routes.push({ label: `${label}:fullscan`, urls: fullscan, filters: [fullScanFilter() as Filter] });
 	return routes;
 }
 
@@ -209,9 +223,13 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 
 	emit({ type: 'phase', phase: 'fetch' });
 
-	// Tag routes fire immediately (spec §1 identifiers critical); freetext
-	// searches then get one capability hint per relay concurrently. Each
-	// relay settles independently — a slow probe gates only its own relays.
+	// Tag legs fire BEFORE capability probes: they're NIP-01 — spec §7 wants
+	// skeletons instantly and a hung probe must not hold them (review R2).
+	const tagRoutes = searches.filter((s) => s.kind === 'tag').flatMap((search) => routeSearch(search, opts.relays, new Map(), []));
+	if (tagRoutes.length > 0) {
+		const tagResult = await opts.transport.fetchRouted(tagRoutes, onSlice);
+		relays = tagResult.relays;
+	}
 
 	// Pure-tag questions need never probe NIP-11: tag filters are NIP-01, every
 	// relay answers them. Freetext questions do — the only routing
@@ -221,13 +239,17 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	if (freetextCount > 0) {
 		await Promise.all(opts.relays.map(async (url) => caps.set(url, await opts.transport.capability(url))));
 	}
-	const routes = searches.flatMap((search) => routeSearch(search, opts.relays, caps, notices));
+	const routes = searches.filter((s) => s.kind === 'text').flatMap((search) => routeSearch(search, opts.relays, caps, notices));
 
 	if (routes.length > 0) {
 		// Progressive fetch: first-relayer-shared batch slices arrive in
 		// completion order and skeletons paint at the FIRST relay's EOSE.
 		const result = await opts.transport.fetchRouted(routes, onSlice);
-		relays = result.relays;
+		// Merge with any statuses the tag leg already reported (url-keyed —
+		// a relay with legs in both lanes reports once, newest wins).
+		const merged = new Map(relays.map((r) => [r.url, r]));
+		for (const r of result.relays) merged.set(r.url, r);
+		relays = [...merged.values()];
 	}
 
 	await Promise.all(pendingWrites);

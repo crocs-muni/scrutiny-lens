@@ -131,11 +131,16 @@ export async function translateQuestion(opts: TranslateOptions): Promise<AIResul
 		.map((v) => v.trim())
 		.filter((v) => v !== '');
 
-	// Whole-question-is-identifiers: no AI call at all (spec §1).
-	const prose = question
-		.split(/\s+/)
-		.filter((tok) => !identifiers.some((id) => id.startsWith(tok.split(':')[0] + ':') || tok === id))
-		.join(' ')
+	// Whole-question-is-identifiers: no AI call at all (spec §1). Strip by
+	// substring: a bare CVE-2024-1234 matched by the regex must leave the
+	// rest of the question as prose for AI translation; only the prefixed
+	// form counts as an identifier token (review R2).
+	const prose = identifiers
+		.reduce((text, id) => {
+			const value = id.slice(id.indexOf(':') + 1);
+			return text.split(id).join(' ').split(value).join(' ');
+		}, question)
+		.replace(/\s+/g, ' ')
 		.trim();
 
 	const proseRemaining =
