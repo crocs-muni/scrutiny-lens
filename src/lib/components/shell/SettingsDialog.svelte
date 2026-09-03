@@ -1,6 +1,6 @@
 <script lang="ts">
 	/* SETTINGS DIALOG (issue #11, spec §5/§6/§8): AI provider (endpoint / key /
-	 * live model list), appearance, relay pool editor (2–4 entries), and the
+	 * live model list), appearance, relay pool editor (1–4 entries), and the
 	 * one Clear-all action. Replaces the #10 staging overlay; mounted only
 	 * while open (+page.svelte gates on shell.settingsOpen), so drafts copy
 	 * from the hydrated settings singleton at mount.
@@ -113,7 +113,7 @@
 		{ value: 'system', label: 'System', icon: IconDeviceDesktop }
 	];
 
-	// ── Relay pool (spec §8: 2–4 entries, user-editable) ─────────────────────
+	// ── Relay pool (spec §8: 1–4 entries, user-editable) ─────────────────────
 
 	// A misconfigured env can hand the store fewer than RELAY_MIN relays
 	// (the editor enforces bounds only on commit) — pad the drafts with

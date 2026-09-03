@@ -65,9 +65,9 @@ describe('persist-on-change', () => {
 	});
 });
 
-describe('relay list validation (spec §8: 2–4 entries)', () => {
+describe('relay list validation (spec §8: 1–4 entries)', () => {
 	it('rejects fewer than the minimum', async () => {
-		await expect(settings.setRelays(['wss://only.example'])).rejects.toThrow(String(RELAY_MIN));
+		await expect(settings.setRelays([])).rejects.toThrow(String(RELAY_MIN));
 	});
 
 	it('rejects more than the maximum', async () => {
@@ -83,7 +83,7 @@ describe('relay list validation (spec §8: 2–4 entries)', () => {
 
 	it('a rejected list neither mutates state nor persists', async () => {
 		const before = [...settings.relays];
-		await expect(settings.setRelays(['wss://only.example'])).rejects.toThrow();
+		await expect(settings.setRelays([])).rejects.toThrow();
 		expect(settings.relays).toEqual(before);
 		const persisted = await loadSettings();
 		expect(persisted?.relays ?? []).not.toEqual(['wss://only.example']);

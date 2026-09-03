@@ -15,9 +15,8 @@ export interface SessionRow {
 	unseen?: boolean;
 }
 
-/** Center column stages (issue #10: swaps search → results → session).
- * `results` arrives with the query pipeline (spec §11 step 2). */
-export type CenterView = 'search' | 'session';
+/** Center column stages (issue #10: swaps search → results → session; `results` arrives with the trace step, spec §11 step 2). */
+export type CenterView = 'search' | 'results' | 'session';
 
 class ShellState {
 	railOpen = $state(true);

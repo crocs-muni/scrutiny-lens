@@ -10,6 +10,8 @@
 	import { investigation } from '$lib/investigation.svelte';
 	import { settings } from '$lib/settings.svelte';
 	import SearchHero from '$lib/components/ui/SearchHero.svelte';
+	import TaskTrace from '$lib/components/ui/TaskTrace.svelte';
+	import ResultCard from '$lib/components/ui/ResultCard.svelte';
 	import SidebarRecents from '$lib/components/ui/SidebarRecents.svelte';
 	import DetailDrawer from '$lib/components/shell/DetailDrawer.svelte';
 	import ChatColumn from '$lib/components/shell/ChatColumn.svelte';
@@ -55,6 +57,17 @@
 							onSearch={(q) => void investigation.start(q)}
 							onSettings={() => shell.toggleSettings()}
 						/>
+					</div>
+					{:else if shell.view === 'results'}
+					<!-- issue #36: trace + rule-5 skeleton cards; #38's results
+						surface grows on this stage. -->
+					<div class="flex h-full w-full flex-col items-center gap-3 overflow-y-auto">
+						<TaskTrace />
+						{#each investigation.skeletons as card (card.id)}
+							<div class="w-full max-w-[760px]">
+								<ResultCard {card} />
+							</div>
+						{/each}
 					</div>
 				{:else}
 					<p class="max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">

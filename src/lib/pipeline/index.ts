@@ -47,7 +47,8 @@ export interface SearchSession {
 
 export type PipelineEvent =
 	| { type: 'phase'; phase: Phase }
-	| { type: 'slice'; url: string; received: number; route: string }
+	| { type: 'slice'; url: string; received: number; route: string; rejected: number }
+	| { type: 'searches'; searches: SearchRequest[] }
 	| { type: 'skeleton'; cards: SkeletonCard[] }
 	| { type: 'notice'; notice: PipelineNotice };
 
@@ -170,6 +171,9 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 		signal: opts.signal
 	});
 	const searches = plan.ok ? plan.result.searches : [];
+	// issue #36: the trace's first row counts/names the searches as soon as
+	// translation settles — the session itself only ships at the end.
+	emit({ type: 'searches', searches });
 
 	// ── Cache-first (issue #28 acceptance: repeat queries labeled cache) ─────
 	const cachedEvents: NostrEvent[] = [];
@@ -188,7 +192,7 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	let relays: RelayStatus[] = [];
 
 	const onSlice = (slice: FetchSlice): void => {
-		emit({ type: 'slice', url: slice.url, received: slice.events.length, route: slice.route ?? 'default' });
+		const rejectedBefore = invalidSkipped;
 		perRouteReceived.set(slice.route ?? 'default', (perRouteReceived.get(slice.route ?? 'default') ?? 0) + slice.events.length);
 		const skeletons: SkeletonCard[] = [];
 		for (const event of slice.events) {
@@ -207,6 +211,15 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 			pendingWrites.push(indexEvent(event).catch(() => {}));
 		}
 		if (skeletons.length > 0) emit({ type: 'skeleton', cards: skeletons });
+		// issue #36: per-slice admitted/rejected so the trace's Organize row
+		// counts while fetching instead of only at 'done'.
+		emit({
+			type: 'slice',
+			url: slice.url,
+			received: slice.events.length,
+			route: slice.route ?? 'default',
+			rejected: invalidSkipped - rejectedBefore
+		});
 	};
 
 	// Cache slice delivered as a real slice with route label 'cache',

@@ -1,5 +1,5 @@
 // Config surface (issue #11, spec §5/§8): env-derived defaults for the AI
-// endpoint and the relay pool, plus the 2–4 relay bound the editor enforces.
+// endpoint and the relay pool, plus the 1–4 relay bound the editor enforces.
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -11,9 +11,9 @@ import {
 	parseRelayUrls
 } from '../src/lib/config';
 
-describe('relay pool bounds (spec §8: 2–4 entries)', () => {
-	it('fixes the pool at 2–4 entries', () => {
-		expect(RELAY_MIN).toBe(2);
+describe('relay pool bounds (spec §8: 1–4 entries, owner ruling 2026-09-03)', () => {
+	it('fixes the pool at 1–4 entries', () => {
+		expect(RELAY_MIN).toBe(1);
 		expect(RELAY_MAX).toBe(4);
 	});
 });
