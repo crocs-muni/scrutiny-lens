@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod';
-import type { CallLLM, AIResult } from '$lib/ai/output';
+import type { AIResult, CallLLM } from '$lib/ai/output';
 import { generateStructured } from '$lib/ai/output';
 import type { ProviderOverrideInput } from '$lib/ai/provider';
 
@@ -35,12 +35,16 @@ export const GUIDED_PREFIXES = [
  * Deterministic: identifier detection (spec §2 rule 2 — never AI)
  * ------------------------------------------------------------------ */
 
-// Bare CVE / GHSA tokens in prose (per spec §1 these route directly to tag
+// Bare CVE / GHSA tokens in prose (per spec §1 they route directly to tag
 // searches; typed prefix:value tokens do too, opaquely per IR-4).
 const CVE_RE = /\bCVE-\d{4}-\d{4,7}\b/gi;
 const GHSA_RE = /\bGHSA(?:-[A-Za-z0-9]{4}){3}\b/gi;
 const PURL_RE = /\bpkg:[A-Za-z0-9+._/-]+@[^\s,;"'<>]+/gi;
-const PREFIX_VALUE_RE = /\b[A-Za-z0-9-]+:[^\s,;"'<>]+/g;
+// Typed prefix:value tokens pass through (IR-4) only when identifier-shaped:
+// skip URL schemes ('https://…' is a page, not a tag) and free-prose colons
+// ('note: the march…' is grammar, not an identifier). Value must carry at
+// least one identifier-ish character beyond a bare word (digit, @, _, -, .).
+const PREFIX_VALUE_RE = /\b[A-Za-z0-9-]+:[^\s,;"'<>]*(?:[\d@_.-])[^\s,;"'<>]*/g;
 
 export function detectIdentifiers(question: string): string[] {
 	const out = new Set<string>();
@@ -49,21 +53,16 @@ export function detectIdentifiers(question: string): string[] {
 	const purls = new Set<string>([...question.matchAll(PURL_RE)].map((m) => m[0]));
 	for (const purl of purls) out.add(`purl:${purl}`);
 	for (const m of question.matchAll(PREFIX_VALUE_RE)) {
+		if (m[0].includes('://')) continue; // URLs are pages, not tags
 		// pkg: tokens are already countable as purls; skip duplicates.
-		if (!purls.has(m[0])) out.add(m[0]);
+		if (purls.has(m[0])) continue;
+		out.add(m[0]);
 	}
 	return [...out];
 }
 
-/** The shared prefix:value grammar used for validation (never rejecting an
- * unknown prefix — IR-4's pass-through guarantee). */
-const TAG_VALUE = /^[a-z0-9-]+:\S+$/i;
-
-// eslint-disable-next-line no-unused-vars
-const isTag = (v: string): boolean => TAG_VALUE.test(v);
-
 /* ------------------------------------------------------------------ *
- * LLM plan (one call, ≤3, guided toward the guided prefixes — spec §5)
+ * LLM boundary schema — one call, ≤3, guided toward the guided prefixes
  * ------------------------------------------------------------------ */
 
 const SearchDraft = z.object({
@@ -80,16 +79,22 @@ const INSTRUCTIONS = [
 	'No other prose.'
 ].join('\n');
 
-export interface TranslateOptions {
+/* ------------------------------------------------------------------ *
+ * Deterministic: prefix validation (never reject — IR-4 pass-through)
+ * ------------------------------------------------------------------ */
+
+const TAG_VALUE = /^[a-z0-9-]+:\S+$/i;
+
+function clip(s: string, max: number): string {
+	return s.length <= max ? s : s.slice(0, max - 1) + '…';
+}
+
+interface TranslateOptions {
 	question: string;
 	provider?: ProviderOverrideInput;
 	callLLM: CallLLM;
 	signal?: AbortSignal;
 	profile?: string;
-}
-
-function clip(s: string, max: number): string {
-	return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
 async function translateViaAi(reminder: string, opts: TranslateOptions): Promise<SearchRequest[]> {
@@ -115,7 +120,7 @@ async function translateViaAi(reminder: string, opts: TranslateOptions): Promise
 }
 
 /* ------------------------------------------------------------------ *
- * translateQuestion (deterministic ordering: identifiers → AI → fallback)
+ * translateQuestion (identifiers → AI → fallback)
  * ------------------------------------------------------------------ */
 
 export async function translateQuestion(opts: TranslateOptions): Promise<AIResult<SearchPlan>> {
@@ -126,16 +131,21 @@ export async function translateQuestion(opts: TranslateOptions): Promise<AIResul
 		.map((v) => v.trim())
 		.filter((v) => v !== '');
 
-	// When the whole question is identifiers, no AI call at all (spec §1).
+	// Whole-question-is-identifiers: no AI call at all (spec §1).
 	const prose = question
 		.split(/\s+/)
 		.filter((tok) => !identifiers.some((id) => id.startsWith(tok.split(':')[0] + ':') || tok === id))
 		.join(' ')
 		.trim();
 
-	const proseRemaining = prose !== '' && prose !== question && identifiers.length > 0 ? prose : (identifiers.length === 0 ? question : '');
+	const proseRemaining =
+		identifiers.length === 0
+			? question
+			: prose !== '' && prose !== question
+				? prose
+				: '';
 
-	if (identifiers.length > 0 && (proseRemaining === '' || proseRemaining.split(/\s+/).every((tok) => identifiers.some((id) => id.includes(tok))))) {
+	if (identifiers.length > 0 && proseRemaining === '') {
 		return {
 			ok: true,
 			result: {
@@ -152,16 +162,16 @@ export async function translateQuestion(opts: TranslateOptions): Promise<AIResul
 	let fallbackUsed = false;
 	if (proseRemaining !== '') {
 		aiSearches = await translateViaAi(proseRemaining, opts);
-		if (aiSearches.length === 0) {
-			fallbackUsed = true;
-		}
+		if (aiSearches.length === 0) fallbackUsed = true;
 	}
 
-	// Total ≤3 (spec §3): identifiers take priority over AI-planned searches.
+	// spec §1 guarantees every identifier its direct tag route (never
+	// dropped — AI translation's ≤3 cap does not blind them). The pipeline
+	// renders explicit skeletons immediately; the AI then fills.
 	const capped = [
 		...identifiers.map((value) => ({ kind: 'tag' as const, value, source: 'identifier' as const })),
-		...aiSearches
-	].slice(0, 3);
+		...aiSearches.slice(0, 3)
+	];
 
 	if (fallbackUsed && capped.length === 0) {
 		return {

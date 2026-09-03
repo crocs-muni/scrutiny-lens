@@ -224,17 +224,15 @@ class RelayTransport implements Transport {
 	private async probeCapability(url: string): Promise<RelayCapability> {
 		let state: RelayCapability = 'unknown';
 		try {
-			const response = await withTimeout(
-				fetch(this.httpsUrl(url), { headers: { Accept: 'application/nostr+json' } }),
-				INFO_TIMEOUT_MS,
-				url,
-				'info'
-			);
-			if (response.ok) {
-				const info = (await response.json()) as { supported_nips?: unknown };
-				if (Array.isArray(info.supported_nips)) {
-					state = info.supported_nips.includes(50) ? 'supports' : 'lacks';
-				}
+			// AbortSignal.timeout aborts the socket itself; json() is inside the
+			// budget — a header-prompt, body-stalling reply must not hang the
+			// probe forever (that would wedge capability lookups downstream).
+			const info = (await fetch(this.httpsUrl(url), {
+				headers: { Accept: 'application/nostr+json' },
+				signal: AbortSignal.timeout(INFO_TIMEOUT_MS)
+			}).then((r) => (r.ok ? r.json() : null))) as { supported_nips?: unknown } | null;
+			if (info && Array.isArray(info.supported_nips)) {
+				state = info.supported_nips.includes(50) ? 'supports' : 'lacks';
 			}
 		} catch {
 			// CORS / 404 / timeout stays 'unknown' — honest "couldn't verify",

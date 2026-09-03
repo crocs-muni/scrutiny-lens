@@ -40,7 +40,11 @@ function deriveFallbackTitle(event: NostrEvent): string {
 }
 
 export function assembleCards(graph: GraphView, patchSources: NostrEvent[] = []): ProductCard[] {
-	return graph.nodes.map((node) => {
+	// One card per root PRODUCT (spec §3) — metadata nodes are bound records,
+	// not cards; a metadata node mapped here would inflate the cohort counts.
+	return graph.nodes
+		.filter((node) => node.type === 'product')
+		.map((node) => {
 		const ev = node.event;
 		const identifiers = [...new Set(tagValues(ev, 'i'))];
 		const boundEdges = graph.edges.filter((e) => e.target === node.id && e.source !== node.id);
@@ -138,7 +142,8 @@ const FillSchema = z.array(FillDraft);
 const INSTRUCTIONS = [
 	'You are a security-asset interpretation card writer.',
 	'For each event, produce a concise title (≤120 chars) and snippet (≤300 chars).',
-	'Use only facts from the provided content — never invent data.',
+	'The `id` you output maps your answer back to the event — emit EXACTLY the id you were given.',
+	'Use only facts from the provided content — never invent data, never emit a title about another event.',
 	'Output a JSON array of {id, title, snippet} objects, no prose.'
 ].join('\n');
 
@@ -154,50 +159,68 @@ function clip(s: string, max: number): string {
 	return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
-async function fillCard(card: ProductCard, opts: FillCardsOptions, model: string): Promise<ProductCard> {
-	// Interpretations cache at (eventId, model) — spec §6: repeat queries
-	// never re-pay the LLM round-trip.
-	const cached = await getInterpretation(card.id, model);
-	if (cached?.bySurface.card) {
-		const typed = cached.bySurface.card as Record<string, unknown>;
-		if (typeof typed.title === 'string' && typeof typed.snippet === 'string') {
+export async function fillCards(cards: ProductCard[], opts: FillCardsOptions): Promise<ProductCard[]> {
+	if (cards.length === 0) return [];
+	const model = opts.provider.model?.trim();
+	if (!model) return cards;
+
+	// Cached interpretations first — never re-pay the LLM for a card we
+	// already asked the same model about (spec §6, (eventId, model)).
+	const cached = await Promise.all(
+		cards.map(async (card) => {
+			const hit = await getInterpretation(card.id, model);
+			if (!hit?.bySurface.card) return null;
+			const typed = hit.bySurface.card as Record<string, unknown>;
+			if (typeof typed.title !== 'string' || typeof typed.snippet !== 'string') return null;
 			return {
 				...card,
 				title: typed.title.slice(0, CLIP_LIMIT.title),
 				snippet: typed.snippet.slice(0, CLIP_LIMIT.snippet),
 				interpreted: true
 			};
-		}
+		})
+	);
+	const fresh = cards.filter((c, i) => cached[i] === null);
+	if (fresh.length === 0) {
+		return cached.map((c, i) => c ?? cards[i]);
 	}
 
+	// One batch-shaped call for all uncached cards — rate-limit-safe (spec §7's
+	// AI-fill budget) and the draft's id binds every answer back to its card.
 	const result = await generateStructured({
 		schema: FillSchema,
 		system: INSTRUCTIONS,
-		messages: [{ role: 'user', content: card.contentStart }],
+		messages: [
+			{
+				role: 'user',
+				content: JSON.stringify(
+					fresh.map((c) => ({ id: c.id, content: c.contentStart }))
+				)
+			}
+		],
 		provider: opts.provider,
 		callLLM: opts.callLLM,
 		abortSignal: opts.signal,
 		temperature: 0.2
 	});
 
-	if (!result.ok) return card; // rule 5 fallback stays visible-degraded
-	if (result.result.length === 0) return card;
+	const drafts = new Map<string, { id: string; title: string; snippet: string }>();
+	if (result.ok) {
+		for (const draft of result.result) drafts.set(draft.id, draft);
+	}
 
-	const hit = result.result[0];
-	const filled = {
-		...card,
-		title: clip(hit.title, CLIP_LIMIT.title),
-		snippet: clip(hit.snippet, CLIP_LIMIT.snippet),
-		interpreted: true
-	};
-
-	// Persist for repeat queries — same (eventId, model) key (spec §6).
-	await saveInterpretation(card.id, model, 'card', { title: filled.title, snippet: filled.snippet });
-	return filled;
-}
-
-export async function fillCards(cards: ProductCard[], opts: FillCardsOptions): Promise<ProductCard[]> {
-	const model = opts.provider.model?.trim();
-	if (!model) return cards;
-	return Promise.all(cards.map((card) => fillCard(card, opts, model)));
+	return cards.map((card, i) => {
+		if (cached[i]) return cached[i];
+		const draft = drafts.get(card.id);
+		if (!draft || !result.ok) return card; // rule 5 fallback per item
+		const filled = {
+			...card,
+			title: clip(draft.title, CLIP_LIMIT.title),
+			snippet: clip(draft.snippet, CLIP_LIMIT.snippet),
+			interpreted: true
+		};
+		// Persist for repeat queries — same (eventId, model) surface (spec §6).
+		void saveInterpretation(card.id, model, 'card', { title: filled.title, snippet: filled.snippet });
+		return filled;
+	});
 }
