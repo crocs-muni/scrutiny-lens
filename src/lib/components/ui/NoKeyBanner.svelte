@@ -19,7 +19,7 @@
 >
 	<IconAlertCircle size={14} stroke={2} class="shrink-0" />
 	<span>
-		No API key yet — everything works, AI texts fall back.
+		No API key yet. Everything works; AI texts fall back.
 		<button type="button" class="font-semibold hover:underline" onclick={onSettings}>
 			Set one in Settings →
 		</button>

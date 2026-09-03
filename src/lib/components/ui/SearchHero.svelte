@@ -1,9 +1,9 @@
 <script lang="ts">
-	/* SEARCH HERO — the J1 center stage (design board BIBLE §1 frame J1,
-	 * render proof J1-after-render.webp; issue #37, spec §9). Composition
-	 * of NoKeyBanner + SearchComposer + SearchSuggestions; all copy is
-	 * canned (spec §2 rule 1), §-references are intentional production
-	 * copy per the render proof. */
+	/* SEARCH HERO — the J1 center stage (design board BIBLE §1 frame J1;
+	 * issue #37, spec §9). Composition of NoKeyBanner + SearchComposer +
+	 * SearchSuggestions; all copy is canned (spec §2 rule 1). The board's
+	 * caption line was an engineering annotation (owner ruling 2026-09-03)
+	 * and no clamps exist: px-16 padding, content fills the stage. */
 
 	import SearchComposer from './SearchComposer.svelte';
 	import SearchSuggestions from './SearchSuggestions.svelte';
@@ -44,7 +44,7 @@
 	let shown = $state<string[]>(pickThree());
 </script>
 
-<div class="mx-auto flex w-full max-w-[640px] flex-col justify-center px-16 py-8">
+<div class="flex h-full w-full flex-col justify-center px-16 py-8">
 	{#if !hasKey}
 		<div class="mb-5">
 			<NoKeyBanner {onSettings} />
@@ -55,12 +55,7 @@
 		What are you investigating?
 	</h1>
 	<SearchComposer onSubmit={onSearch} />
-	<p class="mt-2 text-[12.5px] text-ink-2">
-		Identifiers route <b class="font-semibold">straight to a tag query — never through AI</b>
-		(§1). Suggestions below are <b class="font-semibold">canned</b> — AI writes nothing here (§2
-		r1); zero-setup first run stays zero-AI.
-	</p>
-	<div class="mt-5">
+	<div class="mt-6">
 		<SearchSuggestions
 			suggestions={shown}
 			{relayCaution}

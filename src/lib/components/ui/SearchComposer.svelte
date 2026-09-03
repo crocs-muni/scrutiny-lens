@@ -10,8 +10,8 @@
 	 * Enter submits, Shift+Enter is a newline; the arrow button mirrors
 	 * Enter. Placeholder copy is fixed by the design board. */
 
-	import { Tooltip } from 'bits-ui';
 	import { IconArrowUp } from '@tabler/icons-svelte';
+	import KeyHint from '../shell/KeyHint.svelte';
 
 	interface Props {
 		onSubmit: (question: string) => void;
@@ -45,27 +45,18 @@
 		{onkeydown}
 		rows="2"
 		autofocus
-		placeholder="Ask in plain English — or drop a CVE, GHSA, package URL, cert id…"
+		placeholder="Ask in plain English, or drop a CVE, GHSA, package URL, cert id…"
 		class="block w-full resize-none text-[14px] text-ink placeholder:text-ink-2"
 	></textarea>
 	<div class="mt-3.5 flex items-center justify-end">
-		<Tooltip.Root>
-			<Tooltip.Trigger
-				class="flex h-9 w-9 items-center justify-center rounded-[9px] bg-accent text-white disabled:opacity-40"
-				disabled={value.trim() === ''}
-				onclick={submit}
-				aria-label="Search"
-			>
-				<IconArrowUp size={15} stroke={2.4} />
-			</Tooltip.Trigger>
-			<Tooltip.Portal>
-				<Tooltip.Content
-					sideOffset={6}
-					class="z-50 rounded-control bg-[var(--tooltip-bg)] px-2 py-1 text-[11.5px] text-[var(--tooltip-fg)] shadow-raised"
-				>
-					Search — Enter
-				</Tooltip.Content>
-			</Tooltip.Portal>
-		</Tooltip.Root>
+		<KeyHint
+			label="Search"
+			keys="Enter"
+			side="left"
+			class="flex h-9 w-9 items-center justify-center rounded-[9px] bg-accent text-white {value.trim() === '' ? 'cursor-default opacity-40' : ''}"
+			onclick={submit}
+		>
+			<IconArrowUp size={15} stroke={2.4} />
+		</KeyHint>
 	</div>
 </div>
