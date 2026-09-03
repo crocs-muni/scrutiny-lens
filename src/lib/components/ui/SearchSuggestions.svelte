@@ -11,13 +11,41 @@
 	import { IconRefresh, IconSearch } from '@tabler/icons-svelte';
 
 	interface Props {
-		suggestions: string[];
 		relayCaution?: string;
 		onPick: (question: string) => void;
-		onShuffle: () => void;
 	}
 
-	let { suggestions, relayCaution, onPick, onShuffle }: Props = $props();
+	let { relayCaution, onPick }: Props = $props();
+
+	/* Canned prompt pool (spec §2 rule 1 — never AI-written). Shuffle shows
+	 * three, excluding the current round so consecutive sets always differ.
+	 * The pool lives here, next to its only consumer (review, Standards). */
+	const POOL = [
+		'ROCA vulnerability in Infineon chips',
+		'FIPS 140-3 certificates expiring this year',
+		'Which packages still bundle OpenSSL 3.0?',
+		'Common Criteria EAL4+ certificates from BSI',
+		'JCAlgTest results for NXP JCOP cards',
+		'TPM firmware vulnerabilities with CVE records',
+		'Certificates covering Java Card 3.1 platforms',
+		'Infineon smartcards with maintained certifications'
+	] as const;
+
+	function pickThree(exclude: readonly string[] = []): string[] {
+		const pool = POOL.filter((s) => !exclude.includes(s));
+		const picks: string[] = [];
+		while (picks.length < 3 && pool.length > 0) {
+			const i = Math.floor(Math.random() * pool.length);
+			picks.push(pool.splice(i, 1)[0]);
+		}
+		return picks;
+	}
+
+	let suggestions = $state<string[]>(pickThree());
+
+	function onShuffle(): void {
+		suggestions = pickThree(suggestions);
+	}
 </script>
 
 <div class="flex flex-col gap-0.5">

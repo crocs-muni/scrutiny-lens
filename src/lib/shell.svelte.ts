@@ -57,8 +57,10 @@ class ShellState {
 	}
 
 	newSession(title = 'Untitled session') {
-		// issue #37: the J1 composer names the row by the question asked;
-		// the rail's "New investigation" button keeps the placeholder.
+		// issue #37: the investigation orchestrator is the only production
+		// caller and always passes the question; the default title is the
+		// test seam's convenience (the rail's New-session row now opens the
+		// hero instead of minting an empty session).
 		const row: SessionRow = {
 			id: crypto.randomUUID(),
 			title,

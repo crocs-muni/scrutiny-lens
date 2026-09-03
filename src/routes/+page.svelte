@@ -32,7 +32,12 @@
 			onToggle={() => shell.toggleRail()}
 			onHome={() => shell.home()}
 			onPick={(id) => shell.openSession(id)}
-			onClose={(id) => shell.closeSession(id)}
+			onClose={(id) => {
+			// spec §8: closing the active session aborts its run — the
+			// orphan result must not land with no row to display it in.
+			if (id === shell.session?.id) investigation.stop();
+			shell.closeSession(id);
+		}}
 			onSettings={() => shell.toggleSettings()}
 		/>
 
@@ -44,13 +49,13 @@
 				{#if shell.view === 'search'}
 					<!-- J1 hero (issue #37) — the trace (#36) and results (#38)
 					surfaces take over the center stage after submit. -->
-				<div class="h-full w-full overflow-y-auto">
-					<SearchHero
-						hasKey={settings.apiKey !== ''}
-						onSearch={(q) => void investigation.start(q)}
-						onSettings={() => shell.toggleSettings()}
-					/>
-				</div>
+					<div class="h-full w-full overflow-y-auto">
+						<SearchHero
+							hasKey={settings.apiKey !== ''}
+							onSearch={(q) => void investigation.start(q)}
+							onSettings={() => shell.toggleSettings()}
+						/>
+					</div>
 				{:else}
 					<p class="max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
 						<span class="font-medium text-ink-2">{shell.session?.title}</span><br />
