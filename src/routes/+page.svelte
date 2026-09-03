@@ -7,6 +7,9 @@
 
 	import { Tooltip } from 'bits-ui';
 	import { handleShellKeydown, shell } from '$lib/shell.svelte';
+	import { investigation } from '$lib/investigation.svelte';
+	import { settings } from '$lib/settings.svelte';
+	import SearchHero from '$lib/components/ui/SearchHero.svelte';
 	import SidebarRecents from '$lib/components/ui/SidebarRecents.svelte';
 	import DetailDrawer from '$lib/components/shell/DetailDrawer.svelte';
 	import ChatColumn from '$lib/components/shell/ChatColumn.svelte';
@@ -39,9 +42,15 @@
 		>
 			<div class="flex min-h-0 flex-1 items-center justify-center p-6">
 				{#if shell.view === 'search'}
-					<p class="max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
-						The search surface lands here with the query pipeline (spec §11 step 2).
-					</p>
+					<!-- J1 hero (issue #37) — the trace (#36) and results (#38)
+					surfaces take over the center stage after submit. -->
+				<div class="h-full w-full overflow-y-auto">
+					<SearchHero
+						hasKey={settings.apiKey !== ''}
+						onSearch={(q) => void investigation.start(q)}
+						onSettings={() => shell.toggleSettings()}
+					/>
+				</div>
 				{:else}
 					<p class="max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
 						<span class="font-medium text-ink-2">{shell.session?.title}</span><br />

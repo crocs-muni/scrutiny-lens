@@ -48,10 +48,12 @@ class ShellState {
 		this.settingsOpen = !this.settingsOpen;
 	}
 
-	newSession() {
+	newSession(title = 'Untitled session') {
+		// issue #37: the J1 composer names the row by the question asked;
+		// the rail's "New investigation" button keeps the placeholder.
 		const row: SessionRow = {
 			id: crypto.randomUUID(),
-			title: 'Untitled session',
+			title,
 			createdAt: Date.now()
 		};
 		this.sessions.unshift(row);
