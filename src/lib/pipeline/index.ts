@@ -15,7 +15,14 @@ import type { ProviderOverrideInput } from '$lib/ai/provider';
 import { admitEvent } from '$lib/fabric';
 import { indexerFilter, searchFilter, fullScanFilter, tTags, tagValues } from '$lib/fabric';
 import type { NostrEvent as FabricEvent } from '$lib/fabric';
-import type { Transport, RelayCapability, RelayStatus, FetchRoute, FetchSlice } from '$lib/net/transport';
+import type {
+	Transport,
+	RelayCapability,
+	RelayState,
+	RelayStatus,
+	FetchRoute,
+	FetchSlice
+} from '$lib/net/transport';
 import { translateQuestion, type SearchRequest } from '$lib/ai/agents/query';
 import { indexEvent, searchText } from '$lib/search';
 import { getEvent, getEventsByTag } from '$lib/db';
@@ -47,7 +54,8 @@ export interface SearchSession {
 
 export type PipelineEvent =
 	| { type: 'phase'; phase: Phase }
-	| { type: 'slice'; url: string; received: number; route: string }
+	| { type: 'slice'; url: string; received: number; route: string; rejected: number; status: RelayState }
+	| { type: 'searches'; searches: SearchRequest[] }
 	| { type: 'skeleton'; cards: SkeletonCard[] }
 	| { type: 'notice'; notice: PipelineNotice };
 
@@ -90,7 +98,7 @@ function routeSearch(
 		if (cap === 'lacks') {
 			notices.push({
 				kind: 'capability',
-				message: `relay ${url} lacks search support — falling back to a tag scan`
+				message: `relay ${url} lacks search support · falling back to a tag scan`
 			});
 			fullscan.push(url);
 		} else if (cap === 'unknown') {
@@ -99,7 +107,7 @@ function routeSearch(
 			// tag scan. Dedupes downstream (spec §3 never-blank).
 			notices.push({
 				kind: 'capability',
-				message: `relay ${url}'s search support couldn't be verified — trying NIP-50 and a tag scan`
+				message: `relay ${url}'s search support couldn't be verified · trying NIP-50 and a tag scan`
 			});
 			nip50.push(url);
 			fullscan.push(url);
@@ -145,7 +153,7 @@ async function truncationNotices(
 			if (coveredCount > fetched) {
 				notices.push({
 					kind: 'truncated',
-					message: `fetched ${fetched} (relays may hold more — COUNT ${coveredCount})`
+					message: `fetched ${fetched} (relays may hold more · COUNT ${coveredCount})`
 				});
 			}
 		})
@@ -170,6 +178,9 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 		signal: opts.signal
 	});
 	const searches = plan.ok ? plan.result.searches : [];
+	// issue #36: the trace's first row counts/names the searches as soon as
+	// translation settles — the session itself only ships at the end.
+	emit({ type: 'searches', searches });
 
 	// ── Cache-first (issue #28 acceptance: repeat queries labeled cache) ─────
 	const cachedEvents: NostrEvent[] = [];
@@ -188,7 +199,7 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	let relays: RelayStatus[] = [];
 
 	const onSlice = (slice: FetchSlice): void => {
-		emit({ type: 'slice', url: slice.url, received: slice.events.length, route: slice.route ?? 'default' });
+		const rejectedBefore = invalidSkipped;
 		perRouteReceived.set(slice.route ?? 'default', (perRouteReceived.get(slice.route ?? 'default') ?? 0) + slice.events.length);
 		const skeletons: SkeletonCard[] = [];
 		for (const event of slice.events) {
@@ -207,6 +218,18 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 			pendingWrites.push(indexEvent(event).catch(() => {}));
 		}
 		if (skeletons.length > 0) emit({ type: 'skeleton', cards: skeletons });
+		// issue #36: per-slice admitted/rejected so the trace's Organize row
+		// counts while fetching instead of only at 'done'.
+		emit({
+			type: 'slice',
+			url: slice.url,
+			received: slice.events.length,
+			route: slice.route ?? 'default',
+			// issue #36 review: the trace counts only ACTUALLY answered
+			// relays; a refused leg is not a source (spec §3/§4 distinction).
+			rejected: invalidSkipped - rejectedBefore,
+			status: slice.status.status
+		});
 	};
 
 	// Cache slice delivered as a real slice with route label 'cache',

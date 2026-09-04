@@ -16,7 +16,7 @@
 
 import { defaultCallLLM, type CallLLM } from '$lib/ai/output';
 import type { ProviderOverrideInput } from '$lib/ai/provider';
-import { createTransport } from '$lib/net/transport';
+import { createTransport, type Transport } from '$lib/net/transport';
 import {
 	runSearch,
 	type Phase,
@@ -25,13 +25,18 @@ import {
 	type SearchSession,
 	type SkeletonCard
 } from '$lib/pipeline';
+import type { SearchRequest } from '$lib/ai/agents/query';
 import { settings } from '$lib/settings.svelte';
 import { shell } from '$lib/shell.svelte';
 
 class Investigation {
 	phase = $state<Phase | 'idle'>('idle');
 	/** Per-relay slice receipts, in arrival order — the trace's literal layer. */
-	slices = $state<{ url: string; received: number; route: string }[]>([]);
+	slices = $state<
+		{ url: string; received: number; route: string; rejected: number; status: 'ok' | 'timeout' | 'refused' }[]
+	>([]);
+	/** Translated searches (≤3, spec §3) — arrives right after translate. */
+	searches = $state<SearchRequest[]>([]);
 	/** Rule-5 skeletons as they arrive (spec §2 rule 5). */
 	skeletons = $state<SkeletonCard[]>([]);
 	notices = $state<PipelineNotice[]>([]);
@@ -40,6 +45,9 @@ class Investigation {
 	 * (#38) render from this. */
 	error = $state<string | null>(null);
 	running = $state(false);
+
+	/** Wall time of the settled run (ms) — the done row's "· 4.2s". */
+	elapsedMs = $state<number | null>(null);
 
 	private controller: AbortController | null = null;
 
@@ -51,7 +59,16 @@ class Investigation {
 				this.phase = event.phase;
 				break;
 			case 'slice':
-				this.slices.push({ url: event.url, received: event.received, route: event.route });
+				this.slices.push({
+					url: event.url,
+					received: event.received,
+					route: event.route,
+					rejected: event.rejected,
+					status: event.status
+				});
+				break;
+			case 'searches':
+				this.searches = event.searches;
 				break;
 			case 'skeleton':
 				this.skeletons.push(...event.cards);
@@ -71,16 +88,22 @@ class Investigation {
 		this.controller = controller;
 		this.phase = 'idle';
 		this.slices = [];
+		this.searches = [];
 		this.skeletons = [];
 		this.notices = [];
 		this.result = null;
 		this.error = null;
+		this.elapsedMs = null;
 		this.running = true;
+		const startedAt = performance.now();
 
 		// The session row exists before the first slice so the rail shows the
 		// investigation even if every relay hangs (spec §4: never demo data,
 		// but the question itself is real user input).
 		shell.newSession(question);
+		// issue #36: submit lands on the trace/results stage (spec center
+		// swap search → results → session); the graph session is #29's.
+		shell.view = 'results';
 
 		const provider: ProviderOverrideInput | undefined =
 			settings.apiKey === ''
@@ -90,10 +113,15 @@ class Investigation {
 						model: settings.model,
 						apiKey: settings.apiKey
 					};
-		const transport = createTransport({ urls: settings.relays });
 		const callLLM: CallLLM = defaultCallLLM;
 
+		// Construction lives INSIDE the failure net (review, issue #36): an
+		// empty relay pool or malformed endpoint throws in createTransport —
+		// outside the try it became an unhandled rejection with the trace
+		// frozen at 5 pending rows, error and running never settling.
+		let transport: Transport | null = null;
 		try {
+			transport = createTransport({ urls: settings.relays });
 			const session = await runSearch({
 				question,
 				relays: settings.relays,
@@ -115,8 +143,11 @@ class Investigation {
 			}
 		} finally {
 			// One pool per run: close its relay websockets when it settles.
-			await transport.close();
-			if (this.controller === controller) this.running = false;
+			await transport?.close();
+			if (this.controller === controller) {
+				this.running = false;
+				this.elapsedMs = Math.round(performance.now() - startedAt);
+			}
 		}
 	}
 
@@ -134,9 +165,11 @@ export function resetInvestigation(): void {
 	investigation.stop();
 	investigation.phase = 'idle';
 	investigation.slices = [];
+	investigation.searches = [];
 	investigation.skeletons = [];
 	investigation.notices = [];
 	investigation.result = null;
 	investigation.error = null;
+	investigation.elapsedMs = null;
 	investigation.running = false;
 }

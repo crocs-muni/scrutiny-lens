@@ -106,3 +106,23 @@ select:focus-visible,
 		transform: scale(1);
 	}
 }
+
+/* canon's fade-up — TaskRows/SearchList rows and our vendored copies
+ * (PhaseRow, TraceTick, SearchSuggestions) animate with it. */
+@keyframes fade-up {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+/* canon's spin — the running phase ring (PhaseRow) rotates with it. */
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}

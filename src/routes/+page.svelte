@@ -10,6 +10,8 @@
 	import { investigation } from '$lib/investigation.svelte';
 	import { settings } from '$lib/settings.svelte';
 	import SearchHero from '$lib/components/ui/SearchHero.svelte';
+	import TaskTrace from '$lib/components/ui/TaskTrace.svelte';
+	import ResultCard from '$lib/components/ui/ResultCard.svelte';
 	import SidebarRecents from '$lib/components/ui/SidebarRecents.svelte';
 	import DetailDrawer from '$lib/components/shell/DetailDrawer.svelte';
 	import ChatColumn from '$lib/components/shell/ChatColumn.svelte';
@@ -45,19 +47,39 @@
 			bind:clientHeight={centerHeight}
 			class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-window bg-surface shadow-card"
 		>
-			<div class="flex min-h-0 flex-1 items-center justify-center p-6">
+			<div class="flex min-h-0 flex-1 flex-col p-6">
 				{#if shell.view === 'search'}
 					<!-- J1 hero (issue #37) — the trace (#36) and results (#38)
 					surfaces take over the center stage after submit. -->
-					<div class="h-full w-full overflow-y-auto">
+					<div class="h-full w-full overflow-y-auto p-1">
 						<SearchHero
 							hasKey={settings.apiKey !== ''}
 							onSearch={(q) => void investigation.start(q)}
 							onSettings={() => shell.toggleSettings()}
 						/>
 					</div>
+					{:else if shell.view === 'results'}
+					<!-- issue #36: trace + rule-5 skeleton cards; #38's results
+						surface grows on this stage. -->
+					{#key shell.session?.id}
+						<!-- min-h-0/flex-1 + shrink-0 children: the scroller must own
+							scrolling itself; h-full self-sized children clip the top.
+							p-1: shadow-card's 1px ring is painted OUTSIDE the border
+							box — flush children lose that ring to the overflow clip
+							(owner report, issue #36). -->
+						<div class="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto p-1">
+							<div class="w-full max-w-[760px] shrink-0">
+								<TaskTrace />
+							</div>
+							{#each investigation.skeletons as card (card.id)}
+								<div class="w-full max-w-[760px] shrink-0">
+									<ResultCard {card} />
+								</div>
+							{/each}
+						</div>
+					{/key}
 				{:else}
-					<p class="max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
+					<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
 						<span class="font-medium text-ink-2">{shell.session?.title}</span><br />
 						The graph canvas lands here with the product-graph step (spec §11 step 3); the
 						dossier lives in the drawer below.
