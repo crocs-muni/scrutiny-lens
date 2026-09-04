@@ -26,7 +26,7 @@
 		skeletons: investigation.skeletons,
 		notices: investigation.notices,
 		relayCount: settings.relays.length,
-			error: investigation.error,
+		error: investigation.error,
 		descriptions: investigation.filling
 			? { running: true, ...investigation.fillStats }
 			: investigation.result !== null && investigation.fillStats.total > 0

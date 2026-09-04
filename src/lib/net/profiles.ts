@@ -19,20 +19,62 @@ export interface PublisherProfile {
 
 /** Settled profile cache — a pubkey asked twice pays zero relays. */
 const cache = new Map<string, PublisherProfile | null>();
+/** Misses are cached only briefly — a cold-start failure (relay list being
+ * edited, relay warming) must NOT freeze the identicon for the tab's whole
+ * lifetime (review finding). */
+const misses = new Map<string, number>();
 /** In-flight dedupe — concurrent callers of one pubkey share a single fetch. */
 const inflight = new Map<string, Promise<PublisherProfile | null>>();
 
-/** Hard cap on the whole query (connect + EOSE) per pubkey. */
-const PROFILE_TIMEOUT_MS = 1_500;
+/** Hard cap on the whole query (connect + EOSE) per pubkey; ≥ the first
+ * handshake window so a fresh relay isn't judged before it connects. */
+const PROFILE_TIMEOUT_MS = 3_000;
+/** How long a "no profile" miss is trusted before retrying. */
+const MISS_TTL_MS = 120_000;
+
+/* ×4-pubkey parallelism cap: N interpreted cards mounting together would
+ * otherwise open N pools × up to 4 relay websockets at once and trip the
+ * browser's per-host socket budget (review finding). */
+const MAX_PARALLEL = 4;
+let active = 0;
+const queue: (() => void)[] = [];
+
+function acquire(): Promise<void> {
+	if (active < MAX_PARALLEL) {
+		active += 1;
+		return Promise.resolve();
+	}
+	return new Promise((resolve) => queue.push(resolve));
+}
+
+function release(): void {
+	active -= 1;
+	queue.shift()?.();
+}
 
 export function getProfile(pubkey: string): Promise<PublisherProfile | null> {
-	const cached = cache.get(pubkey);
-	if (cached !== undefined) return Promise.resolve(cached);
+	const hit = cache.get(pubkey);
+	if (hit !== undefined) return Promise.resolve(hit);
+	const missedAt = misses.get(pubkey);
+	if (missedAt !== undefined && Date.now() - missedAt < MISS_TTL_MS) return Promise.resolve(null);
 
 	const pending = inflight.get(pubkey);
 	if (pending) return pending;
 
-	const fetch = queryProfile(pubkey).finally(() => inflight.delete(pubkey));
+	const fetch = (async () => {
+		await acquire();
+		try {
+			const profile = await queryProfile(pubkey);
+			if (profile === null) misses.set(pubkey, Date.now());
+			else {
+				cache.set(pubkey, profile);
+				misses.delete(pubkey);
+			}
+			return profile;
+		} finally {
+			release();
+		}
+	})().finally(() => inflight.delete(pubkey));
 	inflight.set(pubkey, fetch);
 	return fetch;
 }
@@ -93,4 +135,6 @@ function pickString(value: unknown): string | undefined {
 export function resetProfiles(): void {
 	cache.clear();
 	inflight.clear();
+
+	misses.clear();
 }

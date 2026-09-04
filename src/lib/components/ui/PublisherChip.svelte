@@ -29,14 +29,14 @@
 	let settled = $state(false);
 
 	/** Full npub for the title; falls back to the raw hex if bech32 encode fails. */
-	const npub = $derived.by(() => encodeNpub(pubkey));
+	const npub = $derived(encodeNpub(pubkey));
 	/** label token: bech32 npub's first 8 chars + trailing 4 (mono, machine-made). */
-	const labelToken = $derived.by(() => `${npub.slice(0, 8)}…${npub.slice(-4)}`);
+	const labelToken = $derived(`${npub.slice(0, 8)}…${npub.slice(-4)}`);
 
-	const hue = $derived.by(() => hashHue(pubkey));
-	const cells = $derived.by(() => mirroredCells(pubkey));
+	const hue = $derived(hashHue(pubkey));
+	const cells = $derived(mirroredCells(pubkey));
 
-	const title = $derived.by(() =>
+	const title = $derived(
 		profile
 			? `${npub} · kind-0 profile found`
 			: `${npub} · no kind-0 profile on your relays`

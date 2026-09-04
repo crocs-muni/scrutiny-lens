@@ -15,8 +15,6 @@
 
 	let { message, relays, onRetry, onEditRelays }: Props = $props();
 
-	// "ok" in any casing is a healthy receipt; anything else reads orange.
-	const ok = $derived.by(() => new Map(relays.map((r) => [r.url, /^ok$/i.test(r.status)])));
 </script>
 
 <div class="flex w-full justify-center">
@@ -35,7 +33,7 @@
 					{#each relays as r (r.url)}
 						<li class="flex items-baseline gap-2 font-mono text-[11.5px]">
 							<span class="truncate text-ink">{r.url}</span>
-							<span class="ml-auto shrink-0 tabular-nums {ok.get(r.url) ? 'text-ink-3' : 'text-orange'}">
+							<span class="ml-auto shrink-0 tabular-nums {/^ok$/i.test(r.status) ? 'text-ink-3' : 'text-orange'}">
 								{r.status}
 							</span>
 						</li>

@@ -27,6 +27,7 @@
 		// clobbering it — its fire-and-forget put may land after listSessions.
 		shell.sessions = mergeSessionLists(await listSessions(), shell.sessions);
 		await hydrateDeadLetters();
+
 	});
 </script>
 

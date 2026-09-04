@@ -34,7 +34,7 @@
 	);
 </script>
 
-<div class="flex h-full w-[216px] shrink-0 flex-col gap-3 overflow-hidden px-3 py-4">
+<div class="flex h-full w-full flex-col gap-3 overflow-hidden px-3 py-4">
 	<h2 class="font-mono text-[10px] uppercase tracking-wide text-ink-3">Filters</h2>
 
 	{#if anyActive}

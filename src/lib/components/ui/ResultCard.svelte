@@ -85,28 +85,14 @@
 		{onOpen !== undefined ? 'cursor-pointer hover:shadow-raised' : ''}
 		[content-visibility:auto] [contain-intrinsic-size:auto_120px]"
 >
-	{#if product === null}
-		<!-- fetch-stage skeleton (rule 5) -->
+	{#if dashed}
+		<!-- fetch-stage skeleton ≡ settled rule-5 fallback ≡ AI down/timed-out
+			chunk (spec §2 rule 5): the event's own tags + first chars, badge on. -->
 		<div class="flex items-center gap-2">
 			<h3 class="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold text-ink">
 				{fallbackTitle}
 			</h3>
-			<span
-				class="shrink-0 rounded-full border border-line px-2 py-0.5 font-mono text-[10.5px] text-ink-3"
-			>
-				not interpreted
-			</span>
-		</div>
-		<p class="mt-1.5 line-clamp-3 font-mono text-[11px] leading-relaxed break-all text-ink-2">
-			{fallbackRaw}
-		</p>
-	{:else if dashed}
-		<!-- settled un-interpreted (rule 5 fallback / AI down / timed-out chunk) -->
-		<div class="flex items-center gap-2">
-			<h3 class="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold text-ink">
-				{product.title}
-			</h3>
-			{#if product.retracted}
+			{#if product?.retracted}
 				<span
 					class="shrink-0 rounded-full border border-orange bg-orange-tint px-2 py-0.5 font-mono text-[10.5px] text-orange"
 				>
@@ -122,7 +108,7 @@
 		<p class="mt-1.5 line-clamp-3 font-mono text-[11px] leading-relaxed break-all text-ink-2">
 			{fallbackRaw}
 		</p>
-	{:else}
+		{:else if product !== null}
 		<!-- interpreted (P3) -->
 		<div class="flex items-start gap-2">
 			<h3 class="min-w-0 flex-1 text-[13.5px] leading-snug font-semibold text-ink">

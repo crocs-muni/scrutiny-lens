@@ -28,7 +28,7 @@
 	let showAll = $state(false);
 
 	const total = $derived(group.values.length);
-	const hidden = $derived(total - ROW_CAP);
+	const hidden = $derived(showAll ? 0 : total - ROW_CAP);
 	const visible = $derived(showAll ? group.values : group.values.slice(0, ROW_CAP));
 	const hasSelection = $derived(group.values.some((v) => selected.has(v.value)));
 </script>

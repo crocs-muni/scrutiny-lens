@@ -94,6 +94,27 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 	for (const notice of notices) {
 		ticks.push({ text: notice.message, warn: notice.kind === 'capability' || notice.kind === 'truncated' });
 	}
+	// Row 5 decision tree (spec §2 rule 5 honesty): hoisted — it was two
+	// parallel 4-deep ternaries re-deciding the same tree (review finding).
+	const d = input.descriptions;
+	let descStatus: RowStatus;
+	let descCounter: string;
+	if (failed) {
+		descStatus = 'skipped';
+		descCounter = '';
+	} else if (d === undefined) {
+		descStatus = done ? 'skipped' : 'pending';
+		descCounter = done ? 'not interpreted' : '';
+	} else if (d.running) {
+		descStatus = 'running';
+		descCounter = `${d.interpreted} of ${d.total}`;
+	} else if (done) {
+		descStatus = 'completed';
+		descCounter = `${d.interpreted} of ${d.total} interpreted`;
+	} else {
+		descStatus = 'pending';
+		descCounter = '';
+	}
 
 	const rows: PhaseRow[] = [
 		{
@@ -135,27 +156,8 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 			// with an attempt the counter is real progress or a real tally.
 			id: 'descriptions',
 			label: LABELS.descriptions,
-			status: failed
-				? 'skipped'
-				: input.descriptions === undefined
-					? done
-						? 'skipped'
-						: 'pending'
-					: input.descriptions.running
-						? 'running'
-						: done
-							? 'completed'
-							: 'pending',
-			counter:
-				input.descriptions === undefined
-					? done
-						? 'not interpreted'
-						: ''
-					: input.descriptions.running
-						? `${input.descriptions.interpreted} of ${input.descriptions.total}`
-						: done
-							? `${input.descriptions.interpreted} of ${input.descriptions.total} interpreted`
-							: '',
+			status: descStatus,
+			counter: descCounter,
 			ticks: []
 		}
 	];

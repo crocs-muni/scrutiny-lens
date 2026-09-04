@@ -162,10 +162,7 @@ class Investigation {
 			// the same identity guard as the sibling writes (review P1).
 			if (this.controller === controller) {
 				this.result = session;
-				this.cards =
-					session.admitted.length === 0
-						? []
-						: assembleCards(resolveGraph(session.admitted), session.admitted);
+				this.cards = assembleCards(resolveGraph(session.admitted), session.admitted);
 				this.facetGroups = computeFacets(session.admitted);
 				if (provider !== undefined && settings.model !== '' && this.cards.length > 0) {
 					this.filling = true;
@@ -178,6 +175,7 @@ class Investigation {
 			// §4 error surface's input instead of an unhandled rejection.
 			if (this.controller === controller && !controller.signal.aborted) {
 				this.error = err instanceof Error ? err.message : String(err);
+				this.filling = false;
 			}
 		} finally {
 			// One pool per run: close its relay websockets when it settles.
@@ -236,7 +234,17 @@ class Investigation {
 			if (controller.signal.aborted || this.controller !== controller) return;
 			const chunk = this.cards.slice(at, at + CHUNK);
 			const timer = AbortSignal.any([controller.signal, AbortSignal.timeout(PER_CHUNK_MS)]);
-			const filled = await fillCards(chunk, { provider, callLLM, signal: timer });
+			let filled = chunk;
+			try {
+				// A chunk timing out (or its interpretation read failing) aborts
+				// ONLY its own combined signal — generateStructured rethrows
+				// aborted-signal errors, so without this catch the timer's abort
+				// would escape into start()'s error path on a healthy run and
+				// pin filling=true forever (spec §4: degrade only this chunk).
+				filled = await fillCards(chunk, { provider, callLLM, signal: timer });
+			} catch {
+				// rule-5 fallback for this chunk; the loop keeps the next chunks.
+			}
 			if (this.controller !== controller) return;
 			// Merge: newer cards array instance each chunk so the UI paints
 			// per chunk rather than at the very end.
@@ -261,5 +269,10 @@ export function resetInvestigation(): void {
 	investigation.result = null;
 	investigation.error = null;
 	investigation.elapsedMs = null;
+	investigation.cards = [];
+	investigation.facetGroups = [];
+	investigation.selections = {};
+	investigation.filling = false;
+	investigation.fillStats = { interpreted: 0, total: 0 };
 	investigation.running = false;
 }

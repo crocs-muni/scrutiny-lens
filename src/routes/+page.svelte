@@ -16,8 +16,8 @@
 	import NoticeBanner from '$lib/components/ui/NoticeBanner.svelte';
 	import ResultsEmpty from '$lib/components/ui/ResultsEmpty.svelte';
 	import ResultsError from '$lib/components/ui/ResultsError.svelte';
-	import { cohortLine } from '$lib/pipeline/cards';
-	import { filteredEvents, visibleCards } from '$lib/results';
+	import { applyFacets, cohortLine } from '$lib/pipeline/cards';
+	import { visibleCards } from '$lib/results';
 	import SidebarRecents from '$lib/components/ui/SidebarRecents.svelte';
 	import DetailDrawer from '$lib/components/shell/DetailDrawer.svelte';
 	import ChatColumn from '$lib/components/shell/ChatColumn.svelte';
@@ -36,7 +36,7 @@
 	const viewEvents = $derived.by(() => {
 		const session = investigation.result;
 		if (session === null) return [];
-		return filteredEvents(session.admitted, investigation.selections);
+		return applyFacets(session.admitted, investigation.selections);
 	});
 	const cohort = $derived(viewCards.length === 0 ? '' : cohortLine(viewCards, viewEvents));
 	const fetched = $derived(investigation.slices.reduce((sum, s) => sum + s.received, 0));
@@ -48,7 +48,10 @@
 	// at all (relays confirmed searchable → honest "nothing matched") or the
 	// facet selection narrowed everything away (filtered chip variant).
 	const emptyDone = $derived(
-		investigation.result !== null && investigation.error === null && viewCards.length === 0
+		investigation.result !== null &&
+			investigation.error === null &&
+			investigation.searches.length > 0 &&
+			viewCards.length === 0
 	);
 	const anyRelayOk = $derived(
 		investigation.slices.some((s) => s.status === 'ok') || investigation.result !== null
@@ -58,22 +61,48 @@
 	// throw), or every relay leg settled refused/timed out with zero events —
 	// the latter reports the per-leg statuses instead of a false EmptyState.
 	const allRefused = $derived(
-		investigation.slices.length > 0 &&
-			!investigation.slices.some((s) => s.status === 'ok' && s.received > 0)
+		investigation.slices.length > 0 && !investigation.slices.some((s) => s.status === 'ok')
 	);
 	const relayDead = $derived(
 		(investigation.error !== null && !anyRelayOk) ||
 			(investigation.phase === 'done' && allRefused && investigation.skeletons.length === 0)
 	);
-	// The fill ran but nothing interpreted (AI down/timeout on every chunk) —
-	// the honest banner beside silently-dashed cards (spec §2 rule 5 + §4).
-	const aiDown = $derived(
+	// The fill settled with fewer interpretations than cards (AI down, slow,
+	// or garbage on that chunk) — spec §4: fallback + dismissible banner, full
+	// OR partial degradation. Message stays numeric — never "broken".
+	const aiNote = $derived(
 		investigation.result !== null &&
 			!investigation.filling &&
 			investigation.fillStats.total > 0 &&
-			investigation.fillStats.interpreted === 0
+			investigation.fillStats.interpreted < investigation.fillStats.total
+			? investigation.fillStats.interpreted === 0
+				? 'AI unreachable — cards show the raw events'
+				: `AI slow — ${investigation.fillStats.interpreted} of ${investigation.fillStats.total} cards interpreted · uninterpreted cards show the raw events`
+			: ''
+	);
+	// Translation failure (AI down at plan time): pipeline proceeds with zero
+	// searches — never blame the relays for it (spec §4/§2 rule 5).
+	const translationFailed = $derived(
+		investigation.result !== null &&
+			investigation.error === null &&
+			!investigation.running &&
+			investigation.searches.length === 0
+	);
+	// §4: some relays dead → results from the rest + corner notice (one per leg,
+	// verbatim status; a refused leg is a degradation, not 'no matches').
+	const degradedLegs = $derived(
+		investigation.slices.filter((s) => s.status !== 'ok' && s.url !== 'local-cache')
 	);
 	let dismissed = $state<Set<string>>(new Set());
+	// Dismissals are per-run: a superseding/new investigation brings back the
+	// warnings (review finding — page-level state outlived #36-keyed remounts).
+	$effect(() => {
+		void shell.session?.id;
+		dismissed = new Set();
+	});
+	// Set-identity reassignment: $state tracks the reference (review finding —
+	// the lambda was spelled three times).
+	const dismiss = (key: string) => (dismissed = new Set([...dismissed, key]));
 </script>
 
 <svelte:window onkeydown={handleShellKeydown} />
@@ -144,30 +173,35 @@
 									</div>
 								{/if}
 								<div class="flex min-h-0 min-w-0 flex-1 flex-col">
-									{#if invalidNote !== '' && !dismissed.has(invalidNote)}
-										<div class="px-4 pt-1">
-											<NoticeBanner
-												message={invalidNote}
-												onDismiss={() => (dismissed = new Set([...dismissed, invalidNote]))}
-											/>
-										</div>
-									{/if}
 									{#each investigation.notices.filter((n) => n.kind === 'capability' && !dismissed.has(n.message)) as notice (notice.message)}
 										<div class="px-4 pt-1">
 											<NoticeBanner
 												message={notice.message}
-												onDismiss={() => (dismissed = new Set([...dismissed, notice.message]))}
+												onDismiss={() => dismiss(notice.message)}
 											/>
 										</div>
 									{/each}
-									{#if aiDown && !dismissed.has('ai-down')}
+									{#if aiNote !== '' && !dismissed.has('ai-note')}
+										<div class="px-4 pt-1">
+											<NoticeBanner message={aiNote} onDismiss={() => dismiss('ai-note')} />
+										</div>
+									{/if}
+									{#if translationFailed && !dismissed.has('translate-fail')}
 										<div class="px-4 pt-1">
 											<NoticeBanner
-												message="AI unreachable — cards show the raw events"
-												onDismiss={() => (dismissed = new Set([...dismissed, 'ai-down']))}
+												message="AI couldn't translate the question — rephrase it or check the endpoint in Settings"
+												onDismiss={() => dismiss('translate-fail')}
 											/>
 										</div>
 									{/if}
+									{#each degradedLegs.filter((s) => !dismissed.has(`leg-${s.url}`)) as leg (leg.url)}
+										<div class="px-4 pt-1">
+											<NoticeBanner
+												message={`relay ${leg.url} ${leg.status} — showing results from the rest`}
+												onDismiss={() => dismiss(`leg-${leg.url}`)}
+											/>
+										</div>
+									{/each}
 									{#if investigation.result !== null}
 										<!-- header: cohort line + fetched N (spec §3) -->
 										<div class="flex items-baseline gap-3 px-4 pb-1 pt-2">
@@ -203,6 +237,18 @@
 											{/each}
 										{/if}
 									</div>
+									{#if investigation.result !== null && (invalidNote !== '' || degradedLegs.length > 0)}
+										<!-- footer line (spec §4/§9): degradation + invalid-skipped
+											counts ride the results footer — the banner lane stays
+											for actionable warnings. -->
+										<div class="shrink-0 border-t border-line px-4 py-1.5">
+											<span class="font-mono text-[10.5px] text-ink-3">
+												{[invalidNote, ...degradedLegs.map((l) => `relay ${l.url} ${l.status}`)]
+													.filter((s) => s !== '')
+													.join(' · ')}
+											</span>
+										</div>
+									{/if}
 								</div>
 							</div>
 						{/if}
