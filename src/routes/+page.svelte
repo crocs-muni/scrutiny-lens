@@ -51,7 +51,7 @@
 				{#if shell.view === 'search'}
 					<!-- J1 hero (issue #37) — the trace (#36) and results (#38)
 					surfaces take over the center stage after submit. -->
-					<div class="h-full w-full overflow-y-auto">
+					<div class="h-full w-full overflow-y-auto p-1">
 						<SearchHero
 							hasKey={settings.apiKey !== ''}
 							onSearch={(q) => void investigation.start(q)}
