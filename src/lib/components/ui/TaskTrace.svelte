@@ -54,7 +54,7 @@
 	);
 </script>
 
-<div class="flex w-full max-w-[760px] flex-col">
+<div class="flex w-full max-w-[760px] flex-col shrink-0">
 	{#if done && !traceReopened}
 		<!-- done row (TR1): folded forever until the user expands — never
 			auto-collapses on a clock. -->

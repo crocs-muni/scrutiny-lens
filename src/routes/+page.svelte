@@ -61,14 +61,20 @@
 					{:else if shell.view === 'results'}
 					<!-- issue #36: trace + rule-5 skeleton cards; #38's results
 						surface grows on this stage. -->
-					<div class="flex h-full w-full flex-col items-center gap-3 overflow-y-auto">
-						<TaskTrace />
-						{#each investigation.skeletons as card (card.id)}
-							<div class="w-full max-w-[760px]">
-								<ResultCard {card} />
+					{#key shell.session?.id}
+						<!-- min-h-0/flex-1 + shrink-0 children: the scroller must own
+							scrolling itself; h-full self-sized children clip the top. -->
+						<div class="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto">
+							<div class="w-full max-w-[760px] shrink-0">
+								<TaskTrace />
 							</div>
-						{/each}
-					</div>
+							{#each investigation.skeletons as card (card.id)}
+								<div class="w-full max-w-[760px] shrink-0">
+									<ResultCard {card} />
+								</div>
+							{/each}
+						</div>
+					{/key}
 				{:else}
 					<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
 						<span class="font-medium text-ink-2">{shell.session?.title}</span><br />
