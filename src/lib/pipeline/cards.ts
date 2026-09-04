@@ -18,6 +18,8 @@ import { z } from 'zod';
 
 export interface ProductCard {
 	id: string;
+	/** Root product event's author — the publisher chip (kind-0) renders from it. */
+	pubkey: string;
 	title: string;
 	snippet?: string;
 	identifiers: string[];
@@ -54,6 +56,7 @@ export function assembleCards(graph: GraphView, patchSources: NostrEvent[] = [])
 		});
 		return {
 			id: node.id,
+			pubkey: ev.pubkey,
 			title: deriveFallbackTitle(ev),
 			snippet: ev.content.slice(0, 200).trim() || undefined,
 			identifiers,
@@ -112,20 +115,14 @@ export function applyFacets(events: NostrEvent[], selections: Record<string, Set
 }
 
 /* ------------------------------------------------------------------ *
- * Cohort line (spec §3: "12 products · 4 vendors · 2 retracted")
+ * Cohort line (spec §3, owner ruling 2026-09-03: by event type —
+ * "8 products · 8 metadata", no vendors/retracted counts)
  * ------------------------------------------------------------------ */
 
 export function cohortLine(cards: ProductCard[], events: NostrEvent[] = []): string {
 	const products = cards.length;
-	const vendorSet = new Set<string>();
-	for (const event of events) {
-		for (const tag of tagValues(event, 'i')) {
-			if (tag.toLowerCase().startsWith('vendor:')) vendorSet.add(tag);
-		}
-	}
-	const vendors = vendorSet.size;
-	const retracted = cards.filter((c) => c.retracted).length;
-	return `${products} products · ${vendors} vendors · ${retracted} retracted`;
+	const metadata = events.filter((event) => tTags(event).includes('scrutiny-metadata')).length;
+	return `${products} product${products === 1 ? '' : 's'} · ${metadata} metadata`;
 }
 
 /* ------------------------------------------------------------------ *

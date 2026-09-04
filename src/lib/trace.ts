@@ -33,6 +33,10 @@ export interface TraceInput {
 	notices: PipelineNotice[];
 	relayCount: number;
 	error: string | null;
+	/** Write-descriptions fill progress (#38): present once a fill attempt
+	 * started; `running` while chunks are in flight. Absent = no attempt
+	 * (no key/model — the row stays honestly skipped, spec §2 rule 5). */
+	descriptions?: { running: boolean; interpreted: number; total: number };
 }
 
 const LABELS: Record<PhaseRow['id'], string> = {
@@ -126,13 +130,32 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 			ticks: []
 		},
 		{
-			// spec §2 rule 5 honesty: until the fill stage exists this row can
-			// never claim "written" — it reports skipped/none rather than a
-			// fabricated completion. #38 flips it to running/completed.
+			// spec §2 rule 5 honesty: a run with no fill attempt (no key /
+			// no model) reports skipped, never a fabricated completion;
+			// with an attempt the counter is real progress or a real tally.
 			id: 'descriptions',
 			label: LABELS.descriptions,
-			status: done ? 'skipped' : 'pending',
-			counter: done ? 'not interpreted' : '',
+			status: failed
+				? 'skipped'
+				: input.descriptions === undefined
+					? done
+						? 'skipped'
+						: 'pending'
+					: input.descriptions.running
+						? 'running'
+						: done
+							? 'completed'
+							: 'pending',
+			counter:
+				input.descriptions === undefined
+					? done
+						? 'not interpreted'
+						: ''
+					: input.descriptions.running
+						? `${input.descriptions.interpreted} of ${input.descriptions.total}`
+						: done
+							? `${input.descriptions.interpreted} of ${input.descriptions.total} interpreted`
+							: '',
 			ticks: []
 		}
 	];

@@ -136,6 +136,33 @@ describe('error settlement (spec §2 rule 6 honesty)', () => {
 		const rows = derivePhaseRows({ ...base, phase: 'translate', error: 'AI unreachable' });
 		expect(rows[0].status).toBe('skipped');
 	});
+describe('descriptions row fill progress (issue #38, spec §7)', () => {
+	it('running fill shows live progress, never a fabricated completion', () => {
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'fetch',
+			descriptions: { running: true, interpreted: 2, total: 9 }
+		});
+		expect(rows[4].status).toBe('running');
+		expect(rows[4].counter).toBe('2 of 9');
+	});
+
+	it('settled fill reports the real tally, partial or not', () => {
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'done',
+			descriptions: { running: false, interpreted: 7, total: 9 }
+		});
+		expect(rows[4].status).toBe('completed');
+		expect(rows[4].counter).toBe('7 of 9 interpreted');
+	});
+
+	it('no fill attempt (no key/model) stays honestly skipped', () => {
+		const rows = derivePhaseRows({ ...base, phase: 'done' });
+		expect(rows[4].status).toBe('skipped');
+		expect(rows[4].counter).toBe('not interpreted');
+	});
+});
 });
 
 describe('doneLine', () => {

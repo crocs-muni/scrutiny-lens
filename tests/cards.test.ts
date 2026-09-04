@@ -140,23 +140,23 @@ describe('computeFacets + applyFacets (issue #28)', () => {
 	});
 });
 
-// ── Cohort line (spec §3: "12 products · 4 vendors · 2 retracted") ──────────
-
-describe('cohortLine', () => {
-	it('renders exactly the spec example shape', () => {
+describe('cohortLine (spec §3: by event type)', () => {
+	it('counts products from cards and metadata from events', () => {
 		const cards: ProductCard[] = [
-			{ id: '1', title: 't', identifiers: ['cve:CVE-1'], retracted: false, boundMetadata: 1, updates: 1, contentStart: '', interpreted: false },
-			{ id: '2', title: 't', identifiers: ['cve:CVE-2'], retracted: true, boundMetadata: 0, updates: 0, contentStart: '', interpreted: false }
+			{ id: '1', pubkey: 'aa', title: 't', identifiers: ['cve:CVE-1'], retracted: false, boundMetadata: 1, updates: 1, contentStart: '', interpreted: false },
+			{ id: '2', pubkey: 'bb', title: 't', identifiers: ['cve:CVE-2'], retracted: true, boundMetadata: 0, updates: 0, contentStart: '', interpreted: false }
 		];
-		const line = cohortLine(cards, [event('a1'), event('a2')]);
-		expect(line).toMatch(/\d+ products/);
-		expect(line).toMatch(/\d+ vendors/);
-		expect(line).toMatch(/\d+ retracted/);
+		const line = cohortLine(cards, [
+			event('a1'),
+			event('a2', { tags: [['t', 'scrutiny-fabric'], ['t', 'scrutiny-metadata']] }),
+			event('a3', { tags: [['t', 'scrutiny-fabric'], ['t', 'scrutiny-metadata']] })
+		]);
+		expect(line).toBe('2 products · 2 metadata');
 	});
 
-	it('is deterministic and contains the retracted count even when zero', () => {
+	it('is deterministic and zero-counts are shown, never hidden', () => {
 		const cards = assembleCards(graphWith(['prod-1']), [event('prod-1')]);
-		expect(cohortLine(cards, [event('prod-1')])).toContain('0 retracted');
+		expect(cohortLine(cards, [event('prod-1')])).toBe('1 product · 0 metadata');
 	});
 });
 

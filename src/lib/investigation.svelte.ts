@@ -26,6 +26,14 @@ import {
 	type SkeletonCard
 } from '$lib/pipeline';
 import type { SearchRequest } from '$lib/ai/agents/query';
+import { resolveGraph } from '$lib/fabric';
+import {
+	assembleCards,
+	computeFacets,
+	fillCards,
+	type FacetGroup,
+	type ProductCard
+} from '$lib/pipeline/cards';
 import { settings } from '$lib/settings.svelte';
 import { shell } from '$lib/shell.svelte';
 
@@ -40,6 +48,16 @@ class Investigation {
 	/** Rule-5 skeletons as they arrive (spec §2 rule 5). */
 	skeletons = $state<SkeletonCard[]>([]);
 	notices = $state<PipelineNotice[]>([]);
+	/** Assembled product cards (dedupe by root product, spec §3) — lands with
+	 * the session; AI interpretation fills onto these in chunks below. */
+	cards = $state<ProductCard[]>([]);
+	/** Facet groups computed from the admitted events' tags (never AI, §3). */
+	facetGroups = $state<FacetGroup[]>([]);
+	/** Selected facet values per group (OR within a group, AND across, §3). */
+	selections = $state<Record<string, Set<string>>>({});
+	/** Write-descriptions progress for the trace's fifth row (§4 partial). */
+	filling = $state(false);
+	fillStats = $state<{ interpreted: number; total: number }>({ interpreted: 0, total: 0 });
 	result = $state<SearchSession | null>(null);
 	/** Settled failure (never a deliberate abort); the §4 error surfaces
 	 * (#38) render from this. */
@@ -48,6 +66,8 @@ class Investigation {
 
 	/** Wall time of the settled run (ms) — the done row's "· 4.2s". */
 	elapsedMs = $state<number | null>(null);
+	/** The question as asked — the error screen's Retry re-fires it (spec §4). */
+	lastQuestion = $state('');
 
 	private controller: AbortController | null = null;
 
@@ -87,12 +107,18 @@ class Investigation {
 		const controller = new AbortController();
 		this.controller = controller;
 		this.phase = 'idle';
+		this.lastQuestion = question;
 		this.slices = [];
 		this.searches = [];
 		this.skeletons = [];
 		this.notices = [];
 		this.result = null;
 		this.error = null;
+		this.cards = [];
+		this.facetGroups = [];
+		this.selections = {};
+		this.filling = false;
+		this.fillStats = { interpreted: 0, total: 0 };
 		this.elapsedMs = null;
 		this.running = true;
 		const startedAt = performance.now();
@@ -134,7 +160,19 @@ class Investigation {
 			// The transport never sees the abort signal, so a superseded
 			// run RESOLVES instead of throwing — the terminal write takes
 			// the same identity guard as the sibling writes (review P1).
-			if (this.controller === controller) this.result = session;
+			if (this.controller === controller) {
+				this.result = session;
+				this.cards =
+					session.admitted.length === 0
+						? []
+						: assembleCards(resolveGraph(session.admitted), session.admitted);
+				this.facetGroups = computeFacets(session.admitted);
+				if (provider !== undefined && settings.model !== '' && this.cards.length > 0) {
+					this.filling = true;
+					await this.fillInChunks(provider, callLLM, controller);
+					if (this.controller === controller) this.filling = false;
+				}
+			}
 		} catch (err) {
 			// Deliberate aborts are not errors; real failures settle into the
 			// §4 error surface's input instead of an unhandled rejection.
@@ -155,6 +193,58 @@ class Investigation {
 	 * painted — the abort settles it through the same finally path. */
 	stop(): void {
 		this.controller?.abort();
+	}
+
+	/** Facet selection (spec §3: OR within a group, AND across groups).
+	 * Fresh Set/array identities per call so the derived filtered lists re-run. */
+	toggleFacet(prefix: string, value: string): void {
+		const next: Record<string, Set<string>> = { ...this.selections };
+		const values = new Set(next[prefix] ?? []);
+		if (values.has(value)) values.delete(value);
+		else values.add(value);
+		if (values.size === 0) delete next[prefix];
+		else next[prefix] = values;
+		this.selections = next;
+	}
+
+	clearFacet(prefix: string): void {
+		const next = { ...this.selections };
+		delete next[prefix];
+		this.selections = next;
+	}
+
+	clearFacets(): void {
+		this.selections = {};
+	}
+	/** Chunked interpretation fill (spec §7: cards start rendering
+	 * interpreted within ~10s — the batch never blocks the whole set).
+	 * 4-card batches through fillCards; each chunk gets a 10s arm — a
+	 * timed-out chunk leaves its cards on the rule-5 fallback and the
+	 * NEXT chunk still runs (spec §4: degrade only the unfinished
+	 * items). Cached interpretations come back instantly (first chunk is
+	 * paint), so the first-visible cards fill first. */
+	private async fillInChunks(
+		provider: ProviderOverrideInput,
+		callLLM: CallLLM,
+		controller: AbortController
+	): Promise<void> {
+		const CHUNK = 4;
+		const PER_CHUNK_MS = 10_000;
+		const total = this.cards.length;
+		this.fillStats = { interpreted: 0, total };
+		for (let at = 0; at < total; at += CHUNK) {
+			if (controller.signal.aborted || this.controller !== controller) return;
+			const chunk = this.cards.slice(at, at + CHUNK);
+			const timer = AbortSignal.any([controller.signal, AbortSignal.timeout(PER_CHUNK_MS)]);
+			const filled = await fillCards(chunk, { provider, callLLM, signal: timer });
+			if (this.controller !== controller) return;
+			// Merge: newer cards array instance each chunk so the UI paints
+			// per chunk rather than at the very end.
+			const next = this.cards.slice();
+			for (let i = 0; i < filled.length; i++) next[at + i] = filled[i];
+			this.cards = next;
+			this.fillStats = { interpreted: next.filter((c) => c.interpreted).length, total };
+		}
 	}
 }
 
