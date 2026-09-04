@@ -63,8 +63,11 @@
 						surface grows on this stage. -->
 					{#key shell.session?.id}
 						<!-- min-h-0/flex-1 + shrink-0 children: the scroller must own
-							scrolling itself; h-full self-sized children clip the top. -->
-						<div class="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto">
+							scrolling itself; h-full self-sized children clip the top.
+							p-1: shadow-card's 1px ring is painted OUTSIDE the border
+							box — flush children lose that ring to the overflow clip
+							(owner report, issue #36). -->
+						<div class="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto p-1">
 							<div class="w-full max-w-[760px] shrink-0">
 								<TaskTrace />
 							</div>
