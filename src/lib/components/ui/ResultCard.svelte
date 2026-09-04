@@ -19,7 +19,7 @@
 
 	let { card }: Props = $props();
 
-	const title = $derived(card.typeTag ?? card.itags[0] ?? 'untyped event');
+	const title = $derived(card.typeTag ?? card.itags[0] ?? card.contentStart.slice(0, 60));
 	const rawLine = $derived(
 		[
 			card.typeTag ? `t: ${card.typeTag}` : null,

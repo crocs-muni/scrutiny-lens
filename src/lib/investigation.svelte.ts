@@ -32,7 +32,9 @@ import { shell } from '$lib/shell.svelte';
 class Investigation {
 	phase = $state<Phase | 'idle'>('idle');
 	/** Per-relay slice receipts, in arrival order — the trace's literal layer. */
-	slices = $state<{ url: string; received: number; route: string; rejected: number }[]>([]);
+	slices = $state<
+		{ url: string; received: number; route: string; rejected: number; status: 'ok' | 'timeout' | 'refused' }[]
+	>([]);
 	/** Translated searches (≤3, spec §3) — arrives right after translate. */
 	searches = $state<SearchRequest[]>([]);
 	/** Rule-5 skeletons as they arrive (spec §2 rule 5). */
@@ -61,7 +63,8 @@ class Investigation {
 					url: event.url,
 					received: event.received,
 					route: event.route,
-					rejected: event.rejected
+					rejected: event.rejected,
+					status: event.status
 				});
 				break;
 			case 'searches':

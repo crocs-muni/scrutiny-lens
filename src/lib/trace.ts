@@ -27,7 +27,7 @@ export interface PhaseRow {
 export interface TraceInput {
 	phase: Phase | 'idle';
 	searches: SearchRequest[];
-	slices: { url: string; received: number; route: string; rejected: number }[];
+	slices: { url: string; received: number; route: string; rejected: number; status: 'ok' | 'timeout' | 'refused' }[];
 	/** Admitted events so far (rule-5 skeletons, spec §2 rule 5). */
 	skeletons: { typeTag?: string }[];
 	notices: PipelineNotice[];
@@ -65,16 +65,27 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 	const received = slices.reduce((sum, s) => sum + s.received, 0);
 	const rejected = slices.reduce((sum, s) => sum + s.rejected, 0);
 	const admitted = input.skeletons.length;
-	const answered = new Set(slices.filter((s) => s.url !== 'local-cache').map((s) => s.url)).size;
+	// Only relays that actually answered count (review P1: a refused or
+	// timed-out leg is a degradation, not a source) — counting them would
+	// be the §3/§4 "no matches" vs "dead relay" conflation the trace
+	// exists to prevent.
+	const answered = new Set(
+		slices.filter((s) => s.url !== 'local-cache' && s.status === 'ok').map((s) => s.url)
+	).size;
 
 	// The literal layer (spec §2 rule 6): per-slice receipts verbatim —
 	// route label, relay, counts — plus honesty cells for scan fallbacks
 	// and truncation. Nothing is smoothed over.
 	const ticks: TraceTick[] = slices.map((s) => ({
-		text: `${s.route} ${hostOf(s.url)} → ${s.received} records`,
+		// Non-ok legs render the status verbatim instead of pretending to be
+		// an empty result (review P1): dead relay ≠ no matches (spec §3/§4).
+		text:
+			s.status === 'ok'
+				? `${s.route} ${hostOf(s.url)} → ${s.received} records`
+				: `relay ${hostOf(s.url)} ${s.status} · no events received`,
 		// Fullscan legs are the honesty cells (spec §3: the relay couldn't
 		// search, so we scanned) — amber, never silent.
-		warn: s.route.endsWith(':fullscan')
+		warn: s.status !== 'ok' || s.route.endsWith(':fullscan')
 	}));
 	for (const notice of notices) {
 		ticks.push({ text: notice.message, warn: notice.kind === 'capability' || notice.kind === 'truncated' });
@@ -84,7 +95,7 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 		{
 			id: 'question',
 			label: LABELS.question,
-			status: done || phase === 'fetch' ? 'completed' : phase === 'translate' ? 'running' : 'pending',
+			status: done || phase === 'fetch' ? 'completed' : failed ? 'skipped' : phase === 'translate' ? 'running' : 'pending',
 			counter: searchCounter(searches),
 			ticks: []
 		},
@@ -103,8 +114,8 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 		{
 			id: 'records',
 			label: LABELS.records,
-			status: done ? 'completed' : failed && received === 0 ? 'skipped' : slices.length > 0 ? 'running' : 'pending',
-			counter: slices.length > 0 ? `${received} so far` : '',
+			status: done ? 'completed' : failed ? 'skipped' : slices.length > 0 ? 'running' : 'pending',
+			counter: slices.length > 0 ? (done ? `${received} records` : `${received} so far`) : '',
 			ticks: []
 		},
 		{
@@ -132,7 +143,9 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
  * event-type counts per the owner ruling 2026-09-03 (spec §3 cohort line);
  * sources = answering relays + optional cache leg, from state only. */
 export function doneLine(input: TraceInput): string {
-	const answered = new Set(input.slices.filter((s) => s.url !== 'local-cache').map((s) => s.url)).size;
+	const answered = new Set(
+		input.slices.filter((s) => s.url !== 'local-cache' && s.status === 'ok').map((s) => s.url)
+	).size;
 	const cached = input.slices.some((s) => s.url === 'local-cache');
 	const sources = answered + (cached ? 1 : 0);
 	const byType = new Map<string, number>();

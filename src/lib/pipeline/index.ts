@@ -15,7 +15,14 @@ import type { ProviderOverrideInput } from '$lib/ai/provider';
 import { admitEvent } from '$lib/fabric';
 import { indexerFilter, searchFilter, fullScanFilter, tTags, tagValues } from '$lib/fabric';
 import type { NostrEvent as FabricEvent } from '$lib/fabric';
-import type { Transport, RelayCapability, RelayStatus, FetchRoute, FetchSlice } from '$lib/net/transport';
+import type {
+	Transport,
+	RelayCapability,
+	RelayState,
+	RelayStatus,
+	FetchRoute,
+	FetchSlice
+} from '$lib/net/transport';
 import { translateQuestion, type SearchRequest } from '$lib/ai/agents/query';
 import { indexEvent, searchText } from '$lib/search';
 import { getEvent, getEventsByTag } from '$lib/db';
@@ -47,7 +54,7 @@ export interface SearchSession {
 
 export type PipelineEvent =
 	| { type: 'phase'; phase: Phase }
-	| { type: 'slice'; url: string; received: number; route: string; rejected: number }
+	| { type: 'slice'; url: string; received: number; route: string; rejected: number; status: RelayState }
 	| { type: 'searches'; searches: SearchRequest[] }
 	| { type: 'skeleton'; cards: SkeletonCard[] }
 	| { type: 'notice'; notice: PipelineNotice };
@@ -218,7 +225,10 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 			url: slice.url,
 			received: slice.events.length,
 			route: slice.route ?? 'default',
-			rejected: invalidSkipped - rejectedBefore
+			// issue #36 review: the trace counts only ACTUALLY answered
+			// relays; a refused leg is not a source (spec §3/§4 distinction).
+			rejected: invalidSkipped - rejectedBefore,
+			status: slice.status.status
 		});
 	};
 
