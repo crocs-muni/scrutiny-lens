@@ -135,7 +135,7 @@
 	{#if hasDetail}
 		<!-- canon's grid-rows expansion (no JS height math) -->
 		<div
-			class="grid transition-[grid-template-rows,opacity] duration-300"
+			class="grid transition-[grid-template-rows,opacity] duration-200"
 			style:grid-template-rows={expanded ? '1fr' : '0fr'}
 			style:opacity={expanded ? 1 : 0}
 			style:transition-timing-function="cubic-bezier(0.23, 1, 0.32, 1)"
@@ -148,7 +148,7 @@
 							<TraceTick
 								{tick}
 								style={expanded
-									? `animation: fade-up 300ms cubic-bezier(0.23,1,0.32,1) ${80 + j * 60}ms both`
+									? `animation: fade-up 200ms cubic-bezier(0.23,1,0.32,1) ${Math.min(80 + j * 40, 300)}ms both`
 									: undefined}
 							/>
 						{/each}

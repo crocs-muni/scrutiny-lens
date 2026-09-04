@@ -32,7 +32,7 @@
 </script>
 
 <article
-	class="rounded-[12px] border-[1.5px] border-dashed border-line-strong bg-surface px-4 py-3 shadow-card"
+	class="rounded-[12px] border-[1.5px] border-dashed border-line-strong bg-surface px-4 py-3 shadow-card [content-visibility:auto] [contain-intrinsic-size:auto_120px]"
 >
 	<div class="flex items-center gap-2">
 		<h3 class="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold text-ink">{title}</h3>

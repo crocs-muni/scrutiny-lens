@@ -91,7 +91,7 @@ function routeSearch(
 		if (cap === 'lacks') {
 			notices.push({
 				kind: 'capability',
-				message: `relay ${url} lacks search support — falling back to a tag scan`
+				message: `relay ${url} lacks search support · falling back to a tag scan`
 			});
 			fullscan.push(url);
 		} else if (cap === 'unknown') {
@@ -100,7 +100,7 @@ function routeSearch(
 			// tag scan. Dedupes downstream (spec §3 never-blank).
 			notices.push({
 				kind: 'capability',
-				message: `relay ${url}'s search support couldn't be verified — trying NIP-50 and a tag scan`
+				message: `relay ${url}'s search support couldn't be verified · trying NIP-50 and a tag scan`
 			});
 			nip50.push(url);
 			fullscan.push(url);
@@ -146,7 +146,7 @@ async function truncationNotices(
 			if (coveredCount > fetched) {
 				notices.push({
 					kind: 'truncated',
-					message: `fetched ${fetched} (relays may hold more — COUNT ${coveredCount})`
+					message: `fetched ${fetched} (relays may hold more · COUNT ${coveredCount})`
 				});
 			}
 		})

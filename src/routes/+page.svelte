@@ -47,7 +47,7 @@
 			bind:clientHeight={centerHeight}
 			class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-window bg-surface shadow-card"
 		>
-			<div class="flex min-h-0 flex-1 items-center justify-center p-6">
+			<div class="flex min-h-0 flex-1 flex-col p-6">
 				{#if shell.view === 'search'}
 					<!-- J1 hero (issue #37) — the trace (#36) and results (#38)
 					surfaces take over the center stage after submit. -->
@@ -70,7 +70,7 @@
 						{/each}
 					</div>
 				{:else}
-					<p class="max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
+					<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
 						<span class="font-medium text-ink-2">{shell.session?.title}</span><br />
 						The graph canvas lands here with the product-graph step (spec §11 step 3); the
 						dossier lives in the drawer below.
