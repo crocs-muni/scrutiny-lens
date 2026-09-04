@@ -119,3 +119,10 @@ select:focus-visible,
 		transform: translateY(0);
 	}
 }
+
+/* canon's spin — the running phase ring (PhaseRow) rotates with it. */
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
