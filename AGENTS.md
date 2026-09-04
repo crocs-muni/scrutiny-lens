@@ -24,7 +24,7 @@ The superseded 16-doc set was removed from the tree (git history preserves it). 
 - **kebab-case t tags only** (`scrutiny-product`, never `scrutiny_product`) — TAG-4.
 - **Chat/markdown HTML:** rendered via `marked` + DOMPurify; every `{@html}` path sanitizes.
 - **AI surfaces are conformance-tested**: code asserting AI input/output matches spec §2 rule 1 must pass — adding an AI-written field requires a spec line first.
-- **Config, not constants:** relay pool (2–4) and AI endpoint defaults come from config/env (see `.env.example`); no secrets exist in this app.
+- **Config, not constants:** relay pool (1–4) and AI endpoint defaults come from config/env (see `.env.example`); no secrets exist in this app.
 
 ## UI rules
 
