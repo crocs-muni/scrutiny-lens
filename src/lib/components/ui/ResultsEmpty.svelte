@@ -18,8 +18,14 @@
 
 <div class="flex w-full justify-center">
 	<div class="flex max-w-[420px] flex-col items-center gap-1.5 rounded-[10px] bg-surface p-6 text-center shadow-card">
-		<h3 class="font-sans text-[15px] font-semibold text-ink">Nothing matched on your relays</h3>
-		<p class="text-[12.5px] leading-relaxed text-ink-2">Try widening your terms, or check the facets on the left.</p>
+		<h3 class="font-sans text-[15px] font-semibold text-ink">
+			{/* honesty (spec §4): a filtered-out set is the filter's doing,
+				not the relays' — never blame the sources */ ''}
+			{filtered ? 'Nothing matched your filters' : 'Nothing matched on your relays'}
+		</h3>
+		<p class="text-[12.5px] leading-relaxed text-ink-2">
+			{filtered ? 'Relax the selection to see the rest of the result set.' : 'Try widening your terms, or broaden the facet filters on the left.'}
+		</p>
 
 		<div class="mt-2 flex flex-wrap items-center justify-center gap-2">
 			{#if filtered && onClearFilters}
