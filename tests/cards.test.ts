@@ -91,6 +91,28 @@ describe('assembleCards (issue #28)', () => {
 		expect(cards[0].updates).toBe(2);
 	});
 
+	it('counts files: bound metadata whose content carries an http(s) link (spec §2 — deterministic)', () => {
+		const prod = event('prod-1');
+		const metaWithLink = event('meta-1', {
+			content: 'Maintenance report #1. PDF: https://commoncriteriaportal.org/maint.pdf'
+		});
+		const metaPlain = event('meta-2', { content: 'keywords: EAL5, smart card, TOC' });
+		const graph: GraphView = {
+			nodes: [
+				{ id: prod.id, type: 'product', retracted: false, event: prod },
+				{ id: metaWithLink.id, type: 'metadata', retracted: false, event: metaWithLink },
+				{ id: metaPlain.id, type: 'metadata', retracted: false, event: metaPlain }
+			],
+			edges: [
+				{ id: 'e1', source: metaWithLink.id, target: prod.id, label: 'report' },
+				{ id: 'e2', source: metaPlain.id, target: prod.id, label: 'keywords' }
+			]
+		};
+		const cards = assembleCards(graph, [prod]);
+		expect(cards[0].boundMetadata).toBe(2);
+		expect(cards[0].files).toBe(1);
+	});
+
 	it('derives fallback title from first i-tag value, never from LLM output', () => {
 		const cards = assembleCards(graphWith(['prod-1']), [event('prod-1')]);
 		expect(cards[0].title).toBe('cve:CVE-2017-15361');
