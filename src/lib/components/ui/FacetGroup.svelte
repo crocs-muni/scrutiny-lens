@@ -80,7 +80,7 @@
 							<IconCheck size={12} stroke={2.5} />
 						{/if}
 					</span>
-					<span class="truncate text-[11px] text-ink">{v.value}</span>
+					<span class="truncate font-mono text-[11px] text-ink">{v.value}</span>
 					<span class="ml-auto font-mono text-[10.5px] tabular-nums text-ink-3">{v.count}</span>
 				</button>
 			{/each}

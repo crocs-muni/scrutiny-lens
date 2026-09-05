@@ -18,6 +18,7 @@
 	import type { ProductCard } from '$lib/pipeline/cards';
 	import type { SkeletonCard } from '$lib/pipeline';
 	import PublisherChip from './PublisherChip.svelte';
+	import { IconLink, IconPencil } from '@tabler/icons-svelte';
 
 	interface Props {
 		/** Skeleton during fetch (rule 5), ProductCard once assembled. */
@@ -108,6 +109,23 @@
 		<p class="mt-1.5 line-clamp-3 font-mono text-[11px] leading-relaxed break-all text-ink-2">
 			{fallbackRaw}
 		</p>
+		{#if product !== null}
+			<!-- publisher identity is deterministic (kind-0 of the event's own
+				author) — shown on settled dashed cards too; skeletons have no
+				pubkey, so they stay bare (owner ruling 2026-09-04). -->
+			<div class="mt-2.5 flex items-center gap-3">
+				<PublisherChip pubkey={product.pubkey} />
+				<span class="flex-1"></span>
+					<span class="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-ink-3">
+					<IconLink size={10} stroke={1.5} aria-hidden="true" />
+					{product.boundMetadata} binding{product.boundMetadata === 1 ? '' : 's'}
+					{#if product.updates > 0}
+						<IconPencil size={10} stroke={1.5} aria-hidden="true" />
+						{product.updates} update{product.updates === 1 ? '' : 's'}
+					{/if}
+				</span>
+			</div>
+		{/if}
 		{:else if product !== null}
 		<!-- interpreted (P3) -->
 		<div class="flex items-start gap-2">
@@ -144,10 +162,12 @@
 			<PublisherChip pubkey={product.pubkey} />
 			<span class="flex-1"></span>
 			<!-- spec §2 rule 2: counts are deterministic -->
-			<span class="shrink-0 font-mono text-[10.5px] text-ink-3">
+				<span class="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-ink-3">
+				<IconLink size={10} stroke={1.5} aria-hidden="true" />
 				{product.boundMetadata} binding{product.boundMetadata === 1 ? '' : 's'}
 				{#if product.updates > 0}
-					· {product.updates} update{product.updates === 1 ? '' : 's'}
+					<IconPencil size={10} stroke={1.5} aria-hidden="true" />
+					{product.updates} update{product.updates === 1 ? '' : 's'}
 				{/if}
 			</span>
 		</div>

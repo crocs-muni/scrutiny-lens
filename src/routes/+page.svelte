@@ -93,7 +93,13 @@
 	const degradedLegs = $derived(
 		investigation.slices.filter((s) => s.status !== 'ok' && s.url !== 'local-cache')
 	);
+	// §4: no AI key set — everything still works; the hint belongs on the
+	// RESULTS surface too (the hero's NoKeyBanner is invisible post-submit).
+	const noKey = $derived(settings.apiKey === '' && investigation.result !== null);
 	let dismissed = $state<Set<string>>(new Set());
+	// facet rail visibility (spec §9: the second-left strip collapses);
+	// selections persist while hidden — filtering is state, not chrome.
+	let railOpen = $state(true);
 	// Dismissals are per-run: a superseding/new investigation brings back the
 	// warnings (review finding — page-level state outlived #36-keyed remounts).
 	$effect(() => {
@@ -161,16 +167,40 @@
 						{:else}
 							<div class="flex min-h-0 w-full flex-1">
 								{#if investigation.facetGroups.length > 0}
-									<!-- facet rail: deterministic counts (spec §3, never AI) -->
-									<div class="w-[216px] shrink-0 overflow-hidden border-r border-line">
-										<FacetRail
-											groups={investigation.facetGroups}
-											selections={investigation.selections}
-											onToggle={(p, v) => investigation.toggleFacet(p, v)}
-											onClearGroup={(p) => investigation.clearFacet(p)}
-											onClearAll={() => investigation.clearFacets()}
-										/>
-									</div>
+									{#if railOpen}
+										<!-- facet rail: deterministic counts (spec §3, never AI) -->
+										<div class="flex w-[216px] shrink-0 flex-col overflow-hidden border-r border-line">
+											<div class="flex shrink-0 items-center justify-end px-3 pt-2">
+												<button
+													type="button"
+													aria-label="Collapse facet rail"
+													class="font-mono text-[10px] text-ink-3 hover:text-ink"
+													onclick={() => (railOpen = false)}
+												>
+													hide
+												</button>
+											</div>
+											<FacetRail
+												groups={investigation.facetGroups}
+												selections={investigation.selections}
+												onToggle={(p, v) => investigation.toggleFacet(p, v)}
+												onClearGroup={(p) => investigation.clearFacet(p)}
+												onClearAll={() => investigation.clearFacets()}
+											/>
+										</div>
+									{:else}
+										<!-- collapsed rail (spec §9): slim strip, one expand control;
+											selections persist while hidden — filtering is state,
+											not chrome. -->
+										<button
+											type="button"
+											aria-label="Expand facet rail"
+											class="flex w-7 shrink-0 items-start justify-center border-r border-line pt-4 text-ink-3 hover:text-ink"
+											onclick={() => (railOpen = true)}
+										>
+											<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4"/></svg>
+										</button>
+									{/if}
 								{/if}
 								<div class="flex min-h-0 min-w-0 flex-1 flex-col">
 									{#each investigation.notices.filter((n) => n.kind === 'capability' && !dismissed.has(n.message)) as notice (notice.message)}
@@ -181,6 +211,17 @@
 											/>
 										</div>
 									{/each}
+									{#if noKey && !dismissed.has('no-key')}
+										<!-- §4 'hint to settings' on the results surface: the dismissed
+											key hint stays textual (Ctrl+, works) — the banner is a
+											notice, not a button. -->
+										<div class="px-4 pt-1">
+											<NoticeBanner
+												message="no AI key set — cards show raw events · set one in Settings (Ctrl+,)"
+												onDismiss={() => dismiss('no-key')}
+											/>
+										</div>
+									{/if}
 									{#if aiNote !== '' && !dismissed.has('ai-note')}
 										<div class="px-4 pt-1">
 											<NoticeBanner message={aiNote} onDismiss={() => dismiss('ai-note')} />
@@ -205,7 +246,7 @@
 									{#if investigation.result !== null}
 										<!-- header: cohort line + fetched N (spec §3) -->
 										<div class="flex items-baseline gap-3 px-4 pb-1 pt-2">
-											<span class="font-sans text-[13px] font-semibold text-ink">{cohort}</span>
+											<span class="font-mono text-[12.5px] font-semibold text-ink">{cohort}</span>
 											<span class="flex-1"></span>
 											<span class="font-mono text-[10.5px] text-ink-3">
 												fetched {fetched}{#if truncated} · (relays may hold more){/if}

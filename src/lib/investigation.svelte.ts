@@ -214,45 +214,61 @@ class Investigation {
 	clearFacets(): void {
 		this.selections = {};
 	}
-	/** Chunked interpretation fill (spec §7: cards start rendering
-	 * interpreted within ~10s — the batch never blocks the whole set).
-	 * 4-card batches through fillCards; each chunk gets a 10s arm — a
-	 * timed-out chunk leaves its cards on the rule-5 fallback and the
-	 * NEXT chunk still runs (spec §4: degrade only the unfinished
-	 * items). Cached interpretations come back instantly (first chunk is
-	 * paint), so the first-visible cards fill first. */
+		/** Chunked interpretation fill (spec §7: cards start rendering
+	 * interpreted within ~10s — first-paint contract). Small chunks (3
+	 * cards, ≈600-850 decode-token budget) across 4 striped lanes:
+	 * output-token decode dominates wall clock (fix was researched against
+	 * many-small-parallel practice — see PR #42 review-round record), so
+	 * lanes interleave requests instead of one serial 100-150s walk.
+	 * Each chunk keeps its own 10s arm: a timed-out chunk degrades to
+	 * rule-5 on ITS 3 cards only (spec §4: degrade only the unfinished
+	 * items), and a stuck lane never holds the cursor hostage.
+	 * Claim-cursor is synchronous — no double-claim; each lane's merge is
+	 * one synchronous rewrite (disjoint indices), so lanes can't clobber
+	 * each other. Cached interpretations return instantly — the first
+	 * chunk (viewport cards) still starts at t=0 on lane 0. */
 	private async fillInChunks(
 		provider: ProviderOverrideInput,
 		callLLM: CallLLM,
 		controller: AbortController
 	): Promise<void> {
-		const CHUNK = 4;
+		const CHUNK = 3;
+		const LANES = 4;
 		const PER_CHUNK_MS = 10_000;
 		const total = this.cards.length;
 		this.fillStats = { interpreted: 0, total };
-		for (let at = 0; at < total; at += CHUNK) {
-			if (controller.signal.aborted || this.controller !== controller) return;
-			const chunk = this.cards.slice(at, at + CHUNK);
-			const timer = AbortSignal.any([controller.signal, AbortSignal.timeout(PER_CHUNK_MS)]);
-			let filled = chunk;
-			try {
-				// A chunk timing out (or its interpretation read failing) aborts
-				// ONLY its own combined signal — generateStructured rethrows
-				// aborted-signal errors, so without this catch the timer's abort
-				// would escape into start()'s error path on a healthy run and
-				// pin filling=true forever (spec §4: degrade only this chunk).
-				filled = await fillCards(chunk, { provider, callLLM, signal: timer });
-			} catch {
-				// rule-5 fallback for this chunk; the loop keeps the next chunks.
+		let next = 0;
+		const claim = (): number => {
+			const at = next;
+			next += CHUNK;
+			return at;
+		};
+		const worker = async (): Promise<void> => {
+			for (let at = claim(); at < total; at = claim()) {
+				if (controller.signal.aborted || this.controller !== controller) return;
+				const chunk = this.cards.slice(at, at + CHUNK);
+				const timer = AbortSignal.any([controller.signal, AbortSignal.timeout(PER_CHUNK_MS)]);
+				let filled = chunk;
+				try {
+					// A chunk timing out (or its interpretation read failing)
+					// aborts ONLY its own combined signal — generateStructured
+					// rethrows aborted-signal errors, so without this catch the
+					// timer's abort would escape into start()'s error path on a
+					// healthy run and pin filling=true forever (spec §4).
+					filled = await fillCards(chunk, { provider, callLLM, signal: timer });
+				} catch {
+					// rule-5 fallback for this chunk; the lane keeps going.
+				}
+				if (this.controller !== controller) return;
+				// One synchronous merge over disjoint indices — the lanes can't
+				// clobber each other's writes; UI paints per chunk.
+				const merged = this.cards.slice();
+				for (let i = 0; i < filled.length; i++) merged[at + i] = filled[i];
+				this.cards = merged;
+				this.fillStats = { interpreted: merged.filter((c) => c.interpreted).length, total };
 			}
-			if (this.controller !== controller) return;
-			// Merge: newer cards array instance each chunk so the UI paints
-			// per chunk rather than at the very end.
-			const next = this.cards.slice();
-			for (let i = 0; i < filled.length; i++) next[at + i] = filled[i];
-			this.cards = next;
-			this.fillStats = { interpreted: next.filter((c) => c.interpreted).length, total };
-		}
+		};
+		await Promise.all(Array.from({ length: Math.min(LANES, Math.ceil(total / CHUNK)) }, worker));
 	}
 }
 
