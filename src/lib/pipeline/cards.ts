@@ -27,6 +27,8 @@ export interface ProductCard {
 	identifiers: string[];
 	retracted: boolean;
 	boundMetadata: number;
+	/** Bound metadata carrying an http(s) link (report/PDF artifacts; spec §9). */
+	files: number;
 	updates: number;
 	contentStart: string;
 	interpreted: boolean;
@@ -52,6 +54,10 @@ export function assembleCards(graph: GraphView, patchSources: NostrEvent[] = [])
 		const ev = node.event;
 		const identifiers = [...new Set(tagValues(ev, 'i'))];
 		const boundEdges = graph.edges.filter((e) => e.target === node.id && e.source !== node.id);
+		const files = boundEdges.filter((edge) => {
+			const src = graph.nodes.find((n) => n.id === edge.source);
+			return src !== undefined && /https?:\/\//.test(src.event.content);
+		}).length;
 		const updates = patchSources.filter((p) => {
 			const eTags = tagValues(p, 'e');
 			return eTags.includes(node.id) && tTags(p).includes('scrutiny-patch');
@@ -65,6 +71,7 @@ export function assembleCards(graph: GraphView, patchSources: NostrEvent[] = [])
 			identifiers,
 			retracted: node.retracted,
 			boundMetadata: boundEdges.length,
+			files,
 			updates: updates.length,
 			contentStart: ev.content.slice(0, 200),
 			interpreted: false

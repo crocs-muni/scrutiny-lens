@@ -18,7 +18,7 @@
 	import type { ProductCard } from '$lib/pipeline/cards';
 	import type { SkeletonCard } from '$lib/pipeline';
 	import PublisherChip from './PublisherChip.svelte';
-	import { IconLink, IconPencil } from '@tabler/icons-svelte';
+	import { IconFile, IconLink, IconPencil } from '@tabler/icons-svelte';
 
 	interface Props {
 		/** Skeleton during fetch (rule 5), ProductCard once assembled. */
@@ -160,7 +160,11 @@
 		<span class="flex-1"></span>
 		<span class="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-ink-3">
 			<IconLink size={10} stroke={1.5} aria-hidden="true" />
-			{c.boundMetadata} binding{c.boundMetadata === 1 ? '' : 's'}
+			{c.boundMetadata} metadata
+			{#if c.files > 0}
+				<IconFile size={10} stroke={1.5} aria-hidden="true" />
+				{c.files} file{c.files === 1 ? '' : 's'}
+			{/if}
 			{#if c.updates > 0}
 				<IconPencil size={10} stroke={1.5} aria-hidden="true" />
 				{c.updates} update{c.updates === 1 ? '' : 's'}

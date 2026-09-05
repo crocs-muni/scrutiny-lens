@@ -45,6 +45,7 @@ const cardA: ProductCard = {
 	identifiers: ['cve:CVE-2025-1'],
 	retracted: false,
 	boundMetadata: 3,
+		files: 0,
 	updates: 1,
 	contentStart: '',
 	interpreted: true
@@ -58,6 +59,7 @@ const cardB: ProductCard = {
 	identifiers: ['cve:CVE-2025-2'],
 	retracted: true,
 	boundMetadata: 0,
+		files: 0,
 	updates: 2,
 	contentStart: '',
 	interpreted: false
