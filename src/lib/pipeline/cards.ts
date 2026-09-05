@@ -18,6 +18,8 @@ import { z } from 'zod';
 
 export interface ProductCard {
 	id: string;
+	/** The event's type tag — the rule-5 fallback line names it (spec §2 rule 5). */
+	typeTag: string;
 	/** Root product event's author — the publisher chip (kind-0) renders from it. */
 	pubkey: string;
 	title: string;
@@ -56,6 +58,7 @@ export function assembleCards(graph: GraphView, patchSources: NostrEvent[] = [])
 		});
 		return {
 			id: node.id,
+			typeTag: node.type === 'product' ? 'scrutiny-product' : 'scrutiny-metadata',
 			pubkey: ev.pubkey,
 			title: deriveFallbackTitle(ev),
 			snippet: ev.content.slice(0, 200).trim() || undefined,

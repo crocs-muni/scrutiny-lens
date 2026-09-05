@@ -27,10 +27,9 @@
 		notices: investigation.notices,
 		relayCount: settings.relays.length,
 		error: investigation.error,
-		descriptions: investigation.filling
-			? { running: true, ...investigation.fillStats }
-			: investigation.result !== null && investigation.fillStats.total > 0
-				? { running: false, ...investigation.fillStats }
+		descriptions:
+			investigation.filling || (investigation.result !== null && investigation.fillStats.total > 0)
+				? { running: investigation.filling, ...investigation.fillStats }
 				: undefined
 	});
 

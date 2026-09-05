@@ -38,6 +38,7 @@ const ADMITTED = [productA, productB];
 
 const cardA: ProductCard = {
 	id: productA.id,
+	typeTag: 'scrutiny-product',
 	pubkey: productA.pubkey,
 	title: 'AI title for A',
 	snippet: 'AI snippet',
@@ -50,6 +51,7 @@ const cardA: ProductCard = {
 };
 const cardB: ProductCard = {
 	id: productB.id,
+	typeTag: 'scrutiny-product',
 	pubkey: productB.pubkey,
 	title: 'cve:CVE-2025-2',
 	snippet: undefined,

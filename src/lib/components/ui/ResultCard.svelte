@@ -42,6 +42,7 @@
 	const fallbackRaw = $derived(
 		product !== null
 			? [
+					`t: ${product.typeTag}`,
 					...product.identifiers.slice(0, 3).map((t) => `i: ${t}`),
 					`"${product.contentStart}"`
 				].join(' · ')
@@ -113,18 +114,7 @@
 			<!-- publisher identity is deterministic (kind-0 of the event's own
 				author) — shown on settled dashed cards too; skeletons have no
 				pubkey, so they stay bare (owner ruling 2026-09-04). -->
-			<div class="mt-2.5 flex items-center gap-3">
-				<PublisherChip pubkey={product.pubkey} />
-				<span class="flex-1"></span>
-					<span class="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-ink-3">
-					<IconLink size={10} stroke={1.5} aria-hidden="true" />
-					{product.boundMetadata} binding{product.boundMetadata === 1 ? '' : 's'}
-					{#if product.updates > 0}
-						<IconPencil size={10} stroke={1.5} aria-hidden="true" />
-						{product.updates} update{product.updates === 1 ? '' : 's'}
-					{/if}
-				</span>
-			</div>
+			{@render cardFoot(product)}
 		{/if}
 		{:else if product !== null}
 		<!-- interpreted (P3) -->
@@ -158,18 +148,23 @@
 				{/if}
 			</div>
 		{/if}
-		<div class="mt-2.5 flex items-center gap-3">
-			<PublisherChip pubkey={product.pubkey} />
-			<span class="flex-1"></span>
-			<!-- spec §2 rule 2: counts are deterministic -->
-				<span class="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-ink-3">
-				<IconLink size={10} stroke={1.5} aria-hidden="true" />
-				{product.boundMetadata} binding{product.boundMetadata === 1 ? '' : 's'}
-				{#if product.updates > 0}
-					<IconPencil size={10} stroke={1.5} aria-hidden="true" />
-					{product.updates} update{product.updates === 1 ? '' : 's'}
-				{/if}
-			</span>
-		</div>
+	{@render cardFoot(product)}
 	{/if}
 </article>
+
+{#snippet cardFoot(c: ProductCard)}
+	<!-- footer row shared by dashed+interpreted: publisher kind-0 chip +
+		deterministic counts (spec §2 rule 2; icons per §9 anatomy) -->
+	<div class="mt-2.5 flex items-center gap-3">
+		<PublisherChip pubkey={c.pubkey} />
+		<span class="flex-1"></span>
+		<span class="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-ink-3">
+			<IconLink size={10} stroke={1.5} aria-hidden="true" />
+			{c.boundMetadata} binding{c.boundMetadata === 1 ? '' : 's'}
+			{#if c.updates > 0}
+				<IconPencil size={10} stroke={1.5} aria-hidden="true" />
+				{c.updates} update{c.updates === 1 ? '' : 's'}
+			{/if}
+		</span>
+	</div>
+{/snippet}

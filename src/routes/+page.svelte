@@ -80,19 +80,35 @@
 				: `AI slow — ${investigation.fillStats.interpreted} of ${investigation.fillStats.total} cards interpreted · uninterpreted cards show the raw events`
 			: ''
 	);
-	// Translation failure (AI down at plan time): pipeline proceeds with zero
-	// searches — never blame the relays for it (spec §4/§2 rule 5).
-	const translationFailed = $derived(
+	// §4 'AI down → fallback + banner', translation is also an AI surface:
+	// when the AI couldn't structure the question the plan carries a
+	// literal 'fallback'-sourced free-text search — surface that, not the
+	// (unreachable) zero-searches case (translateQuestion always returns ≥1).
+	const translationFallback = $derived(
 		investigation.result !== null &&
 			investigation.error === null &&
-			!investigation.running &&
-			investigation.searches.length === 0
+			investigation.searches.some((s) => s.source === 'fallback')
 	);
-	// §4: some relays dead → results from the rest + corner notice (one per leg,
-	// verbatim status; a refused leg is a degradation, not 'no matches').
+	// §4: some relays dead → results from the rest + corner notice (a refused
+	// leg is a degradation, not 'no matches'). Rolled up per class — per-leg
+	// verbatim statuses live in the trace and footer; wallpapering 4 relays
+	// as 4 banners teaches users to ignore the honest lane (review finding).
 	const degradedLegs = $derived(
-		investigation.slices.filter((s) => s.status !== 'ok' && s.url !== 'local-cache')
+		investigation.slices.filter((s) => s.status !== 'ok')
 	);
+	const degradedNote = $derived(
+		degradedLegs.length === 0
+			? ''
+			: degradedLegs.length === 1
+				? `relay ${degradedLegs[0].url} ${degradedLegs[0].status} — showing results from the rest`
+				: `${degradedLegs.length} relays degraded (${degradedLegs.map((l) => l.status).join(' · ')}) — showing results from the rest`
+	);
+	const capabilityNote = $derived.by(() => {
+		const items = investigation.notices.filter((n) => n.kind === 'capability');
+		if (items.length === 0) return '';
+		if (items.length === 1) return items[0].message;
+		return `${items.length} relays report no or unverifiable search support — details in the trace`;
+	});
 	// §4: no AI key set — everything still works; the hint belongs on the
 	// RESULTS surface too (the hero's NoKeyBanner is invisible post-submit).
 	const noKey = $derived(settings.apiKey === '' && investigation.result !== null);
@@ -122,7 +138,15 @@
 			activeId={shell.session?.id ?? null}
 			onToggle={() => shell.toggleRail()}
 			onHome={() => shell.home()}
-			onPick={(id) => shell.openSession(id)}
+			onPick={(id) => {
+				shell.openSession(id);
+				// The current run IS its session's results — reopening it from
+				// the rail returns to the results surface instead of stranding
+				// on the #29 placeholder (older sessions stay placeholders).
+				if (id === investigation.sessionId && (investigation.running || investigation.result !== null)) {
+					shell.view = 'results';
+				}
+			}}
 			onClose={(id) => {
 			// spec §8: closing the active session aborts its run — the
 			// orphan result must not land with no row to display it in.
@@ -203,54 +227,25 @@
 									{/if}
 								{/if}
 								<div class="flex min-h-0 min-w-0 flex-1 flex-col">
-									{#each investigation.notices.filter((n) => n.kind === 'capability' && !dismissed.has(n.message)) as notice (notice.message)}
-										<div class="px-4 pt-1">
-											<NoticeBanner
-												message={notice.message}
-												onDismiss={() => dismiss(notice.message)}
-											/>
-										</div>
-									{/each}
-									{#if noKey && !dismissed.has('no-key')}
-										<!-- §4 'hint to settings' on the results surface: the dismissed
-											key hint stays textual (Ctrl+, works) — the banner is a
-											notice, not a button. -->
-										<div class="px-4 pt-1">
-											<NoticeBanner
-												message="no AI key set — cards show raw events · set one in Settings (Ctrl+,)"
-												onDismiss={() => dismiss('no-key')}
-											/>
-										</div>
-									{/if}
-									{#if aiNote !== '' && !dismissed.has('ai-note')}
-										<div class="px-4 pt-1">
-											<NoticeBanner message={aiNote} onDismiss={() => dismiss('ai-note')} />
-										</div>
-									{/if}
-									{#if translationFailed && !dismissed.has('translate-fail')}
-										<div class="px-4 pt-1">
-											<NoticeBanner
-												message="AI couldn't translate the question — rephrase it or check the endpoint in Settings"
-												onDismiss={() => dismiss('translate-fail')}
-											/>
-										</div>
-									{/if}
-									{#each degradedLegs.filter((s) => !dismissed.has(`leg-${s.url}`)) as leg (leg.url)}
-										<div class="px-4 pt-1">
-											<NoticeBanner
-												message={`relay ${leg.url} ${leg.status} — showing results from the rest`}
-												onDismiss={() => dismiss(`leg-${leg.url}`)}
-											/>
-										</div>
-									{/each}
+									<!-- §4 honesty lane: every banner one dismissal-keyed note; the
+										no-key hint stays textual (Ctrl+, works) — these are notices,
+										not buttons. Per-class roll-up (review finding): per-leg
+										verbatim facts live in trace ticks + footer. -->
+									{@render note(capabilityNote !== '', 'capability', capabilityNote)}
+									{@render note(noKey, 'no-key', 'no AI key set — cards show raw events · set one in Settings (Ctrl+,)')}
+									{@render note(aiNote !== '', 'ai-note', aiNote)}
+									{@render note(
+										translationFallback,
+										'translate-fail',
+										"AI couldn't structure the question — falling back to a plain-text search of your words"
+									)}
+									{@render note(degradedNote !== '', 'degraded', degradedNote)}
 									{#if investigation.result !== null}
-										<!-- header: cohort line + fetched N (spec §3) -->
+										<!-- header: cohort only (spec §3); the fetched/truncation
+											ledger rides the results footer per issue #38's S1 line -->
 										<div class="flex items-baseline gap-3 px-4 pb-1 pt-2">
 											<span class="font-mono text-[12.5px] font-semibold text-ink">{cohort}</span>
 											<span class="flex-1"></span>
-											<span class="font-mono text-[10.5px] text-ink-3">
-												fetched {fetched}{#if truncated} · (relays may hold more){/if}
-											</span>
 										</div>
 									{/if}
 									<!-- min-h-0/flex-1 + shrink-0 children: the scroller must own
@@ -278,13 +273,18 @@
 											{/each}
 										{/if}
 									</div>
-									{#if investigation.result !== null && (invalidNote !== '' || degradedLegs.length > 0)}
-										<!-- footer line (spec §4/§9): degradation + invalid-skipped
-											counts ride the results footer — the banner lane stays
-											for actionable warnings. -->
+									{#if investigation.result !== null}
+										<!-- footer ledger (issue #38 S1): fetched N (+ truncation),
+											invalid-skipped count, degraded relay legs — the banner
+											lane stays for actionable warnings -->
 										<div class="shrink-0 border-t border-line px-4 py-1.5">
 											<span class="font-mono text-[10.5px] text-ink-3">
-												{[invalidNote, ...degradedLegs.map((l) => `relay ${l.url} ${l.status}`)]
+												{[
+													`fetched ${fetched}`,
+													truncated ? '(relays may hold more)' : '',
+													invalidNote,
+													...degradedLegs.map((l) => `relay ${l.url} ${l.status}`)
+												]
 													.filter((s) => s !== '')
 													.join(' · ')}
 											</span>
@@ -323,3 +323,11 @@
 		<SettingsDialog onClose={() => shell.toggleSettings()} />
 	{/if}
 </Tooltip.Provider>
+
+{#snippet note(show: boolean, key: string, message: string)}
+	{#if show && !dismissed.has(key)}
+		<div class="px-4 pt-1">
+			<NoticeBanner {message} onDismiss={() => dismiss(key)} />
+		</div>
+	{/if}
+{/snippet}

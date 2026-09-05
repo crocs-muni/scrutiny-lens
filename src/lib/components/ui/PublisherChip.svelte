@@ -65,7 +65,9 @@
 		}
 	}
 
-	/** FNV-1a over the pubkey → a stable 0–359° hue for both identicon tones. */
+	/** FNV-1a over the pubkey → a stable hue seed for both identicon tones
+	 * (full uint32; the triangle render maps it into oklch's hue wheel — the
+	 * value must NOT be pre-modded since mirroredCells consumes it too). */
 	function hashHue(key: string): number {
 		let hash = 0x811c9dc5;
 		for (const ch of key) {

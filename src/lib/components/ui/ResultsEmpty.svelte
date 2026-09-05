@@ -24,7 +24,9 @@
 			{filtered ? 'Nothing matched your filters' : 'Nothing matched on your relays'}
 		</h3>
 		<p class="text-[12.5px] leading-relaxed text-ink-2">
-			{filtered ? 'Relax the selection to see the rest of the result set.' : 'Try widening your terms, or broaden the facet filters on the left.'}
+			{filtered
+				? 'Relax the selection to see the rest of the result set.'
+				: 'Try a different spelling or identifier, or add more relays in Settings (Ctrl+,).'}
 		</p>
 
 		<div class="mt-2 flex flex-wrap items-center justify-center gap-2">

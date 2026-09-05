@@ -68,6 +68,10 @@ class Investigation {
 	elapsedMs = $state<number | null>(null);
 	/** The question as asked — the error screen's Retry re-fires it (spec §4). */
 	lastQuestion = $state('');
+	/** The session row this run painted — re-picking it in the rail returns
+	 * to the results view (older sessions aren't replayable until #29's
+	 * session-store work, spec §0). */
+	sessionId = $state<string | null>(null);
 
 	private controller: AbortController | null = null;
 
@@ -127,6 +131,7 @@ class Investigation {
 		// investigation even if every relay hangs (spec §4: never demo data,
 		// but the question itself is real user input).
 		shell.newSession(question);
+		this.sessionId = shell.session?.id ?? null;
 		// issue #36: submit lands on the trace/results stage (spec center
 		// swap search → results → session); the graph session is #29's.
 		shell.view = 'results';
