@@ -127,9 +127,6 @@
 	// RESULTS surface too (the hero's NoKeyBanner is invisible post-submit).
 	const noKey = $derived(settings.apiKey === '' && investigation.result !== null);
 	let dismissed = $state<Set<string>>(new Set());
-	// facet rail visibility (spec §9: the second-left strip collapses);
-	// selections persist while hidden — filtering is state, not chrome.
-	let railOpen = $state(true);
 	// Dismissals are per-run: a superseding/new investigation brings back the
 	// warnings (review finding — page-level state outlived #36-keyed remounts).
 	$effect(() => {
@@ -191,14 +188,21 @@
 						states replace the body. -->
 					{#key shell.session?.id}
 						<!-- BIBLE J2 header bar: full window width, 44px hairline -->
-						<div class="flex h-11 shrink-0 items-center gap-2 border-b border-line px-4">
-							<span class="text-[12.5px] text-ink-2">Results</span>
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="text-ink-2"><path d="M9 6l6 6-6 6"/></svg>
-							<span class="min-w-0 truncate text-[13px] font-semibold text-ink">{shell.session?.title ?? ''}</span>
-							<span class="flex-1"></span>
-							<span class="shrink-0 font-mono text-[11px] text-ink-2">
-								fetched {fetched}{truncated ? ' · relays may hold more' : ''}
-							</span>
+						<div class="flex h-11 shrink-0 items-center border-b border-line px-4">
+							<!-- baseline-aligned cluster (owner report, PR #42 polish):
+								items-center misaligned the mixed 12.5/13/11px rows; one true
+								baseline per item + svg on the same line, group centered by
+								the bar. leading-none so the line-box extents match the
+								glyph extents. -->
+							<div class="flex min-w-0 flex-1 items-baseline gap-2">
+								<span class="leading-none text-[12.5px] text-ink-2">Results</span>
+								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="shrink-0 text-ink-2"><path d="M9 6l6 6-6 6"/></svg>
+								<span class="min-w-0 truncate leading-none text-[13px] font-semibold text-ink">{shell.session?.title ?? ''}</span>
+								<span class="flex-1"></span>
+								<span class="shrink-0 font-mono leading-none text-[11px] text-ink-2">
+									fetched {fetched}{truncated ? ' · relays may hold more' : ''}
+								</span>
+							</div>
 						</div>
 						{#if relayDead}
 							<!-- spec §4: all relays dead — error screen, never demo data -->
@@ -216,41 +220,17 @@
 						{:else}
 							<div class="flex min-h-0 w-full flex-1">
 								{#if railGroups.length > 0}
-									{#if railOpen}
-										<!-- facet rail: deterministic counts (spec §3, never AI) -->
-										<div class="flex w-[216px] shrink-0 flex-col overflow-hidden border-r border-line">
-											<!-- BIBLE J2: 28×28 collapse pill in the rail header row -->
-											<div class="flex shrink-0 items-center justify-end px-3 pt-2">
-												<button
-													type="button"
-													aria-label="Collapse facet rail"
-													class="flex h-7 w-7 items-center justify-center rounded-[7px] border border-line bg-surface text-ink-2 hover:bg-inset"
-													onclick={() => (railOpen = false)}
-												>
-													<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-												</button>
-											</div>
-											<FacetRail
-												groups={railGroups}
-												selections={investigation.selections}
-												onToggle={(p, v) => investigation.toggleFacet(p, v)}
-												onClearGroup={(p) => investigation.clearFacet(p)}
-												onClearAll={() => investigation.clearFacets()}
-											/>
-										</div>
-									{:else}
-										<!-- collapsed rail (spec §9): slim strip, one expand control;
-											selections persist while hidden — filtering is state,
-											not chrome. -->
-										<button
-											type="button"
-											aria-label="Expand facet rail"
-											class="flex w-7 shrink-0 items-start justify-center border-r border-line pt-4 text-ink-3 hover:text-ink"
-											onclick={() => (railOpen = true)}
-										>
-											<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4"/></svg>
-										</button>
-									{/if}
+									<!-- facet rail: deterministic counts (spec §3, never AI);
+										always on (owner decision, PR #42 — collapse pill removed) -->
+									<div class="flex w-[216px] shrink-0 flex-col overflow-hidden border-r border-line">
+										<FacetRail
+											groups={railGroups}
+											selections={investigation.selections}
+											onToggle={(p, v) => investigation.toggleFacet(p, v)}
+											onClearGroup={(p) => investigation.clearFacet(p)}
+											onClearAll={() => investigation.clearFacets()}
+										/>
+									</div>
 								{/if}
 								<div class="flex min-h-0 min-w-0 flex-1 flex-col">
 									<!-- §4 honesty lane: every banner one dismissal-keyed note; the
