@@ -45,6 +45,7 @@
 	});
 	const viewCards = $derived(semanticFiltered.cards);
 	const viewEvents = $derived(semanticFiltered.events);
+	const showCards = $derived(investigation.result !== null && !investigation.filling);
 	const railGroups = $derived.by(() => {
 		if (investigation.result === null) return investigation.facetGroups;
 		return [
@@ -116,6 +117,9 @@
 			: degradedLegs.length === 1
 				? `relay ${degradedLegs[0].url} ${degradedLegs[0].status} — showing results from the rest`
 				: `${degradedLegs.length} relays degraded (${degradedLegs.map((l) => l.status).join(' · ')}) — showing results from the rest`
+	);
+	const footerNotes = $derived(
+		[invalidNote, ...degradedLegs.map((l) => `relay ${l.url} ${l.status}`)].filter((s) => s !== '')
 	);
 	const capabilityNote = $derived.by(() => {
 		const items = investigation.notices.filter((n) => n.kind === 'capability');
@@ -272,27 +276,20 @@
 												onAskDifferently={() => shell.home()}
 											/>
 										{:else}
-											{#each investigation.result !== null ? viewCards : investigation.skeletons as card (card.id)}
+											{#each showCards ? viewCards : investigation.skeletons as card (card.id)}
 												<div class="w-full max-w-[760px] shrink-0">
 													<ResultCard {card} />
 												</div>
 											{/each}
 										{/if}
 									</div>
-									{#if investigation.result !== null}
+									{#if footerNotes.length > 0}
 										<!-- footer ledger (issue #38 S1): degraded legs +
-											invalid-skipped count — the breadcrumb bar owns
-											fetched/truncation (BIBLE J2); the banner lane
-											stays for actionable warnings -->
+											invalid-skipped count — breadcrumb bar owns
+											fetched/truncation (BIBLE J2). Absent notes =
+											absent strip (no empty hairline reserve). -->
 										<div class="shrink-0 border-t border-line px-4 py-1.5">
-											<span class="font-mono text-[10.5px] text-ink-3">
-												{[
-													invalidNote,
-													...degradedLegs.map((l) => `relay ${l.url} ${l.status}`)
-												]
-													.filter((s) => s !== '')
-													.join(' · ')}
-											</span>
+											<span class="font-mono text-[10.5px] text-ink-3">{footerNotes.join(' · ')}</span>
 										</div>
 									{/if}
 								</div>

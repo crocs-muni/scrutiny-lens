@@ -36,19 +36,21 @@
 <div class="border-b border-line last:border-0">
 	<!-- header: chevron collapse + mono prefix + distinct-value count -->
 	<div class="flex items-center gap-0.5 pb-0.5">
-		<button
-			type="button"
-			class="flex flex-1 items-center gap-1.5 rounded-[6px] px-1 py-1 text-left hover:bg-inset"
-			onclick={() => (open = !open)}
-		>
-			<IconChevronDown
-				size={12}
-				stroke={1.5}
-				class="shrink-0 text-ink-3 transition-transform duration-150 {open ? 'rotate-0' : '-rotate-90'}"
-			/>
-			<span class="font-mono text-[11px] uppercase tracking-wide text-ink">{group.prefix}</span>
-			<span class="ml-auto font-mono text-[10.5px] tabular-nums text-ink-3">{total}</span>
-		</button>
+	<button
+		type="button"
+		class="flex flex-1 items-center gap-1.5 rounded-[6px] px-1 py-1 text-left hover:bg-inset"
+		onclick={() => (open = !open)}
+	>
+		<IconChevronDown
+			size={11}
+			stroke={1.5}
+			class="shrink-0 text-ink-3 transition-transform duration-150 {open ? 'rotate-0' : '-rotate-90'}"
+		/>
+		<!-- hierarchy: the GROUP header is the quietest level (facet-filter
+			pattern canon) — values command the row; the header whispers -->
+		<span class="font-mono text-[10.5px] uppercase tracking-[0.08em] text-ink-3">{group.prefix}</span>
+		<span class="ml-auto font-mono text-[10.5px] tabular-nums text-ink-3">{total}</span>
+	</button>
 		{#if hasSelection && onClearGroup}
 			<button
 				type="button"
@@ -72,7 +74,7 @@
 					onclick={() => onToggle(v.value)}
 				>
 					<span
-						class="flex h-[17px] w-[17px] shrink-0 items-center justify-center rounded-[5px] {selected.has(v.value)
+						class="flex h-[18px] w-[18px] rounded-[6px] shrink-0 items-center justify-center {selected.has(v.value)
 							? 'bg-accent text-white'
 							: 'border-[1.5px] border-line-strong bg-surface'}"
 					>
@@ -81,7 +83,7 @@
 						{/if}
 					</span>
 					<span class="truncate text-[14px] {selected.has(v.value) ? 'text-ink' : 'text-ink-2'}">{v.value}</span>
-					<span class="ml-auto font-mono text-[12px] tabular-nums text-ink-2">{v.count}</span>
+					<span class="ml-auto font-mono text-[11.5px] tabular-nums text-ink-3">{v.count}</span>
 				</button>
 			{/each}
 			{#if hidden > 0}

@@ -16,48 +16,12 @@
    from src/app.css.
    ============================================================ */
 
-@font-face {
-  font-family: 'Inter';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('$lib/assets/fonts/inter-latin-400-normal.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Inter';
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url('$lib/assets/fonts/inter-latin-500-normal.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Inter';
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url('$lib/assets/fonts/inter-latin-600-normal.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('$lib/assets/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url('$lib/assets/fonts/jetbrains-mono-latin-500-normal.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url('$lib/assets/fonts/jetbrains-mono-latin-600-normal.woff2') format('woff2');
-}
+
+
+
+
+
+
 
 :root {
   /* surfaces — cool, blue-tinted neutrals */
@@ -109,11 +73,10 @@
   --shadow-overlay: 0 0 0 1px var(--line), var(--shadow-lg);
   --shadow-inset-field: inset 0 1px 2px oklch(0 0 0 / 0.12);
 
-  /* type faces — vendored woff2 (spec §1: every asset self-hosted). The
-   * board canon is Inter (body) + JetBrains Mono (machine); font-weight
-   * utilities map onto the vendored 400/500/600 files. */
-  --font-inter: 'Inter', system-ui, sans-serif;
-  --font-mono-face: 'JetBrains Mono', monospace;
+  /* type faces — self-hosted convention until the owner picks final faces:
+   * stack-first (no third-party fetch), board families resolver later. */
+  --font-inter: ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  --font-mono-face: ui-monospace, 'Cascadia Mono', 'SF Mono', Consolas, 'Liberation Mono', monospace;
 
 
 
