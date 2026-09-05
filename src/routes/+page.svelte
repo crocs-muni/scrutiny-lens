@@ -17,7 +17,12 @@
 	import ResultsEmpty from '$lib/components/ui/ResultsEmpty.svelte';
 	import ResultsError from '$lib/components/ui/ResultsError.svelte';
 	import { applyFacets, cohortLine } from '$lib/pipeline/cards';
-	import { visibleCards } from '$lib/results';
+	import {
+		afterSemantics,
+		iTagSelections,
+		semanticGroups,
+		visibleCards
+	} from '$lib/results';
 	import SidebarRecents from '$lib/components/ui/SidebarRecents.svelte';
 	import DetailDrawer from '$lib/components/shell/DetailDrawer.svelte';
 	import ChatColumn from '$lib/components/shell/ChatColumn.svelte';
@@ -28,15 +33,24 @@
 	const drawerMax = $derived(Math.max(240, centerHeight - 120));
 
 	// — Results surface derivations (#38) —
-	const viewCards = $derived.by(() => {
+	// i-tag filter first, then the semantic axes (type/status/interpretation,
+	// BIBLE J2): the same OR-within/AND-across rule applies both (spec §3).
+	const semanticFiltered = $derived.by(() => {
 		const session = investigation.result;
-		if (session === null) return [];
-		return visibleCards(session.admitted, investigation.selections, investigation.cards);
+		if (session === null) return { events: [], cards: [] };
+		const tagSel = iTagSelections(investigation.selections);
+		const taggedEvents = applyFacets(session.admitted, tagSel);
+		const taggedCards = visibleCards(session.admitted, tagSel, investigation.cards);
+		return afterSemantics(taggedEvents, taggedCards, investigation.selections);
 	});
-	const viewEvents = $derived.by(() => {
-		const session = investigation.result;
-		if (session === null) return [];
-		return applyFacets(session.admitted, investigation.selections);
+	const viewCards = $derived(semanticFiltered.cards);
+	const viewEvents = $derived(semanticFiltered.events);
+	const railGroups = $derived.by(() => {
+		if (investigation.result === null) return investigation.facetGroups;
+		return [
+			...semanticGroups(investigation.result.admitted, investigation.cards),
+			...investigation.facetGroups
+		];
 	});
 	const cohort = $derived(viewCards.length === 0 ? '' : cohortLine(viewCards, viewEvents));
 	const fetched = $derived(investigation.slices.reduce((sum, s) => sum + s.received, 0));
@@ -160,7 +174,7 @@
 			bind:clientHeight={centerHeight}
 			class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-window bg-surface shadow-card"
 		>
-			<div class="flex min-h-0 flex-1 flex-col p-6">
+			<div class="flex min-h-0 flex-1 flex-col {shell.view === 'results' ? '' : 'p-6'}">
 				{#if shell.view === 'search'}
 					<!-- J1 hero (issue #37) — the trace (#36) and results (#38)
 					surfaces take over the center stage after submit. -->
@@ -172,9 +186,20 @@
 						/>
 					</div>
 					{:else if shell.view === 'results'}
-					<!-- The results surface (#38): trace (36) on top, then facet
-						rail + cohort + cards; §4 edge states replace the body. -->
+					<!-- The results surface (#38): BIBLE J2 anatomy — 44px breadcrumb
+						bar spans the whole window; rail + cards below; §4 edge
+						states replace the body. -->
 					{#key shell.session?.id}
+						<!-- BIBLE J2 header bar: full window width, 44px hairline -->
+						<div class="flex h-11 shrink-0 items-center gap-2 border-b border-line px-4">
+							<span class="text-[12.5px] text-ink-2">Results</span>
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="text-ink-2"><path d="M9 6l6 6-6 6"/></svg>
+							<span class="min-w-0 truncate text-[13px] font-semibold text-ink">{shell.session?.title ?? ''}</span>
+							<span class="flex-1"></span>
+							<span class="shrink-0 font-mono text-[11px] text-ink-2">
+								fetched {fetched}{truncated ? ' · relays may hold more' : ''}
+							</span>
+						</div>
 						{#if relayDead}
 							<!-- spec §4: all relays dead — error screen, never demo data -->
 							<div class="flex min-h-0 w-full flex-1 flex-col items-center justify-center p-4">
@@ -190,22 +215,23 @@
 							</div>
 						{:else}
 							<div class="flex min-h-0 w-full flex-1">
-								{#if investigation.facetGroups.length > 0}
+								{#if railGroups.length > 0}
 									{#if railOpen}
 										<!-- facet rail: deterministic counts (spec §3, never AI) -->
 										<div class="flex w-[216px] shrink-0 flex-col overflow-hidden border-r border-line">
+											<!-- BIBLE J2: 28×28 collapse pill in the rail header row -->
 											<div class="flex shrink-0 items-center justify-end px-3 pt-2">
 												<button
 													type="button"
 													aria-label="Collapse facet rail"
-													class="font-mono text-[10px] text-ink-3 hover:text-ink"
+													class="flex h-7 w-7 items-center justify-center rounded-[7px] border border-line bg-surface text-ink-2 hover:bg-inset"
 													onclick={() => (railOpen = false)}
 												>
-													hide
+													<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
 												</button>
 											</div>
 											<FacetRail
-												groups={investigation.facetGroups}
+												groups={railGroups}
 												selections={investigation.selections}
 												onToggle={(p, v) => investigation.toggleFacet(p, v)}
 												onClearGroup={(p) => investigation.clearFacet(p)}
@@ -274,14 +300,13 @@
 										{/if}
 									</div>
 									{#if investigation.result !== null}
-										<!-- footer ledger (issue #38 S1): fetched N (+ truncation),
-											invalid-skipped count, degraded relay legs — the banner
-											lane stays for actionable warnings -->
+										<!-- footer ledger (issue #38 S1): degraded legs +
+											invalid-skipped count — the breadcrumb bar owns
+											fetched/truncation (BIBLE J2); the banner lane
+											stays for actionable warnings -->
 										<div class="shrink-0 border-t border-line px-4 py-1.5">
 											<span class="font-mono text-[10.5px] text-ink-3">
 												{[
-													`fetched ${fetched}`,
-													truncated ? '(relays may hold more)' : '',
 													invalidNote,
 													...degradedLegs.map((l) => `relay ${l.url} ${l.status}`)
 												]

@@ -6,7 +6,7 @@
 // to eventId+model, not to the current selection).
 
 import { describe, expect, it } from 'vitest';
-import { visibleCards } from '$lib/results';
+import { afterSemantics, semanticGroups, visibleCards } from '$lib/results';
 import type { ProductCard } from '$lib/pipeline/cards';
 
 function event(id: string, tags: string[][], content = '') {
@@ -38,7 +38,7 @@ const ADMITTED = [productA, productB];
 
 const cardA: ProductCard = {
 	id: productA.id,
-	typeTag: 'scrutiny-product',
+	typeTag: 'scrutiny-product', createdAt: 1700000000,
 	pubkey: productA.pubkey,
 	title: 'AI title for A',
 	snippet: 'AI snippet',
@@ -52,7 +52,7 @@ const cardA: ProductCard = {
 };
 const cardB: ProductCard = {
 	id: productB.id,
-	typeTag: 'scrutiny-product',
+	typeTag: 'scrutiny-product', createdAt: 1700000000,
 	pubkey: productB.pubkey,
 	title: 'cve:CVE-2025-2',
 	snippet: undefined,
@@ -92,5 +92,34 @@ describe('visibleCards (spec §3)', () => {
 
 	it('filtering OUT all cards yields an empty set honestly', () => {
 		expect(visibleCards(ADMITTED, { vendor: new Set(['nobody']) }, ALL_CARDS)).toHaveLength(0);
+	});
+});
+
+describe('semantic facet axes (BIBLE J2: type/status/interpretation)', () => {
+	it('semanticGroups counts events for type and cards for the card axes', () => {
+		const groups = semanticGroups(ADMITTED, ALL_CARDS);
+		expect(groups.map((g) => g.prefix)).toEqual(['type', 'status', 'interpretation']);
+		expect(groups[0].values).toEqual([
+			{ value: 'product', count: 2 },
+			{ value: 'metadata', count: 0 }
+		]);
+		expect(groups[1].values).toEqual([
+			{ value: 'active', count: 1 },
+			{ value: 'retracted', count: 1 }
+		]);
+		expect(groups[2].values).toEqual([
+			{ value: 'interpreted', count: 1 },
+			{ value: 'not interpreted', count: 1 }
+		]);
+	});
+
+	it('status selects one polarity at a time, OR within the axis', () => {
+		expect(afterSemantics(ADMITTED, ALL_CARDS, { status: new Set(['retracted']) }).cards.map((c) => c.id)).toEqual([cardB.id]);
+		expect(afterSemantics(ADMITTED, ALL_CARDS, { status: new Set(['active', 'retracted']) }).cards).toHaveLength(2);
+	});
+
+	it('type=metadata drains cards; interpretation selects by fill state', () => {
+		expect(afterSemantics(ADMITTED, ALL_CARDS, { type: new Set(['metadata']) }).cards).toHaveLength(0);
+		expect(afterSemantics(ADMITTED, ALL_CARDS, { interpretation: new Set(['not interpreted']) }).cards.map((c) => c.id)).toEqual([cardB.id]);
 	});
 });

@@ -165,8 +165,8 @@ describe('computeFacets + applyFacets (issue #28)', () => {
 describe('cohortLine (spec §3: by event type)', () => {
 	it('counts products from cards and metadata from events', () => {
 		const cards: ProductCard[] = [
-			{ id: '1', typeTag: 'scrutiny-product', pubkey: 'aa', title: 't', identifiers: ['cve:CVE-1'], retracted: false, boundMetadata: 1, files: 0, updates: 1, contentStart: '', interpreted: false },
-			{ id: '2', typeTag: 'scrutiny-product', pubkey: 'bb', title: 't', identifiers: ['cve:CVE-2'], retracted: true, boundMetadata: 0, files: 0, updates: 0, contentStart: '', interpreted: false }
+			{ id: '1', typeTag: 'scrutiny-product', createdAt: 1700000000, pubkey: 'aa', title: 't', identifiers: ['cve:CVE-1'], retracted: false, boundMetadata: 1, files: 0, updates: 1, contentStart: '', interpreted: false },
+			{ id: '2', typeTag: 'scrutiny-product', createdAt: 1700000000, pubkey: 'bb', title: 't', identifiers: ['cve:CVE-2'], retracted: true, boundMetadata: 0, files: 0, updates: 0, contentStart: '', interpreted: false }
 		];
 		const line = cohortLine(cards, [
 			event('a1'),

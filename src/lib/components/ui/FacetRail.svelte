@@ -53,7 +53,7 @@
 		</div>
 	{/if}
 
-	<div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
+	<div class="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:none]">
 		{#each rendered as { group, selected } (group.prefix)}
 			<FacetGroup
 				{group}
