@@ -56,9 +56,10 @@
 	const cohort = $derived(viewCards.length === 0 ? '' : cohortLine(viewCards, viewEvents));
 	const fetched = $derived(investigation.slices.reduce((sum, s) => sum + s.received, 0));
 	const truncated = $derived(investigation.notices.some((n) => n.kind === 'truncated'));
-	const invalidNote = $derived(
-		investigation.notices.find((n) => n.kind === 'invalid-skipped')?.message ?? ''
-	);
+	// Owner ruling 2026-09-09: the 'N invalid skipped' ledger is removed from
+	// the results surface (§4 line to follow via the docs ritual); the
+	// pipeline still emits the notice — it surfaces only inside the trace's
+	// literal layer.
 	// §4 edge states: done with zero surfaced cards — either nothing matched
 	// at all (relays confirmed searchable → honest "nothing matched") or the
 	// facet selection narrowed everything away (filtered chip variant).
@@ -119,7 +120,7 @@
 				: `${degradedLegs.length} relays degraded (${degradedLegs.map((l) => l.status).join(' · ')}) — showing results from the rest`
 	);
 	const footerNotes = $derived(
-		[invalidNote, ...degradedLegs.map((l) => `relay ${l.url} ${l.status}`)].filter((s) => s !== '')
+		degradedLegs.map((l) => `relay ${l.url} ${l.status}`)
 	);
 	const capabilityNote = $derived.by(() => {
 		const items = investigation.notices.filter((n) => n.kind === 'capability');

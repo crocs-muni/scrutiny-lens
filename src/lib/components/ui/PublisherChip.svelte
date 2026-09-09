@@ -138,7 +138,9 @@
 			{/if}
 			{#if profile?.name}
 				<!-- human prose → sans; truncate long author names -->
-				<span class="max-w-[140px] truncate font-sans text-[11.5px] leading-none text-ink">
+				<!-- line-height 1.3: leading-none clips the "g"/"y" descender under
+			truncate's overflow-hidden (owner report 2026-09-09) -->
+			<span class="max-w-[140px] truncate font-sans text-[11.5px] leading-[1.3] text-ink">
 					{profile.name}
 				</span>
 			{:else}
