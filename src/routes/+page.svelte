@@ -231,7 +231,9 @@
 										/>
 									</div>
 								{/if}
-								<div class="flex min-h-0 min-w-0 flex-1 flex-col">
+								<!-- one rail for the whole column: banners, cohort, trace and
+									cards share this 760px track (owner geometry ruling) -->
+								<div class="mx-auto flex min-h-0 w-full max-w-[760px] flex-1 flex-col">
 									<!-- §4 honesty lane: every banner one dismissal-keyed note; the
 										no-key hint stays textual (Ctrl+, works) — these are notices,
 										not buttons. Per-class roll-up (review finding): per-leg
@@ -244,7 +246,7 @@
 										<!-- header: cohort only (spec §3); sits on the card-column
 											rail like the banners (one geometry: centered 760) —
 											the breadcrumb bar owns fetched/truncation -->
-										<div class="mx-auto flex w-full max-w-[760px] items-baseline gap-3 px-3 pb-1 pt-2">
+										<div class="flex items-baseline gap-3 px-2 pb-1 pt-2">
 											<span class="font-mono text-[12.5px] font-semibold text-ink">{cohort}</span>
 											<span class="flex-1"></span>
 										</div>
@@ -321,7 +323,7 @@
 	{#if show && !dismissed.has(key)}
 		<!-- banners align to the card column width (J2 geometry: one rail, one
 			column — nothing spans edge-to-edge below the breadcrumb bar) -->
-		<div class="mx-auto w-full max-w-[760px] px-3 pt-1">
+		<div class="px-2 pt-1">
 			<NoticeBanner {message} onDismiss={() => dismiss(key)} />
 		</div>
 	{/if}
