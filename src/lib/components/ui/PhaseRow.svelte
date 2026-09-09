@@ -244,7 +244,7 @@
 				<div class="mb-2.5 grid grid-cols-[24px_1fr] gap-2.5 px-2.5">
 					<span aria-hidden="true" class="mx-auto h-full w-px bg-line"></span>
 					<div class="flex flex-col gap-1.5">
-						{#each ticks as tick, j (tick.text)}
+						{#each ticks as tick, j (j)}
 							<TraceTick
 								{tick}
 								style={open

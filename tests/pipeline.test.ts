@@ -218,6 +218,29 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 		)).toBe(true);
 	});
 
+	it('the fallback notice reaches subscribers exactly once (incremental emit + final flush dedupe)', async () => {
+		// §4: the translate fallback is emitted as it's produced so the live
+		// trace shows it early. The final flush must not re-ship it — a
+		// double-emit lands verbatim in investigation.notices and crashes the
+		// trace's keyed render (each_key_duplicate).
+		const transport = new FakeTransport({ 'wss://a': { events: [] } });
+		const emitted: string[] = [];
+		await runSearch({
+			question: 'ROCA chips',
+			relays: ['wss://a'],
+			provider: PROVIDER,
+			callLLM: llmPlan('garbage not json'),
+			transport,
+			admit: () => ({ ok: true }),
+			emit: (e) => {
+				if (e.type === 'notice' && e.notice.message.includes('plain-text search of your words')) {
+					emitted.push(e.notice.message);
+				}
+			}
+		});
+		expect(emitted).toHaveLength(1);
+	});
+
 	it('mixed branch: failing AI + direct identifiers → identifier-only notice, never "your words"', async () => {
 		const transport = new FakeTransport({ 'wss://a': { events: [] } });
 		const session = await runSearch({

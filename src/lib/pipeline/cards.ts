@@ -13,7 +13,7 @@ import { indexerFilter, searchFilter, fullScanFilter, tTags, tagValues } from '$
 import type { NostrEvent as FabricEvent } from '$lib/fabric';
 import type { ProviderOverrideInput } from '$lib/ai/provider';
 import { getInterpretation, saveInterpretation } from '$lib/db';
-import { generateStructured, type CallLLM } from '$lib/ai/output';
+import { generateStructured, type AIKind, type CallLLM } from '$lib/ai/output';
 import { z } from 'zod';
 
 export interface ProductCard {
@@ -161,6 +161,11 @@ export interface FillCardsOptions {
 	provider: ProviderOverrideInput;
 	callLLM: CallLLM;
 	signal?: AbortSignal;
+	/** Reports the settle-kind when the fill call fails (unreachable/timeout →
+	 * transport; schema_failure → the endpoint answered but output didn't
+	 * conform). Lets the UI state the truth instead of guessing from
+	 * interpreted===0 (spec §2 never-lie on the AI lane). */
+	onFailure?: (kind: AIKind) => void;
 }
 
 const CLIP_LIMIT = { title: 120, snippet: 300 };
@@ -217,6 +222,11 @@ export async function fillCards(cards: ProductCard[], opts: FillCardsOptions): P
 	const drafts = new Map<string, { id: string; title: string; snippet: string }>();
 	if (result.ok) {
 		for (const draft of result.result) drafts.set(draft.id, draft);
+	} else {
+		// Never-lie: surface WHY the fill failed so the banner distinguishes a
+		// dead endpoint (unreachable/timeout) from one that answered but whose
+		// output didn't conform (schema_failure).
+		opts.onFailure?.(result.kind);
 	}
 
 	return cards.map((card, i) => {

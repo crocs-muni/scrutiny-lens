@@ -221,6 +221,28 @@ describe('fillCards (issue #28, spec §2)', () => {
 		expect(filled[0].title).toBe('cve:CVE-2017-15361');
 	});
 
+	it('reports schema_failure (not unreachable) when the endpoint answers but junk is returned', async () => {
+		const card = assembleCards(graphWith(['prod-1']), [event('prod-1')])[0];
+		// The endpoint WAS reachable — it just answered with prose that never
+		// conforms. The kind must say that, so the banner isn't "unreachable".
+		const callLLM = async () => 'Here is the filled card: sure, here you go.';
+		const kinds: unknown[] = [];
+		const filled = await fillCards([card], { provider: PROVIDER, callLLM, onFailure: (k) => kinds.push(k) });
+		expect(filled[0].interpreted).toBe(false);
+		expect(kinds).toContain('schema_failure');
+		expect(kinds).not.toContain('unreachable');
+	});
+
+	it('reports unreachable when the endpoint does not answer', async () => {
+		const card = assembleCards(graphWith(['prod-1']), [event('prod-1')])[0];
+		const callLLM = async () => {
+			throw new Error('ECONNREFUSED');
+		};
+		const kinds: unknown[] = [];
+		await fillCards([card], { provider: PROVIDER, callLLM, onFailure: (k) => kinds.push(k) });
+		expect(kinds).toEqual(['unreachable']);
+	});
+
 	it('writes a validated interpretation into the cache keyed (eventId, model)', async () => {
 		const card = assembleCards(graphWith(['prod-1']), [event('prod-1')])[0];
 		const callLLM = async () =>

@@ -81,20 +81,34 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 
 	// The literal layer (spec §2 rule 6): per-slice receipts verbatim —
 	// route label, relay, counts — plus honesty cells for scan fallbacks
-	// and truncation. Nothing is smoothed over.
-	const ticks: TraceTick[] = slices.map((s) => ({
+	// and truncation. Nothing is smoothed over. Each tick is deduped by
+	// exact text (first wins, order preserved): PhaseRow keys every tick by
+	// text, so a repeated message (e.g. the same notice reaching the run
+	// twice) would throw each_key_duplicate and brick the whole trace. The
+	// same message legitimately lives in the banner AND here, but never
+	// twice within this row.
+	const ticks: TraceTick[] = [];
+	const seenText = new Set<string>();
+	const addTick = (tick: TraceTick): void => {
+		if (seenText.has(tick.text)) return;
+		seenText.add(tick.text);
+		ticks.push(tick);
+	};
+	for (const s of slices) {
 		// Non-ok legs render the status verbatim instead of pretending to be
 		// an empty result (review P1): dead relay ≠ no matches (spec §3/§4).
-		text:
-			s.status === 'ok'
-				? `${s.route} ${hostOf(s.url)} → ${s.received} records`
-				: `relay ${hostOf(s.url)} ${s.status} · no events received`,
-		// Fullscan legs are the honesty cells (spec §3: the relay couldn't
-		// search, so we scanned) — amber, never silent.
-		warn: s.status !== 'ok' || s.route.endsWith(':fullscan')
-	}));
+		addTick({
+			text:
+				s.status === 'ok'
+					? `${s.route} ${hostOf(s.url)} → ${s.received} records`
+					: `relay ${hostOf(s.url)} ${s.status} · no events received`,
+			// Fullscan legs are the honesty cells (spec §3: the relay couldn't
+			// search, so we scanned) — amber, never silent.
+			warn: s.status !== 'ok' || s.route.endsWith(':fullscan')
+		});
+	}
 	for (const notice of notices) {
-		ticks.push({ text: notice.message, warn: notice.kind === 'capability' || notice.kind === 'truncated' });
+		addTick({ text: notice.message, warn: notice.kind === 'capability' || notice.kind === 'truncated' });
 	}
 	// Three rows (spec §2.1): interpret (translate) → sources (fetch) →
 	// decouple (admit/reject + descriptions fill). Status is state-derived:

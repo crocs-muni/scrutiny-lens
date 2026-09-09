@@ -164,6 +164,19 @@ describe('interpretCards batch', () => {
 		expect(res.kind).toBe('unreachable');
 	});
 
+	it('accepts a ```json-fenced card-fill payload (tolerant parse)', async () => {
+		const graphs = [graph(0), graph(1)];
+		const { call, calls } = fakeLLM(
+			'Here is the filled page:\n```json\n' + validPage(2) + '\n```'
+		);
+		const res = await interpretCards({ graphs, query: 'BSI EAL4 certificate', provider: PROVIDER, callLLM: call });
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		expect(calls).toHaveLength(1);
+		expect(res.result.cards).toHaveLength(2);
+		expect(res.result.cards[0].title).toBe('Card 0');
+	});
+
 	it('returns schema_failure when the whole page response is structurally invalid', async () => {
 		const call: CallLLM = async () => '{"notcards":[]}';
 		const res = await interpretCards({ graphs: [graph(0)], query: 'cve', provider: PROVIDER, callLLM: call });

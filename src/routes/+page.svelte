@@ -7,7 +7,7 @@
 
 	import { Tooltip } from 'bits-ui';
 	import { handleShellKeydown, shell } from '$lib/shell.svelte';
-	import { investigation } from '$lib/investigation.svelte';
+	import { fillNote, investigation } from '$lib/investigation.svelte';
 	import { settings } from '$lib/settings.svelte';
 	import SearchHero from '$lib/components/ui/SearchHero.svelte';
 	import TaskTrace from '$lib/components/ui/TaskTrace.svelte';
@@ -85,15 +85,19 @@
 	);
 	// The fill settled with fewer interpretations than cards (AI down, slow,
 	// or garbage on that chunk) — spec §4: fallback + dismissible banner, full
-	// OR partial degradation. Message stays numeric — never "broken".
+	// OR partial degradation. Message stays numeric — never "broken" — and the
+	// zero-interpreted text is keyed on the real fill kind: an endpoint that
+	// answered but didn't conform is not "unreachable" (spec §2 never-lie).
 	const aiNote = $derived(
 		investigation.result !== null &&
 			!investigation.filling &&
 			investigation.fillStats.total > 0 &&
 			investigation.fillStats.interpreted < investigation.fillStats.total
-			? investigation.fillStats.interpreted === 0
-				? 'AI unreachable — cards show the raw events'
-				: `AI slow — ${investigation.fillStats.interpreted} of ${investigation.fillStats.total} cards interpreted · uninterpreted cards show the raw events`
+			? fillNote(
+					investigation.fillStats.interpreted,
+					investigation.fillStats.total,
+					investigation.fillFailure
+				)
 			: ''
 	);
 	// §4 translate-fallback is surfaced by the pipeline's capability notice

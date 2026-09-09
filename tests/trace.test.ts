@@ -129,6 +129,29 @@ describe('derivePhaseRows — honesty cells', () => {
 		expect(ticks.find((t) => t.text.includes('local cache'))?.warn).toBe(false);
 		expect(ticks.find((t) => t.text.includes('lacks search'))?.warn).toBe(true);
 	});
+
+	it('a notice duplicated in the input renders once in the row (each_key_duplicate guard)', () => {
+		// §4 translate-fallback: the same degraded message can reach the run
+		// twice (incremental emit + final flush). PhaseRow keys ticks by text,
+		// so a repeat would throw each_key_duplicate; the row dedupes, keeping
+		// the first occurrence in place.
+		const msg = 'AI translate degraded (schema_failure) — falling back to a plain-text search of your words';
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'done',
+			slices: [{ url: 'wss://a', received: 2, route: 'text:x', rejected: 0, status: 'ok' }],
+			notices: [
+				{ kind: 'capability', message: msg },
+				{ kind: 'capability', message: msg }
+			]
+		});
+		const texts = rows[1].ticks.map((t) => t.text);
+		expect(texts.filter((t) => t === msg)).toHaveLength(1);
+		// first occurrence is kept, slice receipt untouched and ordered before it
+		expect(texts[0]).toContain('records');
+		expect(texts[1]).toBe(msg);
+		expect(texts).toHaveLength(2);
+	});
 });
 
 describe('decouple row — no fill attempt (spec §2.1 rule 6)', () => {

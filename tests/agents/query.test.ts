@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { CallLLM, CallLLMArgs } from '$lib/ai/output';
+import { extractJsonObject } from '$lib/ai/output';
 import {
 	GUIDED_PREFIXES,
 	detectIdentifiers,
@@ -139,6 +140,43 @@ describe('translateQuestion — prose goes through one gated call (≤3)', () =>
 			{ kind: 'tag', value: 'cve:CVE-2017-15361', source: 'identifier' },
 			{ kind: 'text', value: 'Infineon chips', source: 'ai' }
 		]);
+	});
+});
+
+describe('translateQuestion — tolerant JSON parsing of endpoint answers', () => {
+	it('accepts a ```json-fenced payload', async () => {
+		const { call } = fakeLLM(`\`\`\`json
+[{"kind":"text","value":"ROCA smartcard"}]
+\`\`\``);
+		const res = await translateQuestion({ question: 'ROCA chips', provider: PROVIDER, callLLM: call });
+		expect(res.ok && res.result.searches).toEqual([{ kind: 'text', value: 'ROCA smartcard', source: 'ai' }]);
+	});
+
+	it('accepts prose prefix followed by a JSON tail', async () => {
+		const { call } = fakeLLM(
+			'Here are the searches I would run:\n[{"kind":"tag","value":"cve:CVE-2017-15361"}]'
+		);
+		const res = await translateQuestion({ question: 'ROCA chips', provider: PROVIDER, callLLM: call });
+		expect(res.ok && res.result.searches).toEqual([{ kind: 'tag', value: 'cve:CVE-2017-15361', source: 'ai' }]);
+	});
+
+	it('accepts nested braces including quoted-brace strings', async () => {
+		// The quoted "note":"a } b { c" braces must not terminate the object early.
+		const { call } = fakeLLM(
+			'[{"kind":"tag","value":"vendor:bsi","note":"a } b { c"},{"kind":"text","value":"EAL4"}]'
+		);
+		const res = await translateQuestion({ question: 'ROCA chips', provider: PROVIDER, callLLM: call });
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		expect(res.result.searches).toEqual([
+			{ kind: 'tag', value: 'vendor:bsi', source: 'ai' },
+			{ kind: 'text', value: 'EAL4', source: 'ai' }
+		]);
+	});
+
+	it('pure prose yields null from the extractor (no coercion)', () => {
+		expect(extractJsonObject('The model answered in prose, no JSON at all.')).toBeNull();
+		expect(extractJsonObject('')).toBeNull();
 	});
 });
 

@@ -14,7 +14,7 @@
 // BYOK: the provider override passes the memory-only key straight through —
 // it is never persisted (spec §6).
 
-import { defaultCallLLM, type CallLLM } from '$lib/ai/output';
+import { defaultCallLLM, type AIKind, type CallLLM } from '$lib/ai/output';
 import type { ProviderOverrideInput } from '$lib/ai/provider';
 import { createTransport, type Transport } from '$lib/net/transport';
 import {
@@ -58,6 +58,10 @@ class Investigation {
 	/** Write-descriptions progress for the trace's fifth row (§4 partial). */
 	filling = $state(false);
 	fillStats = $state<{ interpreted: number; total: number }>({ interpreted: 0, total: 0 });
+	/** Settle-kind of the fill lane (null = no fill failure recorded): lets the
+	 * results banner say why cards aren't interpreted — a dead endpoint vs one
+	 * that answered but whose output didn't conform (spec §2 never-lie). */
+	fillFailure = $state<AIKind | null>(null);
 	result = $state<SearchSession | null>(null);
 	/** Settled failure (never a deliberate abort); the §4 error surfaces
 	 * (#38) render from this. */
@@ -123,6 +127,7 @@ class Investigation {
 		this.selections = {};
 		this.filling = false;
 		this.fillStats = { interpreted: 0, total: 0 };
+		this.fillFailure = null;
 		this.elapsedMs = null;
 		this.running = true;
 		const startedAt = performance.now();
@@ -260,7 +265,18 @@ class Investigation {
 					// rethrows aborted-signal errors, so without this catch the
 					// timer's abort would escape into start()'s error path on a
 					// healthy run and pin filling=true forever (spec §4).
-					filled = await fillCards(chunk, { provider, callLLM, signal: timer });
+					filled = await fillCards(chunk, {
+						provider,
+						callLLM,
+						signal: timer,
+						// schema_failure means the endpoint ANSWERED but its output
+						// didn't conform — that fact is sticky so a later transport
+						// failure on another lane can't overwrite the truth that the
+						// AI was reachable (spec §2 never-lie).
+						onFailure: (kind) => {
+							this.fillFailure = this.fillFailure === 'schema_failure' ? 'schema_failure' : kind;
+						}
+					});
 				} catch {
 					// rule-5 fallback for this chunk; the lane keeps going.
 				}
@@ -295,5 +311,23 @@ export function resetInvestigation(): void {
 	investigation.selections = {};
 	investigation.filling = false;
 	investigation.fillStats = { interpreted: 0, total: 0 };
+	investigation.fillFailure = null;
 	investigation.running = false;
+}
+
+/**
+ * Results-surface banner text for the card-fill lane (spec §6 deterministic
+ * wording — never AI-written). Distinguishes a dead endpoint (unreachable/
+ * timeout) from one that answered but produced non-conforming output
+ * (schema_failure): the latter must not be mislabeled "AI unreachable"
+ * (spec §2 never-lie in the owner's incident the endpoint WAS reachable).
+ */
+export function fillNote(interpreted: number, total: number, failure: AIKind | null): string {
+	if (total <= 0 || interpreted >= total) return '';
+	if (interpreted > 0) {
+		return `AI slow — ${interpreted} of ${total} cards interpreted · uninterpreted cards show the raw events`;
+	}
+	return failure === 'schema_failure'
+		? "AI output didn't conform — cards show the raw events"
+		: 'AI unreachable — cards show the raw events';
 }
