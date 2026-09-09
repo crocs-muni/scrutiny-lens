@@ -80,17 +80,21 @@
 			<span class="font-mono text-[11.5px] text-ink-3">expand trace</span>
 		</button>
 	{:else}
-		{#each rows as row, i (row.id)}
-			<PhaseRow
-				number={i + 1}
-				status={row.status}
-				label={row.label}
-				amount={row.counter}
-				ticks={row.ticks}
-				progress={row.progress}
-				onRetry={row.status === 'failed' ? retry : undefined}
-			/>
-		{/each}
+		<!-- List variant per canon TaskRows (owner ruling 2026-09-11): one
+			enclosing rounded-card with hairline-separated rows, not capsules. -->
+		<div class="self-start overflow-hidden rounded-card bg-surface shadow-card">
+			{#each rows as row, i (row.id)}
+				<PhaseRow
+					number={i + 1}
+					status={row.status}
+					label={row.label}
+					amount={row.counter}
+					ticks={row.ticks}
+					progress={row.progress}
+					onRetry={row.status === 'failed' ? retry : undefined}
+				/>
+			{/each}
+		</div>
 		{#if done}
 			<button
 				type="button"

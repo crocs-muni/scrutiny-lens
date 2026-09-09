@@ -181,10 +181,9 @@
 {/snippet}
 
 <div
-	class="trace-capsule self-stretch overflow-hidden bg-surface shadow-card transition-[border-radius,background-color] duration-300 hover:bg-inset {dimmed
+	class="trace-capsule self-stretch overflow-hidden border-b border-line transition-[background-color] duration-300 last:border-0 hover:bg-inset {dimmed
 		? 'opacity-55'
 		: ''}"
-	style:border-radius={open ? '14px' : '22px'}
 	style:animation={`fade-up 450ms cubic-bezier(0.23,1,0.32,1) ${(number - 1) * 80}ms both`}
 >
 	<button

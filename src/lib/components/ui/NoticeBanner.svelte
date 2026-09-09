@@ -15,7 +15,7 @@
 	let { message, onDismiss }: Props = $props();
 </script>
 
-<div class="flex items-start gap-2 rounded-[8px] border border-[oklch(0.93_0.05_60)] bg-orange-tint px-3 py-2">
+<div class="flex items-start gap-2 rounded-[8px] border border-orange-line bg-orange-tint px-3 py-2">
 	<IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-orange" />
 	<p class="flex-1 font-mono text-[12px] leading-relaxed text-orange">{message}</p>
 	<button

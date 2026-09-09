@@ -15,7 +15,7 @@
 </script>
 
 <div
-	class="flex max-w-[480px] items-center gap-2 rounded-[8px] border border-[oklch(0.93_0.05_60)] bg-orange-tint px-3 py-2 text-[12.5px] text-[oklch(0.47_0.10_61)]"
+	class="flex max-w-[480px] items-center gap-2 rounded-[8px] border border-orange-line bg-orange-tint px-3 py-2 text-[12.5px] text-orange"
 >
 	<IconAlertCircle size={14} stroke={2} class="shrink-0" />
 	<span>
