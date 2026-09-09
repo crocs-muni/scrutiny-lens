@@ -241,9 +241,10 @@
 									{@render note(aiNote !== '', 'ai-note', aiNote)}
 									{@render note(degradedNote !== '', 'degraded', degradedNote)}
 									{#if investigation.result !== null}
-										<!-- header: cohort only (spec §3); the fetched/truncation
-											ledger rides the results footer per issue #38's S1 line -->
-										<div class="flex items-baseline gap-3 px-4 pb-1 pt-2">
+										<!-- header: cohort only (spec §3); sits on the card-column
+											rail like the banners (one geometry: centered 760) —
+											the breadcrumb bar owns fetched/truncation -->
+										<div class="mx-auto flex w-full max-w-[760px] items-baseline gap-3 px-3 pb-1 pt-2">
 											<span class="font-mono text-[12.5px] font-semibold text-ink">{cohort}</span>
 											<span class="flex-1"></span>
 										</div>
@@ -318,7 +319,9 @@
 
 {#snippet note(show: boolean, key: string, message: string)}
 	{#if show && !dismissed.has(key)}
-		<div class="px-4 pt-1">
+		<!-- banners align to the card column width (J2 geometry: one rail, one
+			column — nothing spans edge-to-edge below the breadcrumb bar) -->
+		<div class="mx-auto w-full max-w-[760px] px-3 pt-1">
 			<NoticeBanner {message} onDismiss={() => dismiss(key)} />
 		</div>
 	{/if}

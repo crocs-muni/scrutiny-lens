@@ -82,7 +82,9 @@
 	{:else}
 		<!-- List variant per canon TaskRows (owner ruling 2026-09-11): one
 			enclosing rounded-card with hairline-separated rows, not capsules. -->
-		<div class="self-start overflow-hidden rounded-card bg-surface shadow-card">
+		<!-- canon List chrome; full column width (canon's self-start only
+			serves its own fixed-width capsule column) -->
+		<div class="overflow-hidden rounded-card bg-surface shadow-card">
 			{#each rows as row, i (row.id)}
 				<PhaseRow
 					number={i + 1}
