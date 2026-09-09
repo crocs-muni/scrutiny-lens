@@ -243,9 +243,8 @@
 									{@render note(aiNote !== '', 'ai-note', aiNote)}
 									{@render note(degradedNote !== '', 'degraded', degradedNote)}
 									{#if investigation.result !== null}
-										<!-- header: cohort only (spec §3); sits on the card-column
-											rail like the banners (one geometry: centered 760) —
-											the breadcrumb bar owns fetched/truncation -->
+										<!-- header: cohort only (spec §3) — geometry lives on the
+											760px column parent; breadcrumb owns fetched/truncation -->
 										<div class="flex items-baseline gap-3 px-2 pb-1 pt-2">
 											<span class="font-mono text-[12.5px] font-semibold text-ink">{cohort}</span>
 											<span class="flex-1"></span>
@@ -321,9 +320,9 @@
 
 {#snippet note(show: boolean, key: string, message: string)}
 	{#if show && !dismissed.has(key)}
-		<!-- banners align to the card column width (J2 geometry: one rail, one
-			column — nothing spans edge-to-edge below the breadcrumb bar) -->
-		<div class="px-2 pt-1">
+		<!-- §4 honesty lane — the enclosing 760px track owns geometry (see
+			results column parent); nothing to align here -->
+		<div class="px-1 pt-1">
 			<NoticeBanner {message} onDismiss={() => dismiss(key)} />
 		</div>
 	{/if}
