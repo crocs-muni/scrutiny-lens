@@ -1,4 +1,4 @@
-// Trace derivation (issue #36, spec §2 rule 6): the five TaskRows phases
+// Trace derivation (issue #36, spec §2.1 rule 6): the three TaskRows phases
 // and their counters computed deterministically from the investigation's
 // pipeline state. AI writes nothing here — every label, counter, and tick
 // is arithmetic over real retrieval state. Kept UI-free so the mapping is
@@ -7,7 +7,7 @@
 import type { Phase, PipelineNotice } from '$lib/pipeline';
 import type { SearchRequest } from '$lib/ai/agents/query';
 
-export type RowStatus = 'pending' | 'running' | 'completed' | 'skipped';
+export type RowStatus = 'pending' | 'running' | 'completed' | 'skipped' | 'failed';
 
 export interface TraceTick {
 	text: string;
@@ -16,12 +16,16 @@ export interface TraceTick {
 }
 
 export interface PhaseRow {
-	id: 'question' | 'sources' | 'records' | 'organize' | 'descriptions';
+	id: 'interpret' | 'sources' | 'decouple';
 	label: string;
 	status: RowStatus;
 	/** Mono right counter (tabular-nums); empty while nothing real exists. */
 	counter: string;
 	ticks: TraceTick[];
+	/** 0..1 during row-3 fill (ring sweep); null otherwise. */
+	progress: number | null;
+	/** Failed-row retry wiring (TaskTrace binds investigation retry). */
+	onRetry?: () => void;
 }
 
 export interface TraceInput {
@@ -34,17 +38,15 @@ export interface TraceInput {
 	relayCount: number;
 	error: string | null;
 	/** Write-descriptions fill progress (#38): present once a fill attempt
-	 * started; `running` while chunks are in flight. Absent = no attempt
-	 * (no key/model — the row stays honestly skipped, spec §2 rule 5). */
+	 * started; `running` while chunks are in flight. Absent = no attempt —
+	 * row 3 then reports `not interpreted` (never a fabricated tally). */
 	descriptions?: { running: boolean; interpreted: number; total: number };
 }
 
 const LABELS: Record<PhaseRow['id'], string> = {
-	question: 'Read the question',
-	sources: 'Ask the sources',
-	records: 'Collect the records',
-	organize: 'Organize the picture',
-	descriptions: 'Write descriptions'
+	interpret: 'Interpreting query',
+	sources: 'Querying sources',
+	decouple: 'Decoupling and interpreting the events'
 };
 
 function hostOf(url: string): string {
@@ -94,35 +96,29 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 	for (const notice of notices) {
 		ticks.push({ text: notice.message, warn: notice.kind === 'capability' || notice.kind === 'truncated' });
 	}
-	// Row 5 decision tree (spec §2 rule 5 honesty): hoisted — it was two
-	// parallel 4-deep ternaries re-deciding the same tree (review finding).
+	// Three rows (spec §2.1): interpret (translate) → sources (fetch) →
+	// decouple (admit/reject + descriptions fill). Status is state-derived:
+	// an errored run settles the running row to 'failed' and never leaves a
+	// row spinning.
 	const d = input.descriptions;
-	let descStatus: RowStatus;
-	let descCounter: string;
-	if (failed) {
-		descStatus = 'skipped';
-		descCounter = '';
-	} else if (d === undefined) {
-		descStatus = done ? 'skipped' : 'pending';
-		descCounter = done ? 'not interpreted' : '';
-	} else if (d.running) {
-		descStatus = 'running';
-		descCounter = `${d.interpreted} of ${d.total}`;
-	} else if (done) {
-		descStatus = 'completed';
-		descCounter = `${d.interpreted} of ${d.total} interpreted`;
-	} else {
-		descStatus = 'pending';
-		descCounter = '';
-	}
 
 	const rows: PhaseRow[] = [
 		{
-			id: 'question',
-			label: LABELS.question,
-			status: done || phase === 'fetch' ? 'completed' : failed ? 'skipped' : phase === 'translate' ? 'running' : 'pending',
+			id: 'interpret',
+			label: LABELS.interpret,
+			status:
+				done || phase === 'fetch'
+					? 'completed'
+					: failed
+						? phase === 'translate'
+							? 'failed'
+							: 'skipped'
+						: phase === 'translate'
+							? 'running'
+							: 'pending',
 			counter: searchCounter(searches),
-			ticks: []
+			ticks: [],
+			progress: null
 		},
 		{
 			id: 'sources',
@@ -134,31 +130,47 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 					: done || phase === 'fetch'
 						? `${answered} of ${relayCount} answered`
 						: '',
-			ticks
+			ticks,
+			progress: null
 		},
 		{
-			id: 'records',
-			label: LABELS.records,
-			status: done ? 'completed' : failed ? 'skipped' : slices.length > 0 ? 'running' : 'pending',
-			counter: slices.length > 0 ? (done ? `${received} records` : `${received} so far`) : '',
-			ticks: []
-		},
-		{
-			id: 'organize',
-			label: LABELS.organize,
-			status: done ? 'completed' : failed ? 'skipped' : slices.length > 0 ? 'running' : 'pending',
-			counter: slices.length > 0 ? `admitted ${admitted} · rejected ${rejected}` : '',
-			ticks: []
-		},
-		{
-			// spec §2 rule 5 honesty: a run with no fill attempt (no key /
-			// no model) reports skipped, never a fabricated completion;
-			// with an attempt the counter is real progress or a real tally.
-			id: 'descriptions',
-			label: LABELS.descriptions,
-			status: descStatus,
-			counter: descCounter,
-			ticks: []
+			// Decouple runs while slices are in flight OR the descriptions
+			// fill is in flight (lag guard: a done phase with a still-running
+			// fill stays 'running' until the fill settles, spec §1.4).
+			id: 'decouple',
+			label: LABELS.decouple,
+			status: failed
+				? slices.length > 0 || d?.running
+					? 'failed'
+					: 'skipped'
+				: done && !d?.running
+					? 'completed'
+					: d?.running
+						? 'running'
+						: slices.length === 0
+							? 'pending'
+							: phase === 'fetch'
+								? 'running'
+								: 'pending',
+			counter:
+				d?.running
+					? `admitted ${admitted} · ${d.interpreted} of ${d.total} interpreted`
+					: !d && done
+						? `admitted ${admitted} · not interpreted`
+						: d && !d.running && done
+							? `admitted ${admitted} · ${d.interpreted} of ${d.total} interpreted`
+							: !d && !done && slices.length > 0
+								? `admitted ${admitted} · rejected ${rejected}`
+								: '',
+			progress: d?.running ? d.interpreted / Math.max(d.total, 1) : null,
+			ticks:
+				slices.length > 0
+					? [
+							{
+								text: `decoupled ${received} raw events → ${admitted} admitted · ${rejected} rejected`
+							}
+						]
+					: []
 		}
 	];
 	return rows;
