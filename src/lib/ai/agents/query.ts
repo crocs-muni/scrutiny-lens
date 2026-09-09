@@ -11,7 +11,12 @@ import { generateStructured } from '$lib/ai/output';
 import type { ProviderOverrideInput } from '$lib/ai/provider';
 
 export type SearchRequest = { kind: 'tag' | 'text'; value: string; source: 'identifier' | 'ai' | 'fallback' };
-export type SearchPlan = { searches: SearchRequest[] };
+export type SearchPlan = {
+	searches: SearchRequest[];
+	/** Why the AI path degraded (299-failure class), when it did — the results
+	 * surface names this instead of a bare "couldn't structure" (spec §4). */
+	degradation?: { kind: string; message: string };
+};
 
 /** Indexer prefixes AI is GUIDED toward (protocol passes unknown through opaque — spec §3). */
 export const GUIDED_PREFIXES = [
@@ -97,26 +102,46 @@ interface TranslateOptions {
 	profile?: string;
 }
 
-async function translateViaAi(reminder: string, opts: TranslateOptions): Promise<SearchRequest[]> {
-	if (!opts.provider) return [];
-	const result = await generateStructured({
-		schema: SearchPlanSchema,
-		system: INSTRUCTIONS,
-		messages: [{ role: 'user', content: reminder }],
-		provider: opts.provider,
-		callLLM: opts.callLLM,
-		abortSignal: opts.signal,
-		temperature: 0.2
-	});
-	if (!result.ok) return [];
-	return result.result.flatMap((draft) => {
-		const value = draft.value.trim();
-		if (value === '') return [];
-		if (draft.kind === 'tag') {
-			return TAG_VALUE.test(value) ? [{ kind: 'tag', value: clip(value, 120), source: 'ai' } as SearchRequest] : [];
+const TRANSLATE_TIMEOUT_MS = 15_000;
+
+type AiAttempt = { searches: SearchRequest[]; degradation?: SearchPlan['degradation'] };
+
+async function translateViaAi(reminder: string, opts: TranslateOptions): Promise<AiAttempt> {
+	if (!opts.provider) return { searches: [] };
+	// The run's signal alone can't distinguish "cold model accepted-but-stalled";
+	// its own 15s arm lets a hanging translate degrade deterministically
+	// (spec §4). generateStructured rethrows aborted-signal errors, so the
+	// catch must discriminate: OUR timer → honest fallback; run abort → propagate.
+	const timer = AbortSignal.timeout(TRANSLATE_TIMEOUT_MS);
+	const combined = opts.signal ? AbortSignal.any([opts.signal, timer]) : timer;
+	let result;
+	try {
+		result = await generateStructured({
+			schema: SearchPlanSchema,
+			system: INSTRUCTIONS,
+			messages: [{ role: 'user', content: reminder }],
+			provider: opts.provider,
+			callLLM: opts.callLLM,
+			abortSignal: combined,
+			temperature: 0.2
+		});
+	} catch (err) {
+		if (!opts.signal?.aborted && timer.aborted) {
+			return { searches: [], degradation: { kind: 'timeout', message: 'AI did not answer in 15s' } };
 		}
-		return [{ kind: 'text', value: clip(value, 120), source: 'ai' } as SearchRequest];
-	});
+		throw err;
+	}
+	if (!result.ok) return { searches: [], degradation: { kind: result.kind, message: result.message } };
+	return {
+		searches: result.result.flatMap((draft) => {
+			const value = draft.value.trim();
+			if (value === '') return [];
+			if (draft.kind === 'tag') {
+				return TAG_VALUE.test(value) ? [{ kind: 'tag', value: clip(value, 120), source: 'ai' } as SearchRequest] : [];
+			}
+			return [{ kind: 'text', value: clip(value, 120), source: 'ai' } as SearchRequest];
+		})
+	};
 }
 
 /* ------------------------------------------------------------------ *
@@ -164,9 +189,12 @@ export async function translateQuestion(opts: TranslateOptions): Promise<AIResul
 	}
 
 	let aiSearches: SearchRequest[] = [];
+	let degradation: SearchPlan['degradation'];
 	let fallbackUsed = false;
 	if (proseRemaining !== '') {
-		aiSearches = await translateViaAi(proseRemaining, opts);
+		const attempt = await translateViaAi(proseRemaining, opts);
+		aiSearches = attempt.searches;
+		degradation = attempt.degradation;
 		if (aiSearches.length === 0) fallbackUsed = true;
 	}
 
@@ -181,9 +209,12 @@ export async function translateQuestion(opts: TranslateOptions): Promise<AIResul
 	if (fallbackUsed && capped.length === 0) {
 		return {
 			ok: true,
-			result: { searches: [{ kind: 'text', value: clip(question, 300), source: 'fallback' }] }
+			result: {
+				searches: [{ kind: 'text', value: clip(question, 300), source: 'fallback' }],
+				...(degradation ? { degradation } : {})
+			}
 		};
 	}
 
-	return { ok: true, result: { searches: capped } };
+	return { ok: true, result: { searches: capped, ...(degradation ? { degradation } : {}) } };
 }

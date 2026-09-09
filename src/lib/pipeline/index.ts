@@ -178,6 +178,18 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 		signal: opts.signal
 	});
 	const searches = plan.ok ? plan.result.searches : [];
+	// §4: when the AI path degraded the surface names the failure class, not
+	// a bare "couldn't structure" (owner report 2026-09-09).
+	if (plan.ok && plan.result.degradation !== undefined) {
+		const d = plan.result.degradation;
+		emit({
+			type: 'notice',
+			notice: {
+				kind: 'capability',
+				message: `AI translate degraded (${d.kind}) — plain-text search of your words`
+			}
+		});
+	}
 	// issue #36: the trace's first row counts/names the searches as soon as
 	// translation settles — the session itself only ships at the end.
 	emit({ type: 'searches', searches });

@@ -96,15 +96,9 @@
 				: `AI slow — ${investigation.fillStats.interpreted} of ${investigation.fillStats.total} cards interpreted · uninterpreted cards show the raw events`
 			: ''
 	);
-	// §4 'AI down → fallback + banner', translation is also an AI surface:
-	// when the AI couldn't structure the question the plan carries a
-	// literal 'fallback'-sourced free-text search — surface that, not the
-	// (unreachable) zero-searches case (translateQuestion always returns ≥1).
-	const translationFallback = $derived(
-		investigation.result !== null &&
-			investigation.error === null &&
-			investigation.searches.some((s) => s.source === 'fallback')
-	);
+	// §4 translate-fallback is surfaced by the pipeline's capability notice
+	// (which carries the failure class — timeout/unreachable/etc.) as the
+	// banner; no second duplicate here.
 	// §4: some relays dead → results from the rest + corner notice (a refused
 	// leg is a degradation, not 'no matches'). Rolled up per class — per-leg
 	// verbatim statuses live in the trace and footer; wallpapering 4 relays
@@ -245,11 +239,6 @@
 									{@render note(capabilityNote !== '', 'capability', capabilityNote)}
 									{@render note(noKey, 'no-key', 'no AI key set — cards show raw events · set one in Settings (Ctrl+,)')}
 									{@render note(aiNote !== '', 'ai-note', aiNote)}
-									{@render note(
-										translationFallback,
-										'translate-fail',
-										"AI couldn't structure the question — falling back to a plain-text search of your words"
-									)}
 									{@render note(degradedNote !== '', 'degraded', degradedNote)}
 									{#if investigation.result !== null}
 										<!-- header: cohort only (spec §3); the fetched/truncation
