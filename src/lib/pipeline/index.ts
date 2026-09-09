@@ -179,16 +179,21 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	});
 	const searches = plan.ok ? plan.result.searches : [];
 	// §4: when the AI path degraded the surface names the failure class, not
-	// a bare "couldn't structure" (owner report 2026-09-09).
+	// a bare "couldn't structure". The wording depends on what actually
+	// happened: a prose fallback search was issued, or the run carries on
+	// identifier-only because no prose remained (mixed branch — 'your words'
+	// would be a lie there).
 	if (plan.ok && plan.result.degradation !== undefined) {
 		const d = plan.result.degradation;
-		emit({
-			type: 'notice',
-			notice: {
-				kind: 'capability',
-				message: `AI translate degraded (${d.kind}) — plain-text search of your words`
-			}
-		});
+		const hasFallbackSearch = searches.some((s) => s.source === 'fallback');
+		const notice: PipelineNotice = {
+			kind: 'capability',
+			message: hasFallbackSearch
+				? `AI translate degraded (${d.kind}) — falling back to a plain-text search of your words`
+				: `AI translate degraded (${d.kind}) — identifier-only searches`
+		};
+		notices.push(notice);
+		emit({ type: 'notice', notice });
 	}
 	// issue #36: the trace's first row counts/names the searches as soon as
 	// translation settles — the session itself only ships at the end.

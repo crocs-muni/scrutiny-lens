@@ -199,6 +199,43 @@ describe('runSearch — capability-aware routing (spec §3)', () => {
 	});
 });
 
+describe('runSearch — translate degradation notices (spec §4)', () => {
+	it('falling-back notice names the failure class and the action, verbatim', async () => {
+		const transport = new FakeTransport({ 'wss://a': { events: [] } });
+		const session = await runSearch({
+			question: 'ROCA chips',
+			relays: ['wss://a'],
+			provider: PROVIDER,
+			callLLM: llmPlan('garbage not json'),
+			transport,
+			admit: () => ({ ok: true })
+		});
+		expect(session.notices.some(
+			(n) =>
+				n.kind === 'capability' &&
+				n.message.includes('schema_failure') &&
+				n.message.includes('plain-text search of your words')
+		)).toBe(true);
+	});
+
+	it('mixed branch: failing AI + direct identifiers → identifier-only notice, never "your words"', async () => {
+		const transport = new FakeTransport({ 'wss://a': { events: [] } });
+		const session = await runSearch({
+			question: 'cc:ANSSI-CC-2015/12 maintenance',
+			relays: ['wss://a'],
+			provider: PROVIDER,
+			callLLM: llmPlan('garbage not json'),
+			transport,
+			admit: () => ({ ok: true })
+		});
+		const notice = session.notices.find(
+			(n) => n.kind === 'capability' && n.message.includes('AI translate degraded')
+		);
+		expect(notice?.message).toContain('identifier-only searches');
+		expect(notice?.message).not.toContain('your words');
+	});
+});
+
 describe('runSearch — admit, cache, and skipped counts (spec §4)', () => {
 	it('dedupes overlapping events across relays and counts admitted once', async () => {
 		const shared = event('99'.repeat(32));
