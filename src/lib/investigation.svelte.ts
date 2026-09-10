@@ -279,7 +279,14 @@ class Investigation {
 						// failure on another lane can't overwrite the truth that the
 						// AI was reachable (spec §2 never-lie).
 						onFailure: (kind, message) => {
-							this.fillFailure = this.fillFailure === 'schema_failure' ? 'schema_failure' : kind;
+							// schema_failure is sticky — a later transport error can't
+							// overwrite "the AI was reachable". The message obeys the
+							// same priority: only the WINNING kind may pair its reason,
+							// or the banner could show an unreachable-reason message
+							// next to a schema_failure kind.
+							const wins = this.fillFailure !== 'schema_failure';
+							if (!wins) return;
+							this.fillFailure = kind;
 							if (typeof message === 'string') {
 								this.fillErrorMessage = message.length > 140 ? message.slice(0, 139) + '…' : message;
 							}
