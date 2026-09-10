@@ -13,16 +13,24 @@ import { indexerFilter, searchFilter, fullScanFilter, tTags, tagValues } from '$
 import type { NostrEvent as FabricEvent } from '$lib/fabric';
 import type { ProviderOverrideInput } from '$lib/ai/provider';
 import { getInterpretation, saveInterpretation } from '$lib/db';
-import { generateStructured, type CallLLM } from '$lib/ai/output';
+import { generateStructured, type AIKind, type CallLLM } from '$lib/ai/output';
 import { z } from 'zod';
 
 export interface ProductCard {
 	id: string;
+	/** The event's type tag — the rule-5 fallback line names it (spec §2 rule 5). */
+	typeTag: string;
+	/** Root event's created_at — BIBLE J2 footer clock ("2w ago"; §2 rule 2). */
+	createdAt: number;
+	/** Root product event's author — the publisher chip (kind-0) renders from it. */
+	pubkey: string;
 	title: string;
 	snippet?: string;
 	identifiers: string[];
 	retracted: boolean;
 	boundMetadata: number;
+	/** Bound metadata carrying an http(s) link (report/PDF artifacts; spec §9). */
+	files: number;
 	updates: number;
 	contentStart: string;
 	interpreted: boolean;
@@ -48,17 +56,25 @@ export function assembleCards(graph: GraphView, patchSources: NostrEvent[] = [])
 		const ev = node.event;
 		const identifiers = [...new Set(tagValues(ev, 'i'))];
 		const boundEdges = graph.edges.filter((e) => e.target === node.id && e.source !== node.id);
+		const files = boundEdges.filter((edge) => {
+			const src = graph.nodes.find((n) => n.id === edge.source);
+			return src !== undefined && /https?:\/\//.test(src.event.content);
+		}).length;
 		const updates = patchSources.filter((p) => {
 			const eTags = tagValues(p, 'e');
 			return eTags.includes(node.id) && tTags(p).includes('scrutiny-patch');
 		});
 		return {
 			id: node.id,
+			typeTag: node.type === 'product' ? 'scrutiny-product' : 'scrutiny-metadata',
+			createdAt: ev.created_at,
+			pubkey: ev.pubkey,
 			title: deriveFallbackTitle(ev),
 			snippet: ev.content.slice(0, 200).trim() || undefined,
 			identifiers,
 			retracted: node.retracted,
 			boundMetadata: boundEdges.length,
+			files,
 			updates: updates.length,
 			contentStart: ev.content.slice(0, 200),
 			interpreted: false
@@ -112,20 +128,14 @@ export function applyFacets(events: NostrEvent[], selections: Record<string, Set
 }
 
 /* ------------------------------------------------------------------ *
- * Cohort line (spec §3: "12 products · 4 vendors · 2 retracted")
+ * Cohort line (spec §3, owner ruling 2026-09-03: by event type —
+ * "8 products · 8 metadata", no vendors/retracted counts)
  * ------------------------------------------------------------------ */
 
 export function cohortLine(cards: ProductCard[], events: NostrEvent[] = []): string {
 	const products = cards.length;
-	const vendorSet = new Set<string>();
-	for (const event of events) {
-		for (const tag of tagValues(event, 'i')) {
-			if (tag.toLowerCase().startsWith('vendor:')) vendorSet.add(tag);
-		}
-	}
-	const vendors = vendorSet.size;
-	const retracted = cards.filter((c) => c.retracted).length;
-	return `${products} products · ${vendors} vendors · ${retracted} retracted`;
+	const metadata = events.filter((event) => tTags(event).includes('scrutiny-metadata')).length;
+	return `${products} product${products === 1 ? '' : 's'} · ${metadata} metadata`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -151,6 +161,11 @@ export interface FillCardsOptions {
 	provider: ProviderOverrideInput;
 	callLLM: CallLLM;
 	signal?: AbortSignal;
+	/** Reports the settle-kind when the fill call fails (unreachable/timeout →
+	 * transport; schema_failure → the endpoint answered but output didn't
+	 * conform). Lets the UI state the truth instead of guessing from
+	 * interpreted===0 (spec §2 never-lie on the AI lane). */
+	onFailure?: (kind: AIKind) => void;
 }
 
 const CLIP_LIMIT = { title: 120, snippet: 300 };
@@ -207,6 +222,11 @@ export async function fillCards(cards: ProductCard[], opts: FillCardsOptions): P
 	const drafts = new Map<string, { id: string; title: string; snippet: string }>();
 	if (result.ok) {
 		for (const draft of result.result) drafts.set(draft.id, draft);
+	} else {
+		// Never-lie: surface WHY the fill failed so the banner distinguishes a
+		// dead endpoint (unreachable/timeout) from one that answered but whose
+		// output didn't conform (schema_failure).
+		opts.onFailure?.(result.kind);
 	}
 
 	return cards.map((card, i) => {

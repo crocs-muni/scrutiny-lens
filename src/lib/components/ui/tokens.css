@@ -16,6 +16,13 @@
    from src/app.css.
    ============================================================ */
 
+
+
+
+
+
+
+
 :root {
   /* surfaces — cool, blue-tinted neutrals */
   --page: oklch(0.985 0.001 286.376);
@@ -47,6 +54,9 @@
   --green-tint: oklch(0.958 0.017 159.118);
   --orange: oklch(0.689 0.179 49.902);
   --orange-tint: oklch(0.964 0.021 67.581);
+  /* amber banner hairline — light-mode solid; dark gets its own tone (owner
+   * report 2026-09-11: the light value read as a white border in dark) */
+  --orange-line: oklch(0.93 0.05 60);
   --red: oklch(0.621 0.192 23.042);
   --red-tint: oklch(0.956 0.017 17.462);
 
@@ -66,11 +76,17 @@
   --shadow-overlay: 0 0 0 1px var(--line), var(--shadow-lg);
   --shadow-inset-field: inset 0 1px 2px oklch(0 0 0 / 0.12);
 
-  /* type faces — the original ships Inter + a mono face via next/font, which
-   * this non-Next port doesn't inject. Resolve the font vars to real stacks so
-   * the font-sans/font-mono utilities emit working families. */
+  /* type faces — self-hosted convention until the owner picks final faces:
+   * stack-first (no third-party fetch), board families resolver later. */
   --font-inter: ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
   --font-mono-face: ui-monospace, 'Cascadia Mono', 'SF Mono', Consolas, 'Liberation Mono', monospace;
+
+
+
+
+
+
+
 }
 
 .dark {
@@ -99,6 +115,7 @@
   --green-tint: oklch(0.705 0.154 153.814 / 0.14);
   --orange: oklch(0.746 0.156 55.642);
   --orange-tint: oklch(0.746 0.156 55.642 / 0.14);
+  --orange-line: oklch(0.45 0.1 55);
   --red: oklch(0.666 0.18 21.433);
   --red-tint: oklch(0.666 0.18 21.433 / 0.14);
 
@@ -144,6 +161,7 @@
   --color-green-tint: var(--green-tint);
   --color-orange: var(--orange);
   --color-orange-tint: var(--orange-tint);
+  --color-orange-line: var(--orange-line);
   --color-red: var(--red);
   --color-red-tint: var(--red-tint);
 

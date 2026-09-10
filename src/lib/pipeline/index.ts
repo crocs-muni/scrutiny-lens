@@ -163,6 +163,18 @@ async function truncationNotices(
 export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> {
 	const emit = opts.emit ?? (() => {});
 	const notices: PipelineNotice[] = [];
+	// Issue #28 flush semantics: notices are emitted as they're produced for
+	// the live surface, then the final flush ships any that were NEVER
+	// emitted (a progressless run still surfaces capability/truncation/etc.).
+	// A notice already emitted must not be re-shipped by that flush — a
+	// duplicate lands verbatim in investigation.notices and crashes the
+	// trace's keyed render (each_key_duplicate).
+	const emitted = new Set<PipelineNotice>();
+	const emitNotice = (notice: PipelineNotice): void => {
+		if (emitted.has(notice)) return;
+		emitted.add(notice);
+		emit({ type: 'notice', notice });
+	};
 	const admittedSet = new Map<string, NostrEvent>();
 	/** Invalid ids already admission-checked — the same bad event arriving
 	 * from N relays is counted ONCE in the "N invalid skipped" footer. */
@@ -178,6 +190,23 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 		signal: opts.signal
 	});
 	const searches = plan.ok ? plan.result.searches : [];
+	// §4: when the AI path degraded the surface names the failure class, not
+	// a bare "couldn't structure". The wording depends on what actually
+	// happened: a prose fallback search was issued, or the run carries on
+	// identifier-only because no prose remained (mixed branch — 'your words'
+	// would be a lie there).
+	if (plan.ok && plan.result.degradation !== undefined) {
+		const d = plan.result.degradation;
+		const hasFallbackSearch = searches.some((s) => s.source === 'fallback');
+		const notice: PipelineNotice = {
+			kind: 'capability',
+			message: hasFallbackSearch
+				? `AI translate degraded (${d.kind}) — falling back to a plain-text search of your words`
+				: `AI translate degraded (${d.kind}) — identifier-only searches`
+		};
+		notices.push(notice);
+		emitNotice(notice);
+	}
 	// issue #36: the trace's first row counts/names the searches as soon as
 	// translation settles — the session itself only ships at the end.
 	emit({ type: 'searches', searches });
@@ -283,7 +312,9 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	}
 
 	emit({ type: 'phase', phase: 'done' });
-	for (const notice of notices) emit({ type: 'notice', notice });
+	// Flush ships only notices never emitted at origin (the translate fallback
+	// already went out incrementally above) — see emitNotice's dedupe note.
+	for (const notice of notices) emitNotice(notice);
 
 	return {
 		searches,

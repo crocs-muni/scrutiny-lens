@@ -289,12 +289,15 @@ describe('batchNodeInterpret — per-item degrade', () => {
 
 	it('LLM failure degrades honestly as an error envelope (no fabricated nodes)', async () => {
 		const failing: CallLLM = async () => {
+			// Fetch-signature TypeError = the browser-block lane (CORS/mixed
+			// content): the classifier must report browser_blocked, not the
+			// 5xx "unreachable" truth (spec §2, owner's incident).
 			throw new TypeError('fetch failed');
 		};
 		const res = await batchNodeInterpret({ events: [product(1)], graphContext: CTX, provider: PROVIDER, callLLM: failing });
 		expect(res.ok).toBe(false);
 		if (res.ok) return;
-		expect(res.kind).toBe('unreachable');
+		expect(res.kind).toBe('browser_blocked');
 	});
 });
 

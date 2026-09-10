@@ -14,7 +14,7 @@
 // BYOK: the provider override passes the memory-only key straight through —
 // it is never persisted (spec §6).
 
-import { defaultCallLLM, type CallLLM } from '$lib/ai/output';
+import { defaultCallLLM, type AIKind, type CallLLM } from '$lib/ai/output';
 import type { ProviderOverrideInput } from '$lib/ai/provider';
 import { createTransport, type Transport } from '$lib/net/transport';
 import {
@@ -26,6 +26,14 @@ import {
 	type SkeletonCard
 } from '$lib/pipeline';
 import type { SearchRequest } from '$lib/ai/agents/query';
+import { resolveGraph } from '$lib/fabric';
+import {
+	assembleCards,
+	computeFacets,
+	fillCards,
+	type FacetGroup,
+	type ProductCard
+} from '$lib/pipeline/cards';
 import { settings } from '$lib/settings.svelte';
 import { shell } from '$lib/shell.svelte';
 
@@ -40,6 +48,20 @@ class Investigation {
 	/** Rule-5 skeletons as they arrive (spec §2 rule 5). */
 	skeletons = $state<SkeletonCard[]>([]);
 	notices = $state<PipelineNotice[]>([]);
+	/** Assembled product cards (dedupe by root product, spec §3) — lands with
+	 * the session; AI interpretation fills onto these in chunks below. */
+	cards = $state<ProductCard[]>([]);
+	/** Facet groups computed from the admitted events' tags (never AI, §3). */
+	facetGroups = $state<FacetGroup[]>([]);
+	/** Selected facet values per group (OR within a group, AND across, §3). */
+	selections = $state<Record<string, Set<string>>>({});
+	/** Write-descriptions progress for the trace's fifth row (§4 partial). */
+	filling = $state(false);
+	fillStats = $state<{ interpreted: number; total: number }>({ interpreted: 0, total: 0 });
+	/** Settle-kind of the fill lane (null = no fill failure recorded): lets the
+	 * results banner say why cards aren't interpreted — a dead endpoint vs one
+	 * that answered but whose output didn't conform (spec §2 never-lie). */
+	fillFailure = $state<AIKind | null>(null);
 	result = $state<SearchSession | null>(null);
 	/** Settled failure (never a deliberate abort); the §4 error surfaces
 	 * (#38) render from this. */
@@ -48,6 +70,12 @@ class Investigation {
 
 	/** Wall time of the settled run (ms) — the done row's "· 4.2s". */
 	elapsedMs = $state<number | null>(null);
+	/** The question as asked — the error screen's Retry re-fires it (spec §4). */
+	lastQuestion = $state('');
+	/** The session row this run painted — re-picking it in the rail returns
+	 * to the results view (older sessions aren't replayable until #29's
+	 * session-store work, spec §0). */
+	sessionId = $state<string | null>(null);
 
 	private controller: AbortController | null = null;
 
@@ -87,12 +115,19 @@ class Investigation {
 		const controller = new AbortController();
 		this.controller = controller;
 		this.phase = 'idle';
+		this.lastQuestion = question;
 		this.slices = [];
 		this.searches = [];
 		this.skeletons = [];
 		this.notices = [];
 		this.result = null;
 		this.error = null;
+		this.cards = [];
+		this.facetGroups = [];
+		this.selections = {};
+		this.filling = false;
+		this.fillStats = { interpreted: 0, total: 0 };
+		this.fillFailure = null;
 		this.elapsedMs = null;
 		this.running = true;
 		const startedAt = performance.now();
@@ -101,6 +136,7 @@ class Investigation {
 		// investigation even if every relay hangs (spec §4: never demo data,
 		// but the question itself is real user input).
 		shell.newSession(question);
+		this.sessionId = shell.session?.id ?? null;
 		// issue #36: submit lands on the trace/results stage (spec center
 		// swap search → results → session); the graph session is #29's.
 		shell.view = 'results';
@@ -134,12 +170,22 @@ class Investigation {
 			// The transport never sees the abort signal, so a superseded
 			// run RESOLVES instead of throwing — the terminal write takes
 			// the same identity guard as the sibling writes (review P1).
-			if (this.controller === controller) this.result = session;
+			if (this.controller === controller) {
+				this.result = session;
+				this.cards = assembleCards(resolveGraph(session.admitted), session.admitted);
+				this.facetGroups = computeFacets(session.admitted);
+				if (provider !== undefined && settings.model !== '' && this.cards.length > 0) {
+					this.filling = true;
+					await this.fillInChunks(provider, callLLM, controller);
+					if (this.controller === controller) this.filling = false;
+				}
+			}
 		} catch (err) {
 			// Deliberate aborts are not errors; real failures settle into the
 			// §4 error surface's input instead of an unhandled rejection.
 			if (this.controller === controller && !controller.signal.aborted) {
 				this.error = err instanceof Error ? err.message : String(err);
+				this.filling = false;
 			}
 		} finally {
 			// One pool per run: close its relay websockets when it settles.
@@ -156,6 +202,95 @@ class Investigation {
 	stop(): void {
 		this.controller?.abort();
 	}
+
+	/** Facet selection (spec §3: OR within a group, AND across groups).
+	 * Fresh Set/array identities per call so the derived filtered lists re-run. */
+	toggleFacet(prefix: string, value: string): void {
+		const next: Record<string, Set<string>> = { ...this.selections };
+		const values = new Set(next[prefix] ?? []);
+		if (values.has(value)) values.delete(value);
+		else values.add(value);
+		if (values.size === 0) delete next[prefix];
+		else next[prefix] = values;
+		this.selections = next;
+	}
+
+	clearFacet(prefix: string): void {
+		const next = { ...this.selections };
+		delete next[prefix];
+		this.selections = next;
+	}
+
+	clearFacets(): void {
+		this.selections = {};
+	}
+		/** Chunked interpretation fill (spec §7: cards start rendering
+	 * interpreted within ~10s — first-paint contract). Small chunks (3
+	 * cards, ≈600-850 decode-token budget) across 4 striped lanes:
+	 * output-token decode dominates wall clock (fix was researched against
+	 * many-small-parallel practice — see PR #42 review-round record), so
+	 * lanes interleave requests instead of one serial 100-150s walk.
+	 * Each chunk keeps its own 10s arm: a timed-out chunk degrades to
+	 * rule-5 on ITS 3 cards only (spec §4: degrade only the unfinished
+	 * items), and a stuck lane never holds the cursor hostage.
+	 * Claim-cursor is synchronous — no double-claim; each lane's merge is
+	 * one synchronous rewrite (disjoint indices), so lanes can't clobber
+	 * each other. Cached interpretations return instantly — the first
+	 * chunk (viewport cards) still starts at t=0 on lane 0. */
+	private async fillInChunks(
+		provider: ProviderOverrideInput,
+		callLLM: CallLLM,
+		controller: AbortController
+	): Promise<void> {
+		const CHUNK = 3;
+		const LANES = 4;
+		const PER_CHUNK_MS = 10_000;
+		const total = this.cards.length;
+		this.fillStats = { interpreted: 0, total };
+		let next = 0;
+		const claim = (): number => {
+			const at = next;
+			next += CHUNK;
+			return at;
+		};
+		const worker = async (): Promise<void> => {
+			for (let at = claim(); at < total; at = claim()) {
+				if (controller.signal.aborted || this.controller !== controller) return;
+				const chunk = this.cards.slice(at, at + CHUNK);
+				const timer = AbortSignal.any([controller.signal, AbortSignal.timeout(PER_CHUNK_MS)]);
+				let filled = chunk;
+				try {
+					// A chunk timing out (or its interpretation read failing)
+					// aborts ONLY its own combined signal — generateStructured
+					// rethrows aborted-signal errors, so without this catch the
+					// timer's abort would escape into start()'s error path on a
+					// healthy run and pin filling=true forever (spec §4).
+					filled = await fillCards(chunk, {
+						provider,
+						callLLM,
+						signal: timer,
+						// schema_failure means the endpoint ANSWERED but its output
+						// didn't conform — that fact is sticky so a later transport
+						// failure on another lane can't overwrite the truth that the
+						// AI was reachable (spec §2 never-lie).
+						onFailure: (kind) => {
+							this.fillFailure = this.fillFailure === 'schema_failure' ? 'schema_failure' : kind;
+						}
+					});
+				} catch {
+					// rule-5 fallback for this chunk; the lane keeps going.
+				}
+				if (this.controller !== controller) return;
+				// One synchronous merge over disjoint indices — the lanes can't
+				// clobber each other's writes; UI paints per chunk.
+				const merged = this.cards.slice();
+				for (let i = 0; i < filled.length; i++) merged[at + i] = filled[i];
+				this.cards = merged;
+				this.fillStats = { interpreted: merged.filter((c) => c.interpreted).length, total };
+			}
+		};
+		await Promise.all(Array.from({ length: Math.min(LANES, Math.ceil(total / CHUNK)) }, worker));
+	}
 }
 
 export const investigation = new Investigation();
@@ -171,5 +306,34 @@ export function resetInvestigation(): void {
 	investigation.result = null;
 	investigation.error = null;
 	investigation.elapsedMs = null;
+	investigation.cards = [];
+	investigation.facetGroups = [];
+	investigation.selections = {};
+	investigation.filling = false;
+	investigation.fillStats = { interpreted: 0, total: 0 };
+	investigation.fillFailure = null;
 	investigation.running = false;
+}
+
+/**
+ * Results-surface banner text for the card-fill lane (spec §6 deterministic
+ * wording — never AI-written). Distinguishes a dead endpoint (unreachable/
+ * timeout), one blocked by the browser before any HTTP response (browser_blocked
+ * — CORS preflight / mixed content, spec §2), and one that answered but
+ * produced non-conforming output (schema_failure): the latter must not be
+ * mislabeled "AI unreachable" (spec §2 never-lie in the owner's incident the
+ * endpoint WAS reachable), and a browser block must not claim the AI is down.
+ */
+export function fillNote(interpreted: number, total: number, failure: AIKind | null): string {
+	if (total <= 0 || interpreted >= total) return '';
+	if (interpreted > 0) {
+		return `AI slow — ${interpreted} of ${total} cards interpreted · uninterpreted cards show the raw events`;
+	}
+	if (failure === 'schema_failure') {
+		return "AI output didn't conform — cards show the raw events";
+	}
+	if (failure === 'browser_blocked') {
+		return 'AI endpoint blocked by the browser (CORS or mixed content) — cards show the raw events';
+	}
+	return 'AI unreachable — cards show the raw events';
 }

@@ -1,22 +1,20 @@
 <script lang="ts">
-	/* TASK TRACE — the TR1 progress surface (issue #36, spec §2 rule 6).
+	/* TASK TRACE — the trace surface (PR #42): three PhaseRow capsules
+	 * derived from the investigation's real pipeline state via $lib/trace.
 	 *
-	 * VENDORED MUTATION of canon TaskRows
-	 * (beautiful-ui-svelte/src/components/TaskRows/TaskRows.svelte):
-	 * canon's rows are a scripted demo; here the five rows are derived from
-	 * the investigation's real pipeline state via $lib/trace. The card
-	 * chrome (rounded-card, shadow-card, border-separated rows, fade-up
-	 * entry) is canon's List variant.
+	 * List variant of canon TaskRows (visual ruling 2026-09-11): one
+	 * enclosing rounded card holds hairline-separated rows; the done-fold
+	 * swaps this list for a single done row.
 	 *
 	 * Fold rule (TR1): after completion the trace collapses to the done
-	 * row and ALWAYS stays put — no auto-collapse clock; expanding the
-	 * detail is the user's. While running, the row carrying the literal
-	 * layer (sources) opens itself. */
+	 * row and stays put — no auto-collapse clock; expanding the detail is
+	 * the user's. While running, the row carrying the literal layer
+	 * (sources, and decouple once slices exist) opens itself. */
 
+	import { slide } from 'svelte/transition';
 	import { derivePhaseRows, doneLine, type TraceInput } from '$lib/trace';
 	import { investigation } from '$lib/investigation.svelte';
 	import { settings } from '$lib/settings.svelte';
-	import type { PhaseRow as Row } from '$lib/trace';
 	import PhaseRow from './PhaseRow.svelte';
 
 	const input = $derived<TraceInput>({
@@ -26,25 +24,15 @@
 		skeletons: investigation.skeletons,
 		notices: investigation.notices,
 		relayCount: settings.relays.length,
-		error: investigation.error
+		error: investigation.error,
+		descriptions:
+			investigation.filling || (investigation.result !== null && investigation.fillStats.total > 0)
+				? { running: investigation.filling, ...investigation.fillStats }
+				: undefined
 	});
 
 	const rows = $derived(derivePhaseRows(input));
 	const done = $derived(investigation.phase === 'done' && investigation.error === null);
-
-	/* Expandable rows: default open while their phase runs (the literal
-	 * layer is live then), default closed once done; clicks override the
-	 * default and the override sticks. */
-	let overrides = $state<Record<string, boolean>>({});
-
-	function expanded(row: Row): boolean {
-		if (row.ticks.length === 0) return false;
-		return overrides[row.id] ?? row.status === 'running';
-	}
-
-	function toggle(row: Row): void {
-		overrides = { ...overrides, [row.id]: !expanded(row) };
-	}
 
 	/* done-settled reopen: the whole trace comes back from the done row. */
 	let traceReopened = $state(false);
@@ -52,9 +40,16 @@
 	const elapsed = $derived(
 		investigation.elapsedMs === null ? '' : ` · ${(investigation.elapsedMs / 1000).toFixed(1)}s`
 	);
+
+	/* Failed-row retry (spec §1.3): re-fire the question that just failed —
+	 * the trace rows are derived state, so a single start() recycling the
+	 * pipeline state is all the retry needs. */
+	const retry = (): void => {
+		void investigation.start(investigation.lastQuestion);
+	};
 </script>
 
-<div class="flex w-full max-w-[760px] flex-col shrink-0">
+<div class="flex w-full max-w-[760px] shrink-0 flex-col gap-2">
 	{#if done && !traceReopened}
 		<!-- done row (TR1): folded forever until the user expands — never
 			auto-collapses on a clock. -->
@@ -84,21 +79,39 @@
 			<span class="font-mono text-[11.5px] text-ink-3">expand trace</span>
 		</button>
 	{:else}
-		<div class="flex w-full flex-col gap-0 self-start overflow-hidden rounded-card bg-surface shadow-card">
+		<!-- slide on the branch root gives the fold its outro — the two
+			branches are separate DOM so without a transition the swap is
+			instant (owner report 2026-09-11) -->
+		<div
+			class="flex flex-col gap-2"
+			transition:slide={{ duration: 200, easing: (t) => 1 - (1 - t) ** 3 }}
+		>
+		<!-- List variant per canon TaskRows (owner ruling 2026-09-11): one
+			enclosing rounded-card with hairline-separated rows, not capsules. -->
+		<!-- canon List chrome; full column width (canon's self-start only
+			serves its own fixed-width capsule column) -->
+		<div class="overflow-hidden rounded-card bg-surface shadow-card">
 			{#each rows as row, i (row.id)}
-				<div style:animation={`fade-up 450ms cubic-bezier(0.23,1,0.32,1) ${i * 60}ms both`}>
-					<PhaseRow index={i} {row} expanded={expanded(row)} onToggle={() => toggle(row)} />
-				</div>
+				<PhaseRow
+					number={i + 1}
+					status={row.status}
+					label={row.label}
+					amount={row.counter}
+					ticks={row.ticks}
+					progress={row.progress}
+					onRetry={row.status === 'failed' ? retry : undefined}
+				/>
 			{/each}
-			{#if done}
-				<button
-					type="button"
-					class="border-t border-line px-3 py-2 text-left font-mono text-[11.5px] text-ink-3 hover:text-ink"
-					onclick={() => (traceReopened = false)}
-				>
-					fold trace
-				</button>
-			{/if}
+		</div>
+		{#if done}
+			<button
+				type="button"
+				class="self-start px-2.5 py-1 font-mono text-[11.5px] text-ink-3 hover:text-ink"
+				onclick={() => (traceReopened = false)}
+			>
+				fold trace
+			</button>
+		{/if}
 		</div>
 	{/if}
 </div>

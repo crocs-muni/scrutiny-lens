@@ -91,6 +91,28 @@ describe('assembleCards (issue #28)', () => {
 		expect(cards[0].updates).toBe(2);
 	});
 
+	it('counts files: bound metadata whose content carries an http(s) link (spec §2 — deterministic)', () => {
+		const prod = event('prod-1');
+		const metaWithLink = event('meta-1', {
+			content: 'Maintenance report #1. PDF: https://commoncriteriaportal.org/maint.pdf'
+		});
+		const metaPlain = event('meta-2', { content: 'keywords: EAL5, smart card, TOC' });
+		const graph: GraphView = {
+			nodes: [
+				{ id: prod.id, type: 'product', retracted: false, event: prod },
+				{ id: metaWithLink.id, type: 'metadata', retracted: false, event: metaWithLink },
+				{ id: metaPlain.id, type: 'metadata', retracted: false, event: metaPlain }
+			],
+			edges: [
+				{ id: 'e1', source: metaWithLink.id, target: prod.id, label: 'report' },
+				{ id: 'e2', source: metaPlain.id, target: prod.id, label: 'keywords' }
+			]
+		};
+		const cards = assembleCards(graph, [prod]);
+		expect(cards[0].boundMetadata).toBe(2);
+		expect(cards[0].files).toBe(1);
+	});
+
 	it('derives fallback title from first i-tag value, never from LLM output', () => {
 		const cards = assembleCards(graphWith(['prod-1']), [event('prod-1')]);
 		expect(cards[0].title).toBe('cve:CVE-2017-15361');
@@ -140,23 +162,23 @@ describe('computeFacets + applyFacets (issue #28)', () => {
 	});
 });
 
-// ── Cohort line (spec §3: "12 products · 4 vendors · 2 retracted") ──────────
-
-describe('cohortLine', () => {
-	it('renders exactly the spec example shape', () => {
+describe('cohortLine (spec §3: by event type)', () => {
+	it('counts products from cards and metadata from events', () => {
 		const cards: ProductCard[] = [
-			{ id: '1', title: 't', identifiers: ['cve:CVE-1'], retracted: false, boundMetadata: 1, updates: 1, contentStart: '', interpreted: false },
-			{ id: '2', title: 't', identifiers: ['cve:CVE-2'], retracted: true, boundMetadata: 0, updates: 0, contentStart: '', interpreted: false }
+			{ id: '1', typeTag: 'scrutiny-product', createdAt: 1700000000, pubkey: 'aa', title: 't', identifiers: ['cve:CVE-1'], retracted: false, boundMetadata: 1, files: 0, updates: 1, contentStart: '', interpreted: false },
+			{ id: '2', typeTag: 'scrutiny-product', createdAt: 1700000000, pubkey: 'bb', title: 't', identifiers: ['cve:CVE-2'], retracted: true, boundMetadata: 0, files: 0, updates: 0, contentStart: '', interpreted: false }
 		];
-		const line = cohortLine(cards, [event('a1'), event('a2')]);
-		expect(line).toMatch(/\d+ products/);
-		expect(line).toMatch(/\d+ vendors/);
-		expect(line).toMatch(/\d+ retracted/);
+		const line = cohortLine(cards, [
+			event('a1'),
+			event('a2', { tags: [['t', 'scrutiny-fabric'], ['t', 'scrutiny-metadata']] }),
+			event('a3', { tags: [['t', 'scrutiny-fabric'], ['t', 'scrutiny-metadata']] })
+		]);
+		expect(line).toBe('2 products · 2 metadata');
 	});
 
-	it('is deterministic and contains the retracted count even when zero', () => {
+	it('is deterministic and zero-counts are shown, never hidden', () => {
 		const cards = assembleCards(graphWith(['prod-1']), [event('prod-1')]);
-		expect(cohortLine(cards, [event('prod-1')])).toContain('0 retracted');
+		expect(cohortLine(cards, [event('prod-1')])).toBe('1 product · 0 metadata');
 	});
 });
 
@@ -197,6 +219,28 @@ describe('fillCards (issue #28, spec §2)', () => {
 		expect(callLLM).toHaveBeenCalledTimes(2); // one repair attempt
 		expect(filled[0].interpreted).toBe(false);
 		expect(filled[0].title).toBe('cve:CVE-2017-15361');
+	});
+
+	it('reports schema_failure (not unreachable) when the endpoint answers but junk is returned', async () => {
+		const card = assembleCards(graphWith(['prod-1']), [event('prod-1')])[0];
+		// The endpoint WAS reachable — it just answered with prose that never
+		// conforms. The kind must say that, so the banner isn't "unreachable".
+		const callLLM = async () => 'Here is the filled card: sure, here you go.';
+		const kinds: unknown[] = [];
+		const filled = await fillCards([card], { provider: PROVIDER, callLLM, onFailure: (k) => kinds.push(k) });
+		expect(filled[0].interpreted).toBe(false);
+		expect(kinds).toContain('schema_failure');
+		expect(kinds).not.toContain('unreachable');
+	});
+
+	it('reports unreachable when the endpoint does not answer', async () => {
+		const card = assembleCards(graphWith(['prod-1']), [event('prod-1')])[0];
+		const callLLM = async () => {
+			throw new Error('ECONNREFUSED');
+		};
+		const kinds: unknown[] = [];
+		await fillCards([card], { provider: PROVIDER, callLLM, onFailure: (k) => kinds.push(k) });
+		expect(kinds).toEqual(['unreachable']);
 	});
 
 	it('writes a validated interpretation into the cache keyed (eventId, model)', async () => {

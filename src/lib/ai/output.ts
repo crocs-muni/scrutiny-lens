@@ -45,7 +45,8 @@ export type AIKind =
 	| 'unreachable'
 	| 'schema_failure'
 	| 'timeout'
-	| 'invalid_request';
+	| 'invalid_request'
+	| 'browser_blocked';
 
 export interface LLMMessage {
 	role: 'user' | 'assistant';
@@ -113,15 +114,100 @@ function kindOf(err: unknown): AIKind {
 	}
 	const msg = String((err as Error | null)?.message ?? err).toLowerCase();
 	if (/timeout|timed out|etimedout|deadline/i.test(msg)) return 'timeout';
+	// A fetch that rejected without ever delivering an HTTP response surfaces
+	// as a TypeError ("Failed to fetch" / "NetworkError…" / "Load failed")
+	// with no statusCode — the browser CORS-preflight / mixed-content block
+	// signature (spec §2 never-lie). The request never reached the server, so
+	// this is NOT the same truth as a 5xx (the endpoint ANSWERED but failed):
+	// keep the lanes distinct so the UI never mislabels a browser block
+	// "AI unreachable".
+	if (
+		err instanceof TypeError &&
+		/failed to fetch|fetch failed|networkerror|load failed|mixed content/i.test(msg)
+	) {
+		return 'browser_blocked';
+	}
 	return 'unreachable';
 }
 
 type ParseOutcome<T> = { ok: true; value: T } | { ok: false; issues: string[] };
 
+/**
+ * Tolerant JSON extraction for real-world OpenAI-compatible endpoints
+ * (e-infra / local llama / Claude-compatible hosts often ignore `response_format`
+ * and emit markdown-fenced or prose-prefixed JSON). Returns the raw substring
+ * that is (or wraps) a single top-level JSON value — an object `{ … }` or an
+ * array `[ … ]` — or `null` when the text carries none. Extraction only widens
+ * *what* is handed to the zod gate — the schema still runs on the extracted
+ * value, so genuine zod-mismatch post-extraction still fails/quarantines as
+ * before (spec §2 never-lie; no coercing of malformed content).
+ */
+export function extractJsonObject(text: string): string | null {
+	const trimmed = (text ?? '').trim();
+	if (trimmed === '') return null;
+
+	// Already-valid JSON wins outright.
+	try {
+		JSON.parse(trimmed);
+		return trimmed;
+	} catch {
+		// not directly parseable — tolerant extraction below
+	}
+
+	// Strip a surrounding markdown fence (```  or ```json … ```) when present.
+	const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed);
+	if (fenced) {
+		const inner = fenced[1].trim();
+		try {
+			JSON.parse(inner);
+			return inner;
+		} catch {
+			return matchTopLevelValue(inner);
+		}
+	}
+
+	// Otherwise brace/bracket-match the first top-level { … } / [ … ] span.
+	return matchTopLevelValue(trimmed);
+}
+
+/** First top-level { … } / [ … ] span, ignoring quotes (strings may hold braces/brackets). */
+function matchTopLevelValue(text: string): string | null {
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	let start = -1;
+	for (let i = 0; i < text.length; i++) {
+		const ch = text[i];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (ch === '\\') escaped = true;
+			else if (ch === '"') inString = false;
+			continue;
+		}
+		if (ch === '"') {
+			inString = true;
+			continue;
+		}
+		if (ch === '{' || ch === '[') {
+			if (depth === 0) start = i;
+			depth++;
+		} else if (ch === '}' || ch === ']') {
+			if (start === -1) continue; // stray closing bracket in prose before any value
+			depth--;
+			if (depth === 0) return text.slice(start, i + 1);
+		}
+	}
+	return null;
+}
+
 function parseResult<T>(schema: z.ZodType<T>, text: string): ParseOutcome<T> {
+	const extracted = extractJsonObject(text);
+	if (extracted === null) {
+		return { ok: false, issues: ['response is not valid JSON'] };
+	}
 	let json: unknown;
 	try {
-		json = JSON.parse(text);
+		json = JSON.parse(extracted);
 	} catch (e) {
 		return { ok: false, issues: [`response is not valid JSON: ${(e as Error).message}`] };
 	}

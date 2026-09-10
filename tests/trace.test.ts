@@ -1,8 +1,9 @@
-// Trace derivation contract (issue #36, spec §2 rule 6): the five rows and
-// every counter come from real pipeline state — the mapping is the honesty
-// surface, so its boundaries are pinned here: translate → fetch → done
-// transitions, arithmetic over slices, amber cells only for honesty events,
-// and the descriptions row that must never claim "written" before #38.
+// Trace derivation contract (issue #36, spec §2.1 rule 6): the three rows
+// and every counter come from real pipeline state — the mapping is the
+// honesty surface, so its boundaries are pinned here: translate → fetch →
+// done transitions, arithmetic over slices, amber cells only for honesty
+// events, the decouple fill that may lag phase 'done', and the error
+// settlement that never leaves a row spinning.
 
 import { describe, expect, it } from 'vitest';
 import { derivePhaseRows, doneLine, type TraceInput } from '$lib/trace';
@@ -20,11 +21,11 @@ const base: TraceInput = {
 describe('derivePhaseRows — phase transitions', () => {
 	it('all rows pending before anything starts', () => {
 		const rows = derivePhaseRows(base);
-		expect(rows.map((r) => r.status)).toEqual(['pending', 'pending', 'pending', 'pending', 'pending']);
+		expect(rows.map((r) => r.status)).toEqual(['pending', 'pending', 'pending']);
 		expect(rows[0].counter).toBe('');
 	});
 
-	it('question row runs during translate, completes with the searches as counter', () => {
+	it('interpret row runs during translate, completes with the searches as counter', () => {
 		const running = derivePhaseRows({ ...base, phase: 'translate' });
 		expect(running[0].status).toBe('running');
 
@@ -74,10 +75,27 @@ describe('derivePhaseRows — counters are arithmetic over slices', () => {
 		expect(refusedTick?.text).toContain('refused');
 	});
 
-	it('records sums received, organize counts admitted/rejected live', () => {
+	it('decouple admits/rejects live, and receipts the raw-event total once', () => {
 		const rows = derivePhaseRows(slicing);
-		expect(rows[2].counter).toBe('20 so far');
-		expect(rows[3].counter).toBe('admitted 19 · rejected 1');
+		expect(rows[2].status).toBe('running');
+		expect(rows[2].counter).toBe('admitted 19 · rejected 1');
+		expect(rows[2].ticks[0].text).toBe('decoupled 20 raw events → 19 admitted · 1 rejected');
+	});
+
+	it('de-dupe is NOT a rejection: received exceeding admitted with zero slice rejects shows rejected 0 (spec §2 rule 6)', () => {
+		const dedupe: TraceInput = {
+			...slicing,
+			// 30 raw events across slices (some relays re-serve the same
+			// event), but only 29 unique events admitted — and no admission
+			// reject at any leg.
+			slices: [
+				{ url: 'wss://a', received: 20, route: 'tag:cve:x', rejected: 0, status: 'ok' },
+				{ url: 'wss://b', received: 10, route: 'tag:cve:x', rejected: 0, status: 'ok' }
+			],
+			skeletons: Array.from({ length: 29 }, () => ({ typeTag: 'scrutiny-product' }))
+		};
+		const rows = derivePhaseRows(dedupe);
+		expect(rows[2].ticks[0].text).toBe('decoupled 30 raw events → 29 admitted · 0 rejected');
 	});
 });
 
@@ -111,18 +129,78 @@ describe('derivePhaseRows — honesty cells', () => {
 		expect(ticks.find((t) => t.text.includes('local cache'))?.warn).toBe(false);
 		expect(ticks.find((t) => t.text.includes('lacks search'))?.warn).toBe(true);
 	});
-});
 
-describe('descriptions row (spec §2 rule 5)', () => {
-	it('is skipped with honest counter at done, never claims written', () => {
-		const rows = derivePhaseRows({ ...base, phase: 'done' });
-		expect(rows[4].status).toBe('skipped');
-		expect(rows[4].counter).toBe('not interpreted');
+	it('a notice duplicated in the input renders once in the row (each_key_duplicate guard)', () => {
+		// §4 translate-fallback: the same degraded message can reach the run
+		// twice (incremental emit + final flush). PhaseRow keys ticks by text,
+		// so a repeat would throw each_key_duplicate; the row dedupes, keeping
+		// the first occurrence in place.
+		const msg = 'AI translate degraded (schema_failure) — falling back to a plain-text search of your words';
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'done',
+			slices: [{ url: 'wss://a', received: 2, route: 'text:x', rejected: 0, status: 'ok' }],
+			notices: [
+				{ kind: 'capability', message: msg },
+				{ kind: 'capability', message: msg }
+			]
+		});
+		const texts = rows[1].ticks.map((t) => t.text);
+		expect(texts.filter((t) => t === msg)).toHaveLength(1);
+		// first occurrence is kept, slice receipt untouched and ordered before it
+		expect(texts[0]).toContain('records');
+		expect(texts[1]).toBe(msg);
+		expect(texts).toHaveLength(2);
 	});
 });
 
-describe('error settlement (spec §2 rule 6 honesty)', () => {
-	it('an errored run leaves no row spinning', () => {
+describe('decouple row — no fill attempt (spec §2.1 rule 6)', () => {
+	it('completes with an honest not-interpreted counter at done, never fabricated', () => {
+		const rows = derivePhaseRows({ ...base, phase: 'done' });
+		expect(rows[2].status).toBe('completed');
+		expect(rows[2].counter).toBe('admitted 0 · not interpreted');
+		expect(rows[2].progress).toBeNull();
+	});
+});
+
+describe('decouple row — descriptions fill (spec §7)', () => {
+	it('running fill shows live progress, never a fabricated completion', () => {
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'fetch',
+			descriptions: { running: true, interpreted: 2, total: 9 }
+		});
+		expect(rows[2].status).toBe('running');
+		expect(rows[2].counter).toBe('admitted 0 · 2 of 9 interpreted');
+		expect(rows[2].progress).toBe(2 / 9);
+	});
+
+	it('settled fill reports the real tally, partial or not', () => {
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'done',
+			descriptions: { running: false, interpreted: 7, total: 9 }
+		});
+		expect(rows[2].status).toBe('completed');
+		expect(rows[2].counter).toBe('admitted 0 · 7 of 9 interpreted');
+		expect(rows[2].progress).toBeNull();
+	});
+
+	it('a done phase with a still-running fill stays running (lag guard)', () => {
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'done',
+			descriptions: { running: true, interpreted: 2, total: 9 },
+			slices: [{ url: 'wss://a', received: 3, route: 'tag:x', rejected: 0, status: 'ok' }]
+		});
+		expect(rows[2].status).toBe('running');
+		expect(rows[2].counter).toBe('admitted 0 · 2 of 9 interpreted');
+		expect(rows[2].progress).toBe(2 / 9);
+	});
+});
+
+describe('error settlement (spec §2.1 rule 6)', () => {
+	it('an errored run settles: no row spinning, the running row fails', () => {
 		const rows = derivePhaseRows({
 			...base,
 			phase: 'fetch',
@@ -130,11 +208,16 @@ describe('error settlement (spec §2 rule 6 honesty)', () => {
 			error: 'transport needs at least one relay url'
 		});
 		expect(rows.some((r) => r.status === 'running')).toBe(false);
+		// Completed rows keep 'completed'; the row that was running fails.
+		expect(rows[0].status).toBe('completed');
+		expect(rows[1].status).toBe('skipped');
+		expect(rows[2].status).toBe('failed');
 	});
 
-	it('errored during translate: the question row reports skipped, not running', () => {
+	it('errored during translate: the interpret row fails, not running', () => {
 		const rows = derivePhaseRows({ ...base, phase: 'translate', error: 'AI unreachable' });
-		expect(rows[0].status).toBe('skipped');
+		expect(rows[0].status).toBe('failed');
+		expect(rows.some((r) => r.status === 'running')).toBe(false);
 	});
 });
 
