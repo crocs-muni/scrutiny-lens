@@ -62,6 +62,10 @@ class Investigation {
 	 * results banner say why cards aren't interpreted — a dead endpoint vs one
 	 * that answered but whose output didn't conform (spec §2 never-lie). */
 	fillFailure = $state<AIKind | null>(null);
+	/** Concrete reason for the fill-lane failure (provider-validation issues,
+	 * error text); clipped at set-time, never the key (ADR-018 lane at
+	 * provider.ts). Banners append this so a bare kind can't hide the cause. */
+	fillErrorMessage = $state<string | null>(null);
 	result = $state<SearchSession | null>(null);
 	/** Settled failure (never a deliberate abort); the §4 error surfaces
 	 * (#38) render from this. */
@@ -128,6 +132,7 @@ class Investigation {
 		this.filling = false;
 		this.fillStats = { interpreted: 0, total: 0 };
 		this.fillFailure = null;
+		this.fillErrorMessage = null;
 		this.elapsedMs = null;
 		this.running = true;
 		const startedAt = performance.now();
@@ -273,8 +278,11 @@ class Investigation {
 						// didn't conform — that fact is sticky so a later transport
 						// failure on another lane can't overwrite the truth that the
 						// AI was reachable (spec §2 never-lie).
-						onFailure: (kind) => {
+						onFailure: (kind, message) => {
 							this.fillFailure = this.fillFailure === 'schema_failure' ? 'schema_failure' : kind;
+							if (typeof message === 'string') {
+								this.fillErrorMessage = message.length > 140 ? message.slice(0, 139) + '…' : message;
+							}
 						}
 					});
 				} catch {
@@ -312,6 +320,7 @@ export function resetInvestigation(): void {
 	investigation.filling = false;
 	investigation.fillStats = { interpreted: 0, total: 0 };
 	investigation.fillFailure = null;
+	investigation.fillErrorMessage = null;
 	investigation.running = false;
 }
 
@@ -324,16 +333,22 @@ export function resetInvestigation(): void {
  * mislabeled "AI unreachable" (spec §2 never-lie in the owner's incident the
  * endpoint WAS reachable), and a browser block must not claim the AI is down.
  */
-export function fillNote(interpreted: number, total: number, failure: AIKind | null): string {
+export function fillNote(
+	interpreted: number,
+	total: number,
+	failure: AIKind | null,
+	message: string | null = null
+): string {
 	if (total <= 0 || interpreted >= total) return '';
 	if (interpreted > 0) {
 		return `AI slow — ${interpreted} of ${total} cards interpreted · uninterpreted cards show the raw events`;
 	}
+	const reason = message === null || message === '' ? '' : ` (${message})`;
 	if (failure === 'schema_failure') {
-		return "AI output didn't conform — cards show the raw events";
+		return `AI output didn't conform${reason} — cards show the raw events`;
 	}
 	if (failure === 'browser_blocked') {
-		return 'AI endpoint blocked by the browser (CORS or mixed content) — cards show the raw events';
+		return `AI endpoint blocked by the browser (CORS or mixed content) — cards show the raw events`;
 	}
-	return 'AI unreachable — cards show the raw events';
+	return `AI unreachable${reason} — cards show the raw events`;
 }

@@ -37,4 +37,14 @@ describe("fillNote — says the truth about why cards aren't interpreted", () =>
 		expect(fillNote(5, 5, 'schema_failure')).toBe('');
 		expect(fillNote(0, 0, 'schema_failure')).toBe('');
 	});
+
+	it('a bare kind is never the whole story when a reason exists (§2 honesty lane)', () => {
+		const note = fillNote(0, 5, 'unreachable', 'fetch failed with status 503');
+		expect(note).toContain('unreachable (fetch failed with status 503)');
+		expect(fillNote(0, 5, 'schema_failure', 'Response failed schema validation after one repair')).toContain(
+			"didn't conform (Response failed schema validation after one repair)"
+		);
+		// no message → unchanged legacy wording
+		expect(fillNote(0, 5, 'unreachable')).toBe('AI unreachable — cards show the raw events');
+	});
 });
