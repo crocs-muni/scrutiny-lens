@@ -5,7 +5,8 @@
 // unreachable — that is the owner's incident.
 
 import { describe, expect, it } from 'vitest';
-import { fillNote } from '../src/lib/investigation.svelte';
+import { fillNote, recordFillFailure } from '../src/lib/investigation.svelte';
+import type { AIKind } from '../src/lib/ai/output';
 
 describe("fillNote — says the truth about why cards aren't interpreted", () => {
 	it('endpoint answered but every fill failed schema → not "unreachable"', () => {
@@ -46,5 +47,28 @@ describe("fillNote — says the truth about why cards aren't interpreted", () =>
 		);
 		// no message → unchanged legacy wording
 		expect(fillNote(0, 5, 'unreachable')).toBe('AI unreachable — cards show the raw events');
+	});
+});
+
+describe('recordFillFailure — kind and message stay paired under stickiness', () => {
+	it('schema_failure + its reason win over a later chunk failure', () => {
+		const state: { fillFailure: AIKind | null; fillErrorMessage: string | null } = {
+			fillFailure: null,
+			fillErrorMessage: null
+		};
+		recordFillFailure(state, 'schema_failure', 'zod: id missing on card 3');
+		recordFillFailure(state, 'unreachable', 'fetch failed with status 503');
+		expect(state.fillFailure).toBe('schema_failure');
+		expect(state.fillErrorMessage).toBe('zod: id missing on card 3');
+	});
+	it('first-wins for non-sticky kinds; only the winner pairs the reason', () => {
+		const state: { fillFailure: AIKind | null; fillErrorMessage: string | null } = {
+			fillFailure: null,
+			fillErrorMessage: null
+		};
+		recordFillFailure(state, 'unreachable', 'fetch failed with status 503');
+		recordFillFailure(state, 'timeout', 'PER_CHUNK budget exceeded');
+		expect(state.fillFailure).toBe('timeout');
+		expect(state.fillErrorMessage).toBe('PER_CHUNK budget exceeded');
 	});
 });

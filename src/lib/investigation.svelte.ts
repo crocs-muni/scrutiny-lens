@@ -279,17 +279,7 @@ class Investigation {
 						// failure on another lane can't overwrite the truth that the
 						// AI was reachable (spec §2 never-lie).
 						onFailure: (kind, message) => {
-							// schema_failure is sticky — a later transport error can't
-							// overwrite "the AI was reachable". The message obeys the
-							// same priority: only the WINNING kind may pair its reason,
-							// or the banner could show an unreachable-reason message
-							// next to a schema_failure kind.
-							const wins = this.fillFailure !== 'schema_failure';
-							if (!wins) return;
-							this.fillFailure = kind;
-							if (typeof message === 'string') {
-								this.fillErrorMessage = message.length > 140 ? message.slice(0, 139) + '…' : message;
-							}
+							recordFillFailure(this, kind, message);
 						}
 					});
 				} catch {
@@ -309,6 +299,23 @@ class Investigation {
 }
 
 export const investigation = new Investigation();
+
+/** Fill-failure recording rule, exported for the ordering pin: schema_failure
+ * is sticky — a later transport error can't overwrite "the AI was reachable"
+ * (spec §2 never-lie). The message obeys the same priority: only the WINNING
+ * kind may pair its reason, else the banner could show an unreachable-reason
+ * message next to a schema_failure kind. */
+export function recordFillFailure(
+	target: Pick<Investigation, 'fillFailure' | 'fillErrorMessage'>,
+	kind: AIKind,
+	message?: string
+): void {
+	if (target.fillFailure === 'schema_failure') return;
+	target.fillFailure = kind;
+	if (typeof message === 'string') {
+		target.fillErrorMessage = message.length > 140 ? message.slice(0, 139) + '…' : message;
+	}
+}
 
 /** Test seam — same shape as resetShell/resetSettings. */
 export function resetInvestigation(): void {
