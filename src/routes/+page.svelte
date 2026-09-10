@@ -235,9 +235,11 @@
 										/>
 									</div>
 								{/if}
-								<!-- one rail for the whole column: banners, cohort, trace and
-									cards share this 760px track (owner geometry ruling) -->
-								<div class="mx-auto flex min-h-0 w-full max-w-[760px] flex-1 flex-col">
+								<!-- the scroller must span the full area so its scrollbar sits
+									at the outer edge (owner report 2026-09-11: scroll track
+									overlaid the card column's border); banner/cohort lanes
+									center themselves on the 760 rail individually -->
+								<div class="flex min-h-0 min-w-0 flex-1 flex-col">
 									<!-- §4 honesty lane: every banner one dismissal-keyed note; the
 										no-key hint stays textual (Ctrl+, works) — these are notices,
 										not buttons. Per-class roll-up (review finding): per-leg
@@ -247,9 +249,10 @@
 									{@render note(aiNote !== '', 'ai-note', aiNote)}
 									{@render note(degradedNote !== '', 'degraded', degradedNote)}
 									{#if investigation.result !== null}
-										<!-- header: cohort only (spec §3) — geometry lives on the
-											760px column parent; breadcrumb owns fetched/truncation -->
-										<div class="flex items-baseline gap-3 px-2 pb-1 pt-2">
+										<!-- header: cohort only (spec §3); centers on the same 760
+											rail as cards (scroller spans wider so its scrollbar
+											lives at the area edge); breadcrumb owns fetched/truncation -->
+										<div class="mx-auto flex w-full max-w-[760px] items-baseline gap-3 px-1 pb-1 pt-2">
 											<span class="font-mono text-[12.5px] font-semibold text-ink">{cohort}</span>
 											<span class="flex-1"></span>
 										</div>
@@ -324,9 +327,9 @@
 
 {#snippet note(show: boolean, key: string, message: string)}
 	{#if show && !dismissed.has(key)}
-		<!-- §4 honesty lane — the enclosing 760px track owns geometry (see
-			results column parent); nothing to align here -->
-		<div class="px-1 pt-1">
+		<!-- §4 honesty lane — centers on the card rail; the scroller stays
+			edge-to-edge so its scrollbar lives at the area edge -->
+		<div class="mx-auto w-full max-w-[760px] px-1 pt-1">
 			<NoticeBanner {message} onDismiss={() => dismiss(key)} />
 		</div>
 	{/if}

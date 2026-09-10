@@ -2,17 +2,16 @@
 	/* TASK TRACE — the trace surface (PR #42): three PhaseRow capsules
 	 * derived from the investigation's real pipeline state via $lib/trace.
 	 *
-	 * Capsules variant of canon TaskRows: each row is its own floating
-	 * card (bg-surface shadow-card) — no enclosing card, and no hairline
-	 * row rules (canon separates the List rows; Capsules stay uncarded).
-	 * The capsule stack replaces the old List card while the fold-to-done
-	 * rule is unchanged.
+	 * List variant of canon TaskRows (visual ruling 2026-09-11): one
+	 * enclosing rounded card holds hairline-separated rows; the done-fold
+	 * swaps this list for a single done row.
 	 *
 	 * Fold rule (TR1): after completion the trace collapses to the done
 	 * row and stays put — no auto-collapse clock; expanding the detail is
 	 * the user's. While running, the row carrying the literal layer
 	 * (sources, and decouple once slices exist) opens itself. */
 
+	import { slide } from 'svelte/transition';
 	import { derivePhaseRows, doneLine, type TraceInput } from '$lib/trace';
 	import { investigation } from '$lib/investigation.svelte';
 	import { settings } from '$lib/settings.svelte';
@@ -80,6 +79,13 @@
 			<span class="font-mono text-[11.5px] text-ink-3">expand trace</span>
 		</button>
 	{:else}
+		<!-- slide on the branch root gives the fold its outro — the two
+			branches are separate DOM so without a transition the swap is
+			instant (owner report 2026-09-11) -->
+		<div
+			class="flex flex-col gap-2"
+			transition:slide={{ duration: 200, easing: (t) => 1 - (1 - t) ** 3 }}
+		>
 		<!-- List variant per canon TaskRows (owner ruling 2026-09-11): one
 			enclosing rounded-card with hairline-separated rows, not capsules. -->
 		<!-- canon List chrome; full column width (canon's self-start only
@@ -106,5 +112,6 @@
 				fold trace
 			</button>
 		{/if}
+		</div>
 	{/if}
 </div>
