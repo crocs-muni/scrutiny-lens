@@ -9,9 +9,11 @@ import {
 	clearAllLocalData,
 	deleteSession,
 	dumpAllForTests,
+	getEventsByTag,
 	getInterpretation,
 	initPersistence,
 	isPersistent,
+	listEvents,
 	listSessions,
 	loadDeadLetters,
 	loadSettings,
@@ -264,17 +266,21 @@ describe('schema upgrade (v1 → v2 convergence)', () => {
 	};
 
 	/** Drops whatever the shared beforeEach created, then stands up a legacy
-	 * v1 DB with the given stores. fake-indexeddb persists DBs by name within
+	 * DB with the given stores. fake-indexeddb persists DBs by name within
 	 * a file run, so the old database must be deleted first — opening a
 	 * *lower* version against an existing higher-version DB just reopens the
-	 * higher one, which is exactly the downgrade scenario under test. */
+	 * higher one, which is exactly the downgrade scenario under test.
+	 * `version` defaults to 1 for the original v1 convergence cases; a higher
+	 * seed simulates a newer live schema that is still missing a backfill
+	 * (what the v4 bump re-opens in the test below). */
 	async function seedLegacy(
 		upgrade: (db: IDBPDatabase) => void,
-		seed?: (db: IDBPDatabase) => Promise<void>
+		seed?: (db: IDBPDatabase) => Promise<void>,
+		version = 1
 	) {
 		_closeForTests();
 		await deleteDB(DB_NAME);
-		const legacy = await openDB(DB_NAME, 1, { upgrade });
+		const legacy = await openDB(DB_NAME, version, { upgrade });
 		await seed?.(legacy);
 		legacy.close();
 		await initPersistence();
@@ -333,5 +339,44 @@ describe('schema upgrade (v1 → v2 convergence)', () => {
 		);
 		expect(await listSessions()).toEqual([{ id: 's1', title: 'one', createdAt: 100 }]);
 		expect(isPersistent()).toBe(true);
+	});
+
+	it('backfills the events indexes onto a stale v3 store so listEvents works (issue #27, v4 bump)', async () => {
+		// A live v3 database whose events store never got its indexes — the
+		// cache row landed with the store, the index backfills followed in a
+		// later checkout. Reopening at DB_VERSION before the v4 bump was 3 == 3,
+		// so NO upgrade fired, the guards never ran, and listEvents
+		// NotFoundError'd on the missing created_at index and silently degraded
+		// to [] — the owner's "[db] op failed … index was not found" with cards
+		// showing raw events (the search seam hydrates from listEvents at boot).
+		// The v4 bump forces the upgrade for any live db at ≤ 3, which runs the
+		// guards and backfills both indexes.
+		await seedLegacy(
+			(db) => {
+				db.createObjectStore('settings', { keyPath: 'key' });
+				db.createObjectStore('interpretations', { keyPath: ['eventId', 'model'] });
+				const sessions = db.createObjectStore('sessions', { keyPath: 'id' });
+				sessions.createIndex('createdAt', 'createdAt');
+				db.createObjectStore('deadLetters', { keyPath: 'id', autoIncrement: true });
+				db.createObjectStore('events', { keyPath: 'id' }); // stale: no ttags / created_at yet
+			},
+			async (db) => {
+				await db.put('events', {
+					id: 'e1',
+					sig: 'ab'.repeat(64),
+					pubkey: 'cd'.repeat(32),
+					created_at: 1000,
+					kind: 1,
+					tags: [['t', 'nostr']],
+					content: 'one',
+					ttags: ['nostr'] // the denormalized field the multiEntry index keys on
+				});
+			},
+			3
+		);
+		expect(isPersistent()).toBe(true);
+		// Pre-fix this logged the owner's NotFoundError and returned [].
+		expect((await listEvents()).map((e) => e.id)).toEqual(['e1']);
+		expect(await getEventsByTag('nostr')).toEqual(['e1']);
 	});
 });

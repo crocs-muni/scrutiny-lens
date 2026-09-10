@@ -22,7 +22,13 @@ import { tTags } from '$lib/fabric';
 import type { NostrEvent } from '$lib/fabric';
 
 export const DB_NAME = 'scrutiny-lens';
-export const DB_VERSION = 3;
+// v4 is a no-op store-set change: the guard-based backfills below only run
+// when the REQUESTED version exceeds the live one, so a live v3 database
+// whose events store predates created_at (foreign/older v3 checkout, issue
+// #27) reopens at 3 without firing an upgrade and listEvents NotFoundErrors
+// into eternal memory-only — the exact degrade that hid this. Bumping forces
+// the upgrade to fire for every live db at ≤ 3, letting the guards backfill.
+export const DB_VERSION = 4;
 const SETTINGS_KEY = 'app';
 
 /** Ring size for the dead-letter store; deadLetter.ts imports this so the
@@ -163,7 +169,10 @@ async function open(): Promise<void> {
 					// Foreign older schemas may hold an 'events' store with no
 					// (or stale) indexes — degrade would otherwise silently eat
 					// tag and chronological reads forever (same hole class as
-					// the sessions createdAt backfill above).
+					// the sessions createdAt backfill above). Live v3 databases
+					// created before created_at are backfilled here too, now
+					// that the requested version (v4) exceeds theirs and the
+					// upgrade actually fires.
 					const events = transaction.objectStore('events');
 					if (!events.indexNames.contains('ttags')) {
 						events.createIndex('ttags', 'ttags', { multiEntry: true });
