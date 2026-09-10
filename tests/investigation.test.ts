@@ -19,6 +19,14 @@ describe("fillNote — says the truth about why cards aren't interpreted", () =>
 		expect(fillNote(0, 5, 'timeout')).toBe('AI unreachable — cards show the raw events');
 	});
 
+	it('browser blocked the request (CORS/mixed content) → names the browser, not "unreachable"', () => {
+		const note = fillNote(0, 5, 'browser_blocked');
+		expect(note).toBe(
+			'AI endpoint blocked by the browser (CORS or mixed content) — cards show the raw events'
+		);
+		expect(note).not.toContain('unreachable');
+	});
+
 	it('partial interpretation stays numeric and never "broken"', () => {
 		expect(fillNote(2, 5, 'schema_failure')).toBe(
 			'AI slow — 2 of 5 cards interpreted · uninterpreted cards show the raw events'

@@ -45,7 +45,8 @@ export type AIKind =
 	| 'unreachable'
 	| 'schema_failure'
 	| 'timeout'
-	| 'invalid_request';
+	| 'invalid_request'
+	| 'browser_blocked';
 
 export interface LLMMessage {
 	role: 'user' | 'assistant';
@@ -113,6 +114,19 @@ function kindOf(err: unknown): AIKind {
 	}
 	const msg = String((err as Error | null)?.message ?? err).toLowerCase();
 	if (/timeout|timed out|etimedout|deadline/i.test(msg)) return 'timeout';
+	// A fetch that rejected without ever delivering an HTTP response surfaces
+	// as a TypeError ("Failed to fetch" / "NetworkError…" / "Load failed")
+	// with no statusCode — the browser CORS-preflight / mixed-content block
+	// signature (spec §2 never-lie). The request never reached the server, so
+	// this is NOT the same truth as a 5xx (the endpoint ANSWERED but failed):
+	// keep the lanes distinct so the UI never mislabels a browser block
+	// "AI unreachable".
+	if (
+		err instanceof TypeError &&
+		/failed to fetch|fetch failed|networkerror|load failed|mixed content/i.test(msg)
+	) {
+		return 'browser_blocked';
+	}
 	return 'unreachable';
 }
 

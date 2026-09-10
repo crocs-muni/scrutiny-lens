@@ -1,7 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { generateStructured, type CallLLM, type CallLLMArgs } from '$lib/ai/output';
 const schema = z.object({ title: z.string(), count: z.number() });
+const messages = [{ role: 'user' as const, content: 'hi' }];
+
+afterEach(() => vi.unstubAllGlobals());
 
 function fakeLLM(responses: string[]): { call: CallLLM; calls: CallLLMArgs[] } {
 	const calls: CallLLMArgs[] = [];
@@ -108,6 +111,46 @@ describe('generateStructured', () => {
 		const r = await generateStructured({ schema, messages: [], provider, callLLM: call });
 		expect(r.ok).toBe(false);
 		if (!r.ok) expect(r.kind).toBe('unreachable');
+	});
+
+	it('maps a browser-blocked fetch (TypeError, no status) to browser_blocked, not unreachable', async () => {
+		// CORS preflight / mixed-content blocks reject fetch with a TypeError
+		// ("Failed to fetch", no statusCode) — the endpoint never answered, which
+		// is a different truth from a 5xx and must not be labeled "unreachable"
+		// (spec §2, owner's incident).
+		const call: CallLLM = async () => {
+			throw new TypeError('Failed to fetch');
+		};
+		const r = await generateStructured({ schema, messages: [], provider, callLLM: call });
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.kind).toBe('browser_blocked');
+	});
+
+	it('maps a transport timeout to timeout, distinct from browser_blocked and unreachable', async () => {
+		const call: CallLLM = async () => {
+			throw new Error('Request timed out after 10000ms');
+		};
+		const r = await generateStructured({ schema, messages: [], provider, callLLM: call });
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.kind).toBe('timeout');
+	});
+
+	it('classifies a browser-blocked fetch through the REAL transport as browser_blocked', async () => {
+		// Incident repro: the app's actual transport (createOpenAICompatible +
+		// generateText) passes a no-cause fetch TypeError straight through —
+		// provider-utils handleFetchError only wraps TypeErrors that carry a
+		// `cause`. Stubbing global fetch like transport.test.ts, the classifier
+		// must still see the browser-block lane.
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => {
+				throw new TypeError('Failed to fetch');
+			})
+		);
+		// No callLLM → the real defaultCallLLM transport runs.
+		const r = await generateStructured({ schema, messages, provider });
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.kind).toBe('browser_blocked');
 	});
 
 	it('does not retry when the first call fails at the transport level', async () => {

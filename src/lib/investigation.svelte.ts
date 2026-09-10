@@ -318,16 +318,22 @@ export function resetInvestigation(): void {
 /**
  * Results-surface banner text for the card-fill lane (spec §6 deterministic
  * wording — never AI-written). Distinguishes a dead endpoint (unreachable/
- * timeout) from one that answered but produced non-conforming output
- * (schema_failure): the latter must not be mislabeled "AI unreachable"
- * (spec §2 never-lie in the owner's incident the endpoint WAS reachable).
+ * timeout), one blocked by the browser before any HTTP response (browser_blocked
+ * — CORS preflight / mixed content, spec §2), and one that answered but
+ * produced non-conforming output (schema_failure): the latter must not be
+ * mislabeled "AI unreachable" (spec §2 never-lie in the owner's incident the
+ * endpoint WAS reachable), and a browser block must not claim the AI is down.
  */
 export function fillNote(interpreted: number, total: number, failure: AIKind | null): string {
 	if (total <= 0 || interpreted >= total) return '';
 	if (interpreted > 0) {
 		return `AI slow — ${interpreted} of ${total} cards interpreted · uninterpreted cards show the raw events`;
 	}
-	return failure === 'schema_failure'
-		? "AI output didn't conform — cards show the raw events"
-		: 'AI unreachable — cards show the raw events';
+	if (failure === 'schema_failure') {
+		return "AI output didn't conform — cards show the raw events";
+	}
+	if (failure === 'browser_blocked') {
+		return 'AI endpoint blocked by the browser (CORS or mixed content) — cards show the raw events';
+	}
+	return 'AI unreachable — cards show the raw events';
 }

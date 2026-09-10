@@ -2,6 +2,13 @@
 // from the user's configured endpoint, zod-gated like every AI surface.
 // Failures surface as kinds so the dialog can name what happened; nothing
 // throws, and the key never appears in a result (ADR-018).
+//
+// Path-probe note: the connection test fetches `${base}/models`, while the
+// chat lane posts to `${base}/chat/completions` (same base, same origin, same
+// CORS preflight triggers — the models GET carries the same Authorization
+// header). A test that succeeds while chat fails therefore means path routing
+// on the server (e.g. a base missing /v1), not a CORS block — CORS would take
+// both down together.
 
 import { z } from 'zod';
 
