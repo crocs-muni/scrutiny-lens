@@ -439,6 +439,13 @@ export async function generateRecords<T>(
   }
 
   const call = seam ?? defaultCallLLM;
+  // Diagnostic lane for the owner's manual runs (issue: "AI translate
+  // degraded (timeout)"). Key-free, content-free — spec §2: never log the
+  // dropable record content or the apiKey, only shapes + timings.
+  const started = Date.now();
+  const lane = provider?.name ?? "default";
+  const el = () => `${String(Date.now() - started).padStart(5, " ")}ms`;
+  const dbg = (msg: string) => console.debug(`[ai:${lane}] ${el()} ${msg}`);
   const sys = [formatInstruction(knownKeys), system]
     .filter(Boolean)
     .join("\n\n");
@@ -451,26 +458,49 @@ export async function generateRecords<T>(
   };
   const run = (): Promise<
     { ok: true; text: string } | { ok: false; kind: AIKind; message: string }
-  > =>
-    call(base).then(
-      (text) => ({ ok: true, text }),
+  > => {
+    const t0 = Date.now();
+    return call(base).then(
+      (text) => {
+        dbg(`resp: ${text.length} chars in ${Date.now() - t0}ms`);
+        return { ok: true, text };
+      },
       (err: unknown) => {
         if (isAbort(err, abortSignal)) throw err;
+        const kind = kindOf(err);
+        dbg(
+          `fail: ${kind} after ${Date.now() - t0}ms — ${String((err as Error)?.message ?? err)}`,
+        );
         return {
           ok: false,
-          kind: kindOf(err),
+          kind,
           message: String((err as Error)?.message ?? err),
         };
       },
     );
+  };
 
-  const first = await run();
-  if (!first.ok) return { ok: false, kind: first.kind, message: first.message };
+  dbg(
+    `call: ${messages.length} msgs, keys=[${knownKeys.join(" ")}]${max !== undefined ? ` max=${max}` : ""}`,
+  );
+  let first: Awaited<ReturnType<typeof run>>;
+  try {
+    first = await run();
+  } catch (err) {
+    dbg(`throw: ${String((err as Error)?.message ?? err)} (${kindOf(err)})`);
+    throw err;
+  }
+  if (!first.ok) {
+    dbg(`transport ${first.kind}: ${first.message}`);
+    return { ok: false, kind: first.kind, message: first.message };
+  }
+  dbg(`first: ${first.text.length} chars`);
   let parsed = cappedParse(
     first.text,
     { schema, knownKeys, numbers, floats, booleans, lists },
     max,
   );
+  dbg(`parse: ${parsed.records.length} records, ${parsed.issues.length} issues`);
   if (parsed.records.length > 0) return { ok: true, result: parsed.records };
 
   // Exactly one re-prompt: re-state the format + the gate issue. Never echo
@@ -485,26 +515,38 @@ export async function generateRecords<T>(
       },
     ],
   };
-  const second = await call(retry).then(
-    (text) => ({ ok: true, text }) as const,
-    (err: unknown) => {
-      if (isAbort(err, abortSignal)) throw err;
-      return {
-        ok: false,
-        kind: kindOf(err),
-        message: String((err as Error)?.message ?? err),
-      } as const;
-    },
-  );
-  if (!second.ok)
+  dbg("re-prompt");
+  let second: Awaited<ReturnType<typeof run>>;
+  try {
+    second = await call(retry).then(
+      (text) => ({ ok: true, text }) as const,
+      (err: unknown) => {
+        if (isAbort(err, abortSignal)) throw err;
+        return {
+          ok: false,
+          kind: kindOf(err),
+          message: String((err as Error)?.message ?? err),
+        } as const;
+      },
+    );
+  } catch (err) {
+    dbg(`throw: ${String((err as Error)?.message ?? err)} (${kindOf(err)})`);
+    throw err;
+  }
+  if (!second.ok) {
+    dbg(`transport ${second.kind}: ${second.message}`);
     return { ok: false, kind: second.kind, message: second.message };
+  }
+  dbg(`second: ${second.text.length} chars`);
   parsed = cappedParse(
     second.text,
     { schema, knownKeys, numbers, floats, booleans, lists },
     max,
   );
+  dbg(`parse: ${parsed.records.length} records, ${parsed.issues.length} issues`);
   if (parsed.records.length > 0) return { ok: true, result: parsed.records };
 
+  dbg("schema_failure: no record after re-prompt");
   return {
     ok: false,
     kind: "schema_failure",
