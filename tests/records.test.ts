@@ -26,7 +26,7 @@ function rec(p: Record<string, unknown>): string {
 
 describe("parseRecords", () => {
   it("parses one flat block", () => {
-    const { records } = parseRecords(
+    const { records } = parseRecords<Record<string, unknown>>(
       rec({ id: "a1", title: "T", snippet: "S" }),
       { knownKeys: KNOWN },
     );
@@ -41,45 +41,58 @@ describe("parseRecords", () => {
       "",
       rec({ id: "b", title: "T", snippet: "S" }),
     ].join("\n");
-    expect(parseRecords(text, { knownKeys: KNOWN }).records).toHaveLength(2);
+    expect(
+      parseRecords<Record<string, unknown>>(text, { knownKeys: KNOWN }).records,
+    ).toHaveLength(2);
   });
 
   it("normalizes CRLF line endings", () => {
-    const { records } = parseRecords("id: a\r\ntitle: T\r\nsnippet: S\r\n", {
-      knownKeys: KNOWN,
-    });
+    const { records } = parseRecords<Record<string, unknown>>(
+      "id: a\r\ntitle: T\r\nsnippet: S\r\n",
+      {
+        knownKeys: KNOWN,
+      },
+    );
     expect(records[0]).toEqual({ id: "a", title: "T", snippet: "S" });
   });
 
   it("a non-key line continues the previous key (trailing-space joined)", () => {
     const text =
       "id: a\n" + "title: First line\n" + "  continued line\n" + "snippet: S";
-    const { records } = parseRecords(text, { knownKeys: KNOWN });
+    const { records } = parseRecords<Record<string, unknown>>(text, {
+      knownKeys: KNOWN,
+    });
     expect(records[0].title).toBe("First line continued line");
   });
 
   it("drops a final truncated block missing required keys; keeps good head", () => {
     const good = rec({ id: "a", title: "T", snippet: "S" });
     const truncated = "id: b\ntitle: half";
-    const res = parseRecords(`${good}\n\n${truncated}`, {
-      knownKeys: KNOWN,
-      schema: Rec,
-    }).records;
+    const res = parseRecords<Record<string, unknown>>(
+      `${good}\n\n${truncated}`,
+      {
+        knownKeys: KNOWN,
+        schema: Rec,
+      },
+    ).records;
     expect(res).toEqual([{ id: "a", title: "T", snippet: "S" }]);
   });
 
   it("drops a middle bad block; keeps both good neighbors", () => {
     const good = (id: string) => rec({ id, title: "T", snippet: "S" });
     const bad = "id: \ntitle: missing snippet";
-    const res = parseRecords(`${good("a")}\n\n${bad}\n\n${good("b")}`, {
-      knownKeys: KNOWN,
-      schema: Rec,
-    }).records;
+    const res = parseRecords<Record<string, unknown>>(
+      `${good("a")}\n\n${bad}\n\n${good("b")}`,
+      {
+        knownKeys: KNOWN,
+        schema: Rec,
+      },
+    ).records;
     expect(res.map((r) => r.id)).toEqual(["a", "b"]);
   });
 
   it("returns an empty list when nothing survives", () => {
-    const { records, issues } = parseRecords(
+    const { records, issues } = parseRecords<Record<string, unknown>>(
       "complete gibberish\nno keys here",
       { knownKeys: KNOWN, schema: Rec },
     );
@@ -95,7 +108,7 @@ describe("parseRecords", () => {
       "snippet.highlights.0.start: 0",
       "snippet.highlights.0.len: 6",
     ].join("\n");
-    const { records } = parseRecords(text, {
+    const { records } = parseRecords<Record<string, unknown>>(text, {
       knownKeys: [
         "id",
         "title",
@@ -112,55 +125,76 @@ describe("parseRecords", () => {
   });
 
   it("numbers: an integer string coerces, a non-numeric value drops the key", () => {
-    const { records } = parseRecords("id: a\ntitle: T\nsnippet: S\nmatch: 8", {
-      knownKeys: KNOWN,
-      numbers: ["match"],
-    });
+    const { records } = parseRecords<Record<string, unknown>>(
+      "id: a\ntitle: T\nsnippet: S\nmatch: 8",
+      {
+        knownKeys: KNOWN,
+        numbers: ["match"],
+      },
+    );
     expect(records[0].match).toBe(8);
-    const { records: bad } = parseRecords(
+    const { records: bad } = parseRecords<Record<string, unknown>>(
       "id: a\ntitle: T\nsnippet: S\nmatch: high",
       { knownKeys: KNOWN, numbers: ["match"] },
     );
     expect(bad[0]).not.toHaveProperty("match");
   });
   it("floats: a decimal coerces, a percentage coerces, a non-numeric value drops the key", () => {
-    const ok = parseRecords("id: a\ntitle: T\nsnippet: S\nmatch: 0.65", {
-      knownKeys: KNOWN,
-      floats: ["match"],
-    });
+    const ok = parseRecords<Record<string, unknown>>(
+      "id: a\ntitle: T\nsnippet: S\nmatch: 0.65",
+      {
+        knownKeys: KNOWN,
+        floats: ["match"],
+      },
+    );
     expect(ok.records[0].match).toBe(0.65);
-    const pct = parseRecords("id: a\ntitle: T\nsnippet: S\nmatch: 75%", {
-      knownKeys: KNOWN,
-      floats: ["match"],
-    });
+    const pct = parseRecords<Record<string, unknown>>(
+      "id: a\ntitle: T\nsnippet: S\nmatch: 75%",
+      {
+        knownKeys: KNOWN,
+        floats: ["match"],
+      },
+    );
     expect(pct.records[0].match).toBe(75);
-    const bad = parseRecords("id: a\ntitle: T\nsnippet: S\nmatch: high", {
-      knownKeys: KNOWN,
-      floats: ["match"],
-    });
+    const bad = parseRecords<Record<string, unknown>>(
+      "id: a\ntitle: T\nsnippet: S\nmatch: high",
+      {
+        knownKeys: KNOWN,
+        floats: ["match"],
+      },
+    );
     expect(bad.records[0]).not.toHaveProperty("match");
   });
 
   it("booleans: true/false coerce, anything else drops the key", () => {
-    const t = parseRecords("id: a\ntitle: T\nsnippet: S\nmatch: true", {
-      knownKeys: KNOWN,
-      booleans: ["match"],
-    });
+    const t = parseRecords<Record<string, unknown>>(
+      "id: a\ntitle: T\nsnippet: S\nmatch: true",
+      {
+        knownKeys: KNOWN,
+        booleans: ["match"],
+      },
+    );
     expect(t.records[0].match).toBe(true);
-    const f = parseRecords("id: a\ntitle: T\nsnippet: S\nmatch: false", {
-      knownKeys: KNOWN,
-      booleans: ["match"],
-    });
+    const f = parseRecords<Record<string, unknown>>(
+      "id: a\ntitle: T\nsnippet: S\nmatch: false",
+      {
+        knownKeys: KNOWN,
+        booleans: ["match"],
+      },
+    );
     expect(f.records[0].match).toBe(false);
-    const bad = parseRecords("id: a\ntitle: T\nsnippet: S\nmatch: yes", {
-      knownKeys: KNOWN,
-      booleans: ["match"],
-    });
+    const bad = parseRecords<Record<string, unknown>>(
+      "id: a\ntitle: T\nsnippet: S\nmatch: yes",
+      {
+        knownKeys: KNOWN,
+        booleans: ["match"],
+      },
+    );
     expect(bad.records[0]).not.toHaveProperty("match");
   });
   it("lists: comma- and newline-separated values become an array of trimmed strings", () => {
     const text = "id: a\ntitle: T\nsnippet: S\nreasons: alpha, beta\n  gamma";
-    const { records } = parseRecords(text, {
+    const { records } = parseRecords<Record<string, unknown>>(text, {
       knownKeys: KNOWN,
       lists: ["reasons"],
     });
@@ -175,7 +209,7 @@ describe("parseRecords", () => {
         snippet: { text: "quoted", highlights: [{ start: 0, len: 6 }] },
       },
     ]);
-    const { records } = parseRecords(text, {
+    const { records } = parseRecords<Record<string, unknown>>(text, {
       knownKeys: [
         "id",
         "title",
@@ -194,7 +228,10 @@ describe("parseRecords", () => {
   it("a single JSON object (not an array) is NOT salvaged as one record", () => {
     const text = JSON.stringify({ id: "a", title: "T", snippet: "S" });
     expect(
-      parseRecords(text, { knownKeys: KNOWN, schema: Rec }).records,
+      parseRecords<Record<string, unknown>>(text, {
+        knownKeys: KNOWN,
+        schema: Rec,
+      }).records,
     ).toEqual([]);
   });
 
@@ -204,7 +241,10 @@ describe("parseRecords", () => {
       JSON.stringify([{ id: "a", title: "T", snippet: "S" }]) +
       "\n```";
     expect(
-      parseRecords(text, { knownKeys: KNOWN, schema: Rec }).records,
+      parseRecords<Record<string, unknown>>(text, {
+        knownKeys: KNOWN,
+        schema: Rec,
+      }).records,
     ).toHaveLength(1);
   });
 });
