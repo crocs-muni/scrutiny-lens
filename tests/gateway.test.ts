@@ -1,0 +1,531 @@
+// W53 · AI gateway tests — the transport trust gate (issue #53).
+//
+// The fake fetch is FAIL-CLOSED: any request not matching the script throws
+// (the simonw/llm#1608 lesson — a transport mock that silently falls through
+// to the live network mutes real failures). Everything here runs through the
+// REAL SDK provider (createOpenAICompatible with our injected fetch), so
+// headers, JSON encoding, and error mapping run for real; only the network is
+// scripted.
+//
+// Real wall-clock timers are deliberate in this suite: the gateway's
+// semaphore, cooldowns, and backoff sleeps ARE the behavior under test and
+// interplay with AbortSignal.timeout/fetch in ways fake timers cannot drive
+// deterministically here. Durations are kept small (≤1s).
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
+import {
+	callLLM,
+	streamLLM,
+	GatewayError,
+	configureGateway,
+	resetGateway,
+	setBaseFetch,
+	primeSecrets,
+	scrubSecrets,
+	recentAttempts
+} from '$lib/ai/gateway';
+import { generateStructured } from '$lib/ai/output';
+import { fetchModels } from '$lib/ai/models';
+import type { CallLLMArgs } from '$lib/ai/output';
+
+const KEY = 'supersecretkey123';
+const provider = { name: 't', baseUrl: 'https://api.test/v1', model: 'm', apiKey: KEY };
+
+function args(over: Partial<CallLLMArgs> = {}): CallLLMArgs {
+	return {
+		provider,
+		system: 's',
+		messages: [{ role: 'user', content: 'hi' }],
+		temperature: 0.2,
+		...over
+	};
+}
+
+function abortOf(signal?: AbortSignal): unknown {
+	return signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+}
+
+/** Delay that settles early (rejected) when the signal aborts — mirrors real
+ * fetch fidelity so abort tests measure the gateway, not the fake. */
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+	const { promise, resolve, reject } = Promise.withResolvers<void>();
+	const timer = setTimeout(() => {
+		signal?.removeEventListener('abort', onAbort);
+		resolve();
+	}, ms);
+	(timer as { unref?: () => void }).unref?.();
+	const onAbort = (): void => {
+		clearTimeout(timer);
+		reject(abortOf(signal));
+	};
+	signal?.addEventListener('abort', onAbort, { once: true });
+	if (signal?.aborted) {
+		clearTimeout(timer);
+		signal.removeEventListener('abort', onAbort);
+		reject(abortOf(signal));
+	}
+	return promise;
+}
+/** Poll until `fn` is truthy (real timers) — removes wall-clock races the
+ * suite would otherwise carry on loaded event loops. */
+async function waitFor(fn: () => boolean, timeoutMs = 2000): Promise<void> {
+	const start = Date.now();
+	while (!fn()) {
+		if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out');
+		await delay(2);
+	}
+}
+
+/* ------------------------------------------------------------------ *
+ * Scripted fail-closed fetch
+ * ------------------------------------------------------------------ */
+
+interface Step {
+	/** HTTP status; default 200 */
+	status?: number;
+	headers?: Record<string, string>;
+	/** body for a JSON response */
+	body?: unknown;
+	/** SSE text chunks for a 200 stream */
+	stream?: string[];
+	/** ms to delay the response start (abort-aware) */
+	delayMs?: number;
+	/** ms to delay BETWEEN stream chunks (after the first) */
+	chunkGapMs?: number;
+	/** never resolve; reject when the request signal aborts */
+	hang?: true;
+}
+
+interface FetchLog {
+	url: string;
+	startMs: number;
+	headers: Record<string, string>;
+	signal?: AbortSignal;
+}
+
+function chatCompletion(text: string) {
+	return {
+		id: 'c1',
+		object: 'chat.completion',
+		created: 1,
+		model: 'm',
+		choices: [
+			{
+				index: 0,
+				message: { role: 'assistant' as const, content: text },
+				finish_reason: 'stop' as const
+			}
+		],
+		usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
+	};
+}
+
+function sseChunk(payload: Record<string, unknown>): string {
+	return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+/** SSE stream. A final finish_reason chunk is REQUIRED — without it the SDK
+ * ends the stream with InvalidResponseDataError (verified against
+ * @ai-sdk/openai-compatible). */
+function sseResponse(chunks: string[], gapMs = 0): Response {
+	const enc = new TextEncoder();
+	const body = new ReadableStream<Uint8Array>({
+		async start(controller) {
+			for (let i = 0; i < chunks.length; i++) {
+				if (i > 0 && gapMs > 0) await delay(gapMs);
+				controller.enqueue(
+					enc.encode(
+						sseChunk({
+							id: 'c1',
+							object: 'chat.completion.chunk',
+							choices: [{ index: 0, delta: { content: chunks[i] } }]
+						})
+					)
+				);
+			}
+			controller.enqueue(
+				enc.encode(
+					sseChunk({
+						id: 'c1',
+						object: 'chat.completion.chunk',
+						choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+					})
+				)
+			);
+			controller.enqueue(enc.encode('data: [DONE]\n\n'));
+			controller.close();
+		}
+	});
+	return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+}
+
+/** Scripted, fail-closed fetch. Each request shifts one step; a missing step
+ * throws (never hits a live network). */
+function scriptedFetch(steps: Step[]): { fetch: typeof fetch; log: FetchLog[] } {
+	const log: FetchLog[] = [];
+	let next = 0;
+	const doFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+		const url = String(input instanceof Request ? input.url : input);
+		const step = steps[next++];
+		if (step === undefined) {
+			throw new Error(`fail-closed: unexpected fetch #${next} to ${url}`);
+		}
+		log.push({
+			url,
+			startMs: Date.now(),
+			headers: (init?.headers as Record<string, string>) ?? {},
+			signal: init?.signal ?? undefined
+		});
+		if (step.delayMs) await delay(step.delayMs, init?.signal ?? undefined);
+		if (step.hang) {
+			// Simulates a request that never settles until the SDK aborts it.
+			const { promise, reject } = Promise.withResolvers<Response>();
+			init?.signal?.addEventListener('abort', () => reject(abortOf(init.signal ?? undefined)), { once: true });
+			return promise;
+		}
+		if (step.stream) return sseResponse(step.stream, step.chunkGapMs ?? 0);
+		const status = step.status ?? 200;
+		const body =
+			step.body !== undefined
+				? JSON.stringify(step.body)
+				: status >= 300
+					? JSON.stringify({
+							error: { message: `HTTP ${status} for api_key: ${KEY}`, type: 'x', code: status }
+						})
+					: JSON.stringify(chatCompletion('T'));
+		return new Response(body, { status, headers: { 'content-type': 'application/json', ...step.headers } });
+	};
+	return { fetch: doFetch as unknown as typeof fetch, log };
+}
+
+/** 429 step carrying the LiteLLM-shaped body that leaks the key hash. */
+function rateLimited(retryAfterSecs: string): Step {
+	return {
+		status: 429,
+		headers: { 'retry-after': retryAfterSecs },
+		body: {
+			error: { message: `Rate limit exceeded for api_key: ${KEY}`, type: 'rate_limit_error', code: '429' }
+		}
+	};
+}
+
+/** Wraps a scripted fetch with in-flight peak tracking. */
+function withPeak(f: typeof fetch): { fetch: typeof fetch; peak: () => number } {
+	let active = 0;
+	let peak = 0;
+	const wrapped = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+		active += 1;
+		peak = Math.max(peak, active);
+		try {
+			return await f(input, init);
+		} finally {
+			active -= 1;
+		}
+	};
+	return { fetch: wrapped as unknown as typeof fetch, peak: () => peak };
+}
+
+/** Two scripted endpoints routed by URL — one endpoint's script must never
+ * answer another's (they share the cap under test). */
+function routedFetch(
+	a: { fetch: typeof fetch },
+	b: { fetch: typeof fetch },
+	bPrefix: string
+): typeof fetch {
+	return (async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url = String(input instanceof Request ? input.url : input);
+		return url.startsWith(bPrefix) ? b.fetch(input, init) : a.fetch(input, init);
+	}) as unknown as typeof fetch;
+}
+
+beforeEach(() => {
+	resetGateway();
+	setBaseFetch(undefined);
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
+});
+
+/* ------------------------------------------------------------------ *
+ * Semaphore
+ * ------------------------------------------------------------------ */
+
+describe('concurrency cap', () => {
+	it('never exceeds maxConcurrent=2 across 20 calls; FIFO order; all resolve', async () => {
+		const { fetch: f, log } = scriptedFetch(Array.from({ length: 20 }, () => ({ delayMs: 60 })));
+		const { fetch: tracked, peak } = withPeak(f);
+		setBaseFetch(tracked);
+		const results = await Promise.all(Array.from({ length: 20 }, () => callLLM(args())));
+		expect(results).toHaveLength(20);
+		expect(peak()).toBeLessThanOrEqual(2);
+		// FIFO: with cap 2 and uniform delays, start order matches call order.
+		for (let i = 2; i < log.length; i++) expect(log[i].startMs).toBeGreaterThanOrEqual(log[i - 1].startMs);
+	});
+
+	it.each([1, 3])('peak respects maxConcurrent=%i', async (cap) => {
+		configureGateway({ maxConcurrent: cap });
+		const { fetch: f } = scriptedFetch(Array.from({ length: cap * 3 }, () => ({ delayMs: 40 })));
+		const { fetch: tracked, peak } = withPeak(f);
+		setBaseFetch(tracked);
+		await Promise.all(Array.from({ length: cap * 3 }, () => callLLM(args())));
+		expect(peak()).toBe(cap);
+	});
+});
+
+/* ------------------------------------------------------------------ *
+ * 429 handling
+ * ------------------------------------------------------------------ */
+
+describe('429 + Retry-After', () => {
+	it('waits the Retry-After window, then succeeds', async () => {
+		const { fetch: f, log } = scriptedFetch([rateLimited('1'), {}]);
+		setBaseFetch(f);
+		expect(await callLLM(args())).toBe('T');
+		expect(log).toHaveLength(2);
+		// Retry-After 1s, jitter only widens (never below the stated value).
+		expect(log[1].startMs - log[0].startMs).toBeGreaterThanOrEqual(950);
+	});
+
+	it('sole retry layer: exactly maxAttempts fetches on persistent 429; kind unreachable; message carries 429 but not the key', async () => {
+		const { fetch: f, log } = scriptedFetch([
+			rateLimited('0'),
+			rateLimited('0'),
+			rateLimited('0'),
+			rateLimited('0')
+		]);
+		setBaseFetch(f);
+		const res = await generateStructured({
+			schema: z.object({ t: z.string() }),
+			messages: [{ role: 'user', content: 'hi' }],
+			provider
+		});
+		expect(res.ok).toBe(false);
+		if (!res.ok) {
+			// A 429 is a quota fact, surfaced honestly as unreachable-with-reason
+			// (spec §2), never invalid_request — and never with the key (ADR-018).
+			expect(res.kind).toBe('unreachable');
+			expect(res.message).not.toContain(KEY);
+			expect(res.message).toContain('429');
+		}
+		// SDK-internal retry is OFF (maxRetries: 0): 3 attempts total, not 9.
+		expect(log).toHaveLength(3);
+	});
+
+	it('honors Retry-After as HTTP-date', async () => {
+		// HTTP-date is second-precision: the parsed value lands in
+		// [floor(second), second] — 3s out gives a 1.5s floor after any
+		// transport skew (jitter only widens).
+		const httpDate = new Date(Date.now() + 3000).toUTCString();
+		const { fetch: f, log } = scriptedFetch([{ status: 429, headers: { 'retry-after': httpDate } }, {}]);
+		setBaseFetch(f);
+		await callLLM(args());
+		expect(log).toHaveLength(2);
+		expect(log[1].startMs - log[0].startMs).toBeGreaterThanOrEqual(1500);
+	});
+
+	it('sets a cooldown for the baseUrl while a different baseUrl proceeds immediately', async () => {
+		const a = scriptedFetch([rateLimited('1'), {}]);
+		const b = scriptedFetch([{ delayMs: 10 }]);
+		setBaseFetch(routedFetch(a, b, 'https://other.test'));
+		const other = { ...provider, baseUrl: 'https://other.test/v1' };
+		const slow = callLLM(args()); // 429 → ~1s cooldown → retry succeeds
+		await delay(30);
+		const t0 = Date.now();
+		expect(await callLLM(args({ provider: other }))).toBe('T');
+		expect(Date.now() - t0).toBeLessThan(500);
+		await slow;
+		expect(a.log).toHaveLength(2);
+		expect(b.log).toHaveLength(1);
+	});
+	it('caps an oversized Retry-After at maxRetryAfterMs', async () => {
+		configureGateway({ maxRetryAfterMs: 250 });
+		const { fetch: f, log } = scriptedFetch([rateLimited('60'), {}]);
+		setBaseFetch(f);
+		await callLLM(args());
+		expect(log).toHaveLength(2);
+		// capped ~250ms +20% jitter — never the 60s the endpoint asked for
+		expect(log[1].startMs - log[0].startMs).toBeLessThan(450);
+	});
+});
+
+/* ------------------------------------------------------------------ *
+ * Non-retryable statuses, 5xx, aborts, timeout
+ * ------------------------------------------------------------------ */
+
+describe('status handling', () => {
+	it('401: exactly one fetch, immediate GatewayError with status, scrubbed message', async () => {
+		const { fetch: f, log } = scriptedFetch([{ status: 401 }]);
+		setBaseFetch(f);
+		await expect(callLLM(args())).rejects.toSatisfy((e: unknown) => {
+			expect(e).toBeInstanceOf(GatewayError);
+			const g = e as GatewayError;
+			expect(g.statusCode).toBe(401);
+			expect(g.message).not.toContain(KEY);
+			return true;
+		});
+		expect(log).toHaveLength(1);
+	});
+
+	it('5xx: per-call backoff, maxAttempts fetches, NO cooldown (next call starts immediately)', async () => {
+		configureGateway({ maxAttempts: 2 });
+		const { fetch: f, log } = scriptedFetch([{ status: 503 }, { status: 503 }, { status: 503 }]);
+		setBaseFetch(f);
+		await expect(callLLM(args())).rejects.toBeInstanceOf(GatewayError);
+		expect(log).toHaveLength(2);
+		// No global cooldown: a fresh call to the same baseUrl fires at once.
+		await expect(callLLM(args())).rejects.toBeInstanceOf(GatewayError);
+		expect(log).toHaveLength(3);
+	});
+
+	it('aborted waiter never fires a request; other calls proceed', async () => {
+		const { fetch: f, log } = scriptedFetch([{ delayMs: 120 }, { delayMs: 120 }, {}]);
+		setBaseFetch(f);
+		const a = callLLM(args());
+		const b = callLLM(args());
+		// Wait until BOTH fetches fired: with maxConcurrent=2 that means a and b
+		// hold the two slots, so c (created next) is guaranteed to be the queued
+		// 3rd call. A blind delay raced the primeSecrets async digest under load.
+		await waitFor(() => log.length === 2);
+		const controller = new AbortController();
+		const c = callLLM(args({ signal: controller.signal }));
+		await delay(30);
+		controller.abort();
+		await expect(c).rejects.toSatisfy((e: unknown) => (e as Error).name === 'AbortError');
+		await a;
+		await b;
+		expect(log).toHaveLength(2); // c never reached the network
+	});
+
+	it('per-attempt timeout: hanging fetch is aborted once, recorded aborted, not retried', async () => {
+		configureGateway({ timeoutMs: 100 });
+		const { fetch: f, log } = scriptedFetch([{ hang: true }, { hang: true }]);
+		setBaseFetch(f);
+		await expect(callLLM(args())).rejects.toSatisfy((e: unknown) => {
+			expect(['AbortError', 'TimeoutError']).toContain((e as Error).name);
+			return true;
+		});
+		expect(log).toHaveLength(1);
+		expect(recentAttempts().at(-1)?.status).toBe('aborted');
+	});
+
+	it('caller abort mid-flight rejects immediately with AbortError', async () => {
+		const { fetch: f } = scriptedFetch([{ delayMs: 500 }]);
+		setBaseFetch(f);
+		const controller = new AbortController();
+		const p = callLLM(args({ signal: controller.signal }));
+		setTimeout(() => controller.abort(), 50);
+		await expect(p).rejects.toSatisfy((e: unknown) => (e as Error).name === 'AbortError');
+	});
+});
+
+/* ------------------------------------------------------------------ *
+ * Scrub (ADR-018)
+ * ------------------------------------------------------------------ */
+
+describe('scrubSecrets', () => {
+	it('redacts raw key, JSON-escaped key, sha256 hex, and labeled tokens', async () => {
+		await primeSecrets(KEY);
+		const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(KEY));
+		const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+		const escaped = JSON.stringify(KEY).slice(1, -1);
+
+		const cases = [
+			`boom ${KEY}`,
+			`boom ${escaped}`,
+			`Rate limit exceeded for api_key: ${hash}`,
+			`Rate limit exceeded for api_key: ${hash.slice(0, 11)}…`,
+			`Authorization: Bearer ${KEY}`
+		];
+		for (const text of cases) {
+			const out = scrubSecrets(text, KEY);
+			expect(out).not.toContain(KEY);
+			expect(out).not.toContain(hash.slice(0, 11));
+			expect(out.length).toBeGreaterThan(0);
+		}
+	});
+
+	it('does not shred ordinary text for a short key', () => {
+		const text = 'the quick brown fox jumps';
+		expect(scrubSecrets(text, 'abc')).toBe(text);
+	});
+});
+
+/* ------------------------------------------------------------------ *
+ * Ledger
+ * ------------------------------------------------------------------ */
+
+describe('recentAttempts', () => {
+	it('records one entry per attempt with status/timing, notes scrubbed', async () => {
+		const { fetch: f } = scriptedFetch([rateLimited('0'), {}]);
+		setBaseFetch(f);
+		await callLLM(args());
+		const recs = recentAttempts();
+		expect(recs).toHaveLength(2);
+		expect(recs[0].status).toBe('retry');
+		expect(recs[0].httpStatus).toBe(429);
+		expect(recs[1].status).toBe('ok');
+		expect(recs[1].endMs).toBeGreaterThanOrEqual(recs[1].startMs);
+		for (const r of recs) expect(r.note ?? '').not.toContain(KEY);
+	});
+});
+
+/* ------------------------------------------------------------------ *
+ * Streaming
+ * ------------------------------------------------------------------ */
+
+describe('streamLLM', () => {
+	it('retries a 429 before the first byte, then yields chunks in order', async () => {
+		const { fetch: f, log } = scriptedFetch([rateLimited('0'), { stream: ['he', 'llo'] }]);
+		setBaseFetch(f);
+		const chunks: string[] = [];
+		for await (const c of streamLLM(args())) chunks.push(c);
+		expect(chunks.join('')).toBe('hello');
+		expect(log).toHaveLength(2);
+	});
+
+	it('releases the slot after the first chunk (streaming chat never starves the lanes)', async () => {
+		const { fetch: f } = scriptedFetch([{ stream: ['a', 'b', 'c'], chunkGapMs: 400 }, { delayMs: 10 }]);
+		setBaseFetch(f);
+		const chunks: string[] = [];
+		const consuming = (async () => {
+			for await (const c of streamLLM(args())) chunks.push(c);
+		})();
+		await vi.waitFor(() => expect(chunks).toEqual(['a']), { timeout: 2000 });
+		// While the stream is still open (2 more chunks, 400ms apart), a
+		// non-streaming call must acquire a slot and complete.
+		const t0 = Date.now();
+		expect(await callLLM(args())).toBe('T');
+		expect(Date.now() - t0).toBeLessThan(350);
+		await consuming;
+		expect(chunks.join('')).toBe('abc');
+	});
+});
+
+/* ------------------------------------------------------------------ *
+ * fetchModels (sixth surface)
+ * ------------------------------------------------------------------ */
+
+describe('fetchModels through the gateway', () => {
+	it('returns the sorted model list; Authorization carried; URL hit', async () => {
+		const { fetch: f, log } = scriptedFetch([{ body: { data: [{ id: 'b' }, { id: 'a' }] } }]);
+		setBaseFetch(f);
+		expect(await fetchModels('https://api.test/v1', KEY)).toEqual({ ok: true, models: ['a', 'b'] });
+		expect(log).toHaveLength(1);
+		expect(log[0].url.endsWith('/models')).toBe(true);
+		expect(log[0].headers['Authorization']).toBe(`Bearer ${KEY}`);
+	});
+
+	it('a 429 on /models is retried and then succeeds', async () => {
+		const { fetch: f } = scriptedFetch([rateLimited('0'), { body: { data: [] } }]);
+		setBaseFetch(f);
+		expect(await fetchModels('https://api.test/v1', KEY)).toEqual({ ok: true, models: [] });
+	});
+
+	it('401 on /models maps to kind http with the status', async () => {
+		const { fetch: f } = scriptedFetch([{ status: 401 }]);
+		setBaseFetch(f);
+		expect(await fetchModels('https://api.test/v1', KEY)).toEqual({ ok: false, kind: 'http', status: 401 });
+	});
+});

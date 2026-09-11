@@ -17,8 +17,13 @@
  *     `'@ai-sdk/openai-compatible'`; call the instance with a model id →
  *     `LanguageModelV4` accepted by `generateText`.
  *
- *   Design note: this module deliberately drives `generateText` in plain-text
- *   mode and performs its OWN JSON + zod gate. Rationale (locked contract):
+ *   Transport ownership: since issue #53 the AI gateway (`./gateway`) owns the
+ *   per-call `createOpenAICompatible` provider, `maxRetries: 0`, retry and
+ *   cooldown — `defaultCallLLM` below delegates to it, so this module keeps
+ *   only the JSON + zod gate below.
+ *   Design note: this module deliberately drives `generateText` (behind the
+ *   gateway) in plain-text mode and performs its OWN JSON + zod gate.
+ *   Rationale (locked contract):
  *     - the pipeline needs EXACTLY ONE repair-retry that appends the zod error
  *       text to the prompt and then degrades honestly to an `AIResult`;
  *     - the SDK's `Output.object` mode runs its own opaque repair loop and
@@ -31,8 +36,7 @@
  */
 
 import { z } from 'zod';
-import { generateText } from 'ai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { callLLM } from './gateway';
 import { getProviderConfig, NO_KEY_MESSAGE, type ProviderConfig, type ProviderOverrideInput } from './provider';
 
 /** Honest-degradation contract: never throw on an LLM failure. */
@@ -77,25 +81,13 @@ export interface GenerateStructuredOptions<T> {
 	callLLM?: CallLLM;
 }
 
-/** Default transport: resolve provider → openai-compatible → generateText → .text.
+/** Default transport: the AI gateway (issue #53) owns the openai-compatible
+ * provider, retry/cooldown, and fetch; this arm re-exports its non-streaming
+ * call so the app keeps ONE injectable transport here.
  * Exported: the app-level investigation orchestrator starts runSearch with
  * exactly this transport (issue #37) — it used to be private to the
  * generateStructured seam. */
-export async function defaultCallLLM({ provider, system, messages, temperature, signal }: CallLLMArgs): Promise<string> {
-	const p = createOpenAICompatible({
-		baseURL: provider.baseUrl,
-		name: provider.name,
-		apiKey: provider.apiKey
-	});
-	const result = await generateText({
-		model: p(provider.model),
-		system,
-		messages,
-		temperature,
-		abortSignal: signal
-	});
-	return result.text;
-}
+export const defaultCallLLM: CallLLM = callLLM;
 
 function isAbort(signal: AbortSignal | undefined, err: unknown): boolean {
 	return (
@@ -110,6 +102,10 @@ function isAbort(signal: AbortSignal | undefined, err: unknown): boolean {
 function kindOf(err: unknown): AIKind {
 	const status = (err as { statusCode?: number } | null)?.statusCode;
 	if (status !== undefined) {
+		// A 429 is a quota fact, not an invalid request: honest as
+		// unreachable-with-reason (issue #53). GatewayError carries statusCode,
+		// so this branch fires on the gateway's exhausted-retries raise.
+		if (status === 429) return 'unreachable';
 		return status >= 300 && status < 500 ? 'invalid_request' : 'unreachable';
 	}
 	const msg = String((err as Error | null)?.message ?? err).toLowerCase();
@@ -121,9 +117,14 @@ function kindOf(err: unknown): AIKind {
 	// this is NOT the same truth as a 5xx (the endpoint ANSWERED but failed):
 	// keep the lanes distinct so the UI never mislabels a browser block
 	// "AI unreachable".
+	//
+	// The gateway now wraps every transport error in a GatewayError and sets
+	// `network: true` for exactly this status-less case, so the signature
+	// arrives as that flag rather than a raw TypeError. Both shapes are read.
 	if (
-		err instanceof TypeError &&
-		/failed to fetch|fetch failed|networkerror|load failed|mixed content/i.test(msg)
+		((err as { network?: boolean } | null)?.network === true ||
+			(err instanceof TypeError &&
+				/failed to fetch|fetch failed|networkerror|load failed|mixed content/i.test(msg)))
 	) {
 		return 'browser_blocked';
 	}
