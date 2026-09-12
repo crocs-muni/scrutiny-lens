@@ -43,15 +43,15 @@ export interface KvOptions<T> {
   /** Keys the model is told to emit. Drives the known-key classifier, the
    * re-prompt, and protects the salvage (a bare `snippet:` line is a parent
    * of `snippet.text`, never a bare value). */
-  knownKeys: string[];
+  knownKeys: readonly string[];
   /** Keys whose value must be an integer (dropped when not). */
-  numbers?: string[];
+  numbers?: readonly string[];
   /** Keys whose value is a number (integer or decimal, `75%` accepted). */
-  floats?: string[];
+  floats?: readonly string[];
   /** Keys whose value is true/false (anything else drops the key). */
-  booleans?: string[];
+  booleans?: readonly string[];
   /** Keys whose value is a list: comma- AND continuation-line separated. */
-  lists?: string[];
+  lists?: readonly string[];
 }
 
 export interface KvParseResult<T> {
@@ -104,8 +104,8 @@ function toList(v: string): string[] {
  * Longest-prefix-first so `snippet.text` wins over `snippet`. */
 function blockToEntries(
   block: string,
-  knownKeys: string[],
-  listKeys: string[],
+  knownKeys: readonly string[],
+  listKeys: readonly string[],
 ): Array<[string, unknown]> | null {
   const sorted = [...knownKeys].sort((a, b) => b.length - a.length);
   const entries: Array<[string, unknown]> = [];
@@ -325,13 +325,13 @@ export function parseRecords<T>(
 
 export interface GenerateRecordsOptions<T> {
   schema: z.ZodType<T>;
-  knownKeys: string[];
-  numbers?: string[];
+  knownKeys: readonly string[];
+  numbers?: readonly string[];
   /** Keys whose value is a number (integer or decimal, `75%` accepted). */
-  floats?: string[];
+  floats?: readonly string[];
   /** Keys whose value is true/false (anything else drops the key). */
-  booleans?: string[];
-  lists?: string[];
+  booleans?: readonly string[];
+  lists?: readonly string[];
   /** Hard cap on records, applied in order after salvage — mirrors the
    * old array-schema `.max(n)` so a partial salvage can't exceed the bound
    * the prompt stated (spec §2: never report more than was asked). */
@@ -351,7 +351,7 @@ export interface GenerateRecordsOptions<T> {
 
 /** Format the model must emit — derived from the known keys. */
 export function formatInstruction(
-  knownKeys: string[],
+  knownKeys: readonly string[],
   notes?: Record<string, string>,
 ): string {
   const lines = knownKeys.map((k) =>
