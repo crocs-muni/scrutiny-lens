@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { generateRecords, parseRecords, scrubKey } from "$lib/ai/records";
+import { generateRecords, parseRecords } from "$lib/ai/records";
 import type { CallLLM } from "$lib/ai/output";
 
 const Rec = z.object({
@@ -386,29 +386,64 @@ describe("generateRecords", () => {
   });
 });
 
-describe("scrubKey (ADR-018)", () => {
-  it("replaces the configured apiKey anywhere it appears in a message", () => {
-    const key = "sk-live-1234567890";
-    expect(
-      scrubKey(`HTTP 401 from https://api.example.com/v1/chat?key=${key} for model m`, key),
-    ).toBe("HTTP 401 from https://api.example.com/v1/chat?key=<key> for model m");
+describe("API key scrubbing in the lane log (ADR-018)", () => {
+  it("the console.debug lane never leaks the configured apiKey, even when the transport error echoes the request URL", async () => {
+    const seen: string[] = [];
+    const orig = console.debug;
+    console.debug = (...args: unknown[]) => {
+      seen.push(args.map((a) => String(a)).join(" "));
+    };
+    const SECRET = "sk-live-1234567890";
+    const call: CallLLM = async () => {
+      // The failure shape that bit dbPrivacy: the error message embeds the
+      // request URL, which itself carries the key.
+      throw new Error(
+        `GET https://api.example.com/v1/chat?key=${SECRET} failed with 401`,
+      );
+    };
+    try {
+      const res = await generateRecords({
+        schema: Rec,
+        knownKeys: KNOWN,
+        messages: [],
+        provider: { baseUrl: "https://api.example.com/v1", model: "m", apiKey: SECRET } as never,
+        callLLM: call,
+      });
+      expect(res.ok).toBe(false);
+      // The raw truth rides the AIResult (the caller's honest-degrade path
+      // truncates it into the banner)…
+      if (!res.ok) expect(res.message).toContain(SECRET);
+      // … but the log lane must be scrubbed.
+      const lane = seen.join("\n");
+      expect(lane).not.toContain(SECRET);
+      expect(lane).toContain("<key>");
+    } finally {
+      console.debug = orig;
+    }
   });
 
-  it("leaves messages without the key untouched", () => {
-    expect(scrubKey("HTTP 500 upstream", "sk-live-1234567890")).toBe(
-      "HTTP 500 upstream",
-    );
-  });
-
-  it("uses Error.message for Error-shaped values (the real caller's shape)", () => {
-    const err = new Error("HTTP 401 for https://api.example.com/v1?key=sk-x");
-    expect(scrubKey(err, "sk-x")).toBe(
-      "HTTP 401 for https://api.example.com/v1?key=<key>",
-    );
-  });
-
-  it("returns the message unchanged when no key is configured", () => {
-    expect(scrubKey("HTTP 401 user error", "")).toBe("HTTP 401 user error");
+  it("a key-free error message passes through the lane unchanged", async () => {
+    const seen: string[] = [];
+    const orig = console.debug;
+    console.debug = (...args: unknown[]) => {
+      seen.push(args.map((a) => String(a)).join(" "));
+    };
+    const call: CallLLM = async () => {
+      throw new Error("upstream 500");
+    };
+    try {
+      await generateRecords({
+        schema: Rec,
+        knownKeys: KNOWN,
+        messages: [],
+        provider: PROV,
+        callLLM: call,
+      });
+      const lane = seen.join("\n");
+      expect(lane).toContain("upstream 500");
+    } finally {
+      console.debug = orig;
+    }
   });
 });
 

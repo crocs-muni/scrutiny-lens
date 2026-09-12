@@ -420,7 +420,7 @@ function cappedParse<T>(
  * endpoint shape would otherwise leak into console.debug. The raw message
  * stays on the AIResult (the caller's honest-degrade path truncates it
  * before it reaches the banner). */
-export function scrubKey(msg: unknown, apiKey: string): string {
+function scrubKey(msg: unknown, apiKey: string): string {
   const s = String((msg as Error | null)?.message ?? msg);
   return apiKey ? s.split(apiKey).join("<key>") : s;
 }
@@ -525,7 +525,9 @@ export async function generateRecords<T>(
     throw err;
   }
   if (!first.ok) {
-    dbg(`transport ${first.kind}: ${first.message}`);
+    dbg(
+      `transport ${first.kind}: ${scrubKey(first.message, provRes.config.apiKey)}`,
+    );
     return { ok: false, kind: first.kind, message: first.message };
   }
   dbg(`first: ${first.text.length} chars`);
@@ -568,7 +570,9 @@ export async function generateRecords<T>(
     throw err;
   }
   if (!second.ok) {
-    dbg(`transport ${second.kind}: ${second.message}`);
+    dbg(
+      `transport ${second.kind}: ${scrubKey(second.message, provRes.config.apiKey)}`,
+    );
     return { ok: false, kind: second.kind, message: second.message };
   }
   dbg(`second: ${second.text.length} chars`);
