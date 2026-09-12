@@ -63,9 +63,15 @@ describe("smoke corpus parse-rate diagnostic (issue #54)", () => {
           blocks++; // a fault injection — unparseable by design
           continue;
         }
-        const r = parseRecords(entry, { knownKeys: KNOWN, schema: Rec });
+        // A never-fail diagnostic: a malformed corpus entry must count as
+        // unparseable, not blow up the whole run.
+        try {
+          const r = parseRecords(entry, { knownKeys: KNOWN, schema: Rec });
+          parsed += r.records.length;
+        } catch {
+          // intentionally swallow — the point of the diagnostic is the rate
+        }
         blocks += Math.max(1, entry.split(/\n\n/).length);
-        parsed += r.records.length;
       }
       totalBlocks += blocks;
       totalParsed += parsed;

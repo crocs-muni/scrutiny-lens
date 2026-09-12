@@ -15,11 +15,17 @@ import { translateQuestion } from "$lib/ai/agents/query";
 import { fillCards, type ProductCard } from "$lib/pipeline/cards";
 import { defaultCallLLM } from "$lib/ai/output";
 
-/** Same-origin fake gateway; the model name selects the scripted lane. */
+/** Same-origin fake gateway; the model name selects the scripted lane.
+ * A fresh nonce per run: bucket cursors stay unexhausted across reruns AND
+ * the model becomes a fresh (eventId, model) interpretation-cache key in
+ * IndexedDB, so a previous run's cached fills can't mask the degradation
+ * lanes (issue #54: the smoke must be rerunnable with the same result). */
+const RUN = Math.random().toString(36).slice(2, 8);
+
 const provider = (model: string) => ({
   name: "smoke",
   baseUrl: new URL("/v1", location.origin).href,
-  model,
+  model: `${model}-${RUN}`,
   apiKey: "smoke-not-a-real-key",
 });
 
@@ -115,6 +121,22 @@ export async function runSmoke(): Promise<{ lines: string[] }> {
       "fill: zero transport failures surfaced",
       transportFailures.length === 0,
       failures.join(",") || "none",
+    ]);
+
+    // Teeth for the 429 lane: the gateway must have FIRED at least one
+    // scripted 429 — without this the check above passes vacuously if the
+    // bumper were ever removed from the script.
+    let throttled = 0;
+    try {
+      const st = await fetch("/smoke/status").then((r) => r.json());
+      throttled = typeof st.served429 === "number" ? st.served429 : 0;
+    } catch {
+      /* status endpoint optional; absence is neutral */
+    }
+    results.push([
+      "gateway: at least one scripted 429 was served (the lane can really fail)",
+      throttled >= 1,
+      `served429=${throttled}`,
     ]);
 
     // The truncated lane salvaged partially — per-card granularity.

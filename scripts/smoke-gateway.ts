@@ -152,11 +152,24 @@ function recordCorpus(model: string, res: ScriptedResponse): void {
  */
 export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
   const cursors = new Map<string, number>();
+  // 429s the gateway served — the runner asserts at least one scripted
+  // throttle happened (issue #54: the "429 retried away" lane must be able
+  // to fail if the 429 never fired). Resettable via DELETE /smoke/status.
+  const served429: Array<{ model: string; at: number }> = [];
   return (req, res, next) => {
     const url =
       (req as { originalUrl?: string; url?: string }).originalUrl ??
       req.url ??
       "";
+    if (url === "/smoke/status") {
+      res.setHeader("content-type", "application/json");
+      if (req.method === "DELETE") {
+        served429.length = 0;
+        cursors.clear();
+      }
+      res.end(JSON.stringify({ served429: served429.length, models: served429.map((s) => s.model) }));
+      return;
+    }
     if (url === "/v1/models") {
       res.setHeader("content-type", "application/json");
       res.end(
@@ -183,8 +196,13 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
         return;
       }
       const model = body.model ?? "";
-      const scripted = BUCKETS[model];
-      if (!scripted) {
+      // Prefix match: a run may suffix the lane with a nonce (`smoke-translate-abc1`)
+      // so bucket cursors stay fresh across reruns (issue #54: the smoke must
+      // be rerunnable without IndexedDB interference; keyed-by-model caches
+      // are bypassed by the unique model name).
+      const lane = Object.keys(BUCKETS).find((k) => model === k || model.startsWith(`${k}-`));
+      const scripted = lane ? BUCKETS[lane] : undefined;
+      if (!lane || !scripted) {
         // Fail-closed: an unscripted model is a harness bug.
         res.statusCode = 400;
         res.setHeader("content-type", "application/json");
@@ -203,6 +221,7 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
       const next = scripted[Math.min(i, scripted.length - 1)];
       cursors.set(model, i + 1);
       recordCorpus(model, next);
+      if (next.status === 429) served429.push({ model, at: Date.now() });
       res.statusCode = next.status;
       res.setHeader("content-type", "application/json");
       if (next.status === 429) res.setHeader("retry-after", "1");

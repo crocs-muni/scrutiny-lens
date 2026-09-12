@@ -109,6 +109,7 @@ function blockToEntries(
 ): Array<[string, unknown]> | null {
   const sorted = [...knownKeys].sort((a, b) => b.length - a.length);
   const entries: Array<[string, unknown]> = [];
+  const seen = new Set<string>();
   let lastKey: string | null = null;
 
   const pushCont = (line: string): void => {
@@ -135,6 +136,16 @@ function blockToEntries(
     }
     const value = line === match ? "" : line.slice(match.length + 1).trim();
     lastKey = match;
+    // First-wins on a duplicate key (spec §2: never let prose that looks
+    // like a key silently overwrite a real field — last-wins would corrupt
+    // e.g. a snippet quoting `category: …` into the title slot). The
+    // duplicate is appended to the current value as a continuation so the
+    // text still lands somewhere visible to the zod gate.
+    if (seen.has(match)) {
+      pushCont(`${match}: ${value}`);
+      continue;
+    }
+    seen.add(match);
     entries.push([match, value]);
   }
   return entries.length > 0 ? entries : null;
@@ -403,6 +414,16 @@ function cappedParse<T>(
     ? { records: r.records.slice(0, max), issues: r.issues }
     : r;
 }
+/** Scrub the configured key out of a message for lane logging (ADR-018):
+ * error bodies can echo the request URL, which for a key-in-query-string
+ * endpoint shape would otherwise leak into console.debug. The raw message
+ * stays on the AIResult (the caller's honest-degrade path truncates it
+ * before it reaches the banner). */
+function scrubKey(msg: unknown, apiKey: string): string {
+  const s = String((msg as Error | null)?.message ?? msg);
+  return apiKey ? s.split(apiKey).join("<key>") : s;
+}
+
 /**
  * Generate a list of records from a prompt, KV-gated at our boundary, with
  * exactly ONE re-prompt when nothing survives. Never throws on a model
@@ -468,13 +489,16 @@ export async function generateRecords<T>(
       (err: unknown) => {
         if (isAbort(err, abortSignal)) throw err;
         const kind = kindOf(err);
+        // The raw message rides the AIResult (the caller's honest-degrade
+        // truncates it into the banner); only the lane log is scrubbed.
+        const raw = String((err as Error)?.message ?? err);
         dbg(
-          `fail: ${kind} after ${Date.now() - t0}ms — ${String((err as Error)?.message ?? err)}`,
+          `fail: ${kind} after ${Date.now() - t0}ms — ${scrubKey(raw, provRes.config.apiKey)}`,
         );
         return {
           ok: false,
           kind,
-          message: String((err as Error)?.message ?? err),
+          message: raw,
         };
       },
     );
@@ -496,7 +520,7 @@ export async function generateRecords<T>(
   try {
     first = await run();
   } catch (err) {
-    dbg(`throw: ${String((err as Error)?.message ?? err)} (${kindOf(err)})`);
+    dbg(`throw: ${scrubKey(err, provRes.config.apiKey)} (${kindOf(err)})`);
     throw err;
   }
   if (!first.ok) {
@@ -539,7 +563,7 @@ export async function generateRecords<T>(
       },
     );
   } catch (err) {
-    dbg(`throw: ${String((err as Error)?.message ?? err)} (${kindOf(err)})`);
+    dbg(`throw: ${scrubKey(err, provRes.config.apiKey)} (${kindOf(err)})`);
     throw err;
   }
   if (!second.ok) {
