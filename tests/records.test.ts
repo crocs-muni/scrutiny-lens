@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { generateRecords, parseRecords } from "$lib/ai/records";
+import { generateRecords, parseRecords, scrubKey } from "$lib/ai/records";
 import type { CallLLM } from "$lib/ai/output";
 
 const Rec = z.object({
@@ -201,6 +201,53 @@ describe("parseRecords", () => {
     expect(records[0].reasons).toEqual(["alpha", "beta", "gamma"]);
   });
 
+  it("first-wins on a duplicate key: a prose line that matches another known key folds into the current value, never overwrites the first (spec §2)", () => {
+    // The snippet's prose quotes a `category:`-shaped line. Last-wins would
+    // silently swap the title; first-wins must keep the first title and
+    // fold the collision into the running value, surfaced honestly by zod
+    // or the gate downstream.
+    const text =
+      "id: a\ntitle: Real title\nsnippet: A snippet mentioning category: BSI EAL4+ as a fact.\ntitle: Category: BSI EAL4+";
+    const { records } = parseRecords<Record<string, unknown>>(text, {
+      knownKeys: KNOWN,
+      schema: Rec,
+    });
+    expect(records[0].title).toBe("Real title");
+    expect(records[0].snippet).toBe(
+      "A snippet mentioning category: BSI EAL4+ as a fact. title: Category: BSI EAL4+",
+    );
+  });
+
+  it("an unrecognized mid-record line appends to the running value (continuation), so nothing is silently dropped", () => {
+    const text = [
+      "id: a",
+      "title: T",
+      "snippet: S detail one",
+      "assurance: EAL4+", // NOT a known key here → continuation, not a new field
+      "more detail two",
+    ].join("\n");
+    const { records } = parseRecords<Record<string, unknown>>(text, {
+      knownKeys: KNOWN,
+    });
+    expect(records[0].snippet).toBe("S detail one assurance: EAL4+ more detail two");
+    expect(records[0]).not.toHaveProperty("assurance");
+  });
+
+  it("a duplicate list-key line adds a new item, not a silent overwrite", () => {
+    const text = [
+      "id: a",
+      "title: T",
+      "snippet: S",
+      "reasons: one",
+      "reasons: two",
+    ].join("\n");
+    const { records } = parseRecords<Record<string, unknown>>(text, {
+      knownKeys: KNOWN,
+      lists: ["reasons"],
+    });
+    expect(records[0].reasons).toEqual(["one", "reasons: two"]);
+  });
+
   it("JSON salvage nests objects and index-keys arrays (snippet.highlights)", () => {
     const text = JSON.stringify([
       {
@@ -336,6 +383,32 @@ describe("generateRecords", () => {
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.kind).toBe("unreachable");
+  });
+});
+
+describe("scrubKey (ADR-018)", () => {
+  it("replaces the configured apiKey anywhere it appears in a message", () => {
+    const key = "sk-live-1234567890";
+    expect(
+      scrubKey(`HTTP 401 from https://api.example.com/v1/chat?key=${key} for model m`, key),
+    ).toBe("HTTP 401 from https://api.example.com/v1/chat?key=<key> for model m");
+  });
+
+  it("leaves messages without the key untouched", () => {
+    expect(scrubKey("HTTP 500 upstream", "sk-live-1234567890")).toBe(
+      "HTTP 500 upstream",
+    );
+  });
+
+  it("uses Error.message for Error-shaped values (the real caller's shape)", () => {
+    const err = new Error("HTTP 401 for https://api.example.com/v1?key=sk-x");
+    expect(scrubKey(err, "sk-x")).toBe(
+      "HTTP 401 for https://api.example.com/v1?key=<key>",
+    );
+  });
+
+  it("returns the message unchanged when no key is configured", () => {
+    expect(scrubKey("HTTP 401 user error", "")).toBe("HTTP 401 user error");
   });
 });
 
