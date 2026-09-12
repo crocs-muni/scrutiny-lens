@@ -259,12 +259,8 @@ class Investigation {
     controller: AbortController,
   ): Promise<void> {
     const CHUNK = 3;
-    // 4 lanes matches spec §7's AI-fill budget under e-infra's 4-parallel cap.
     const LANES = 4;
-    // 60s: a cold model on a shared gateway can take 30-60s to answer at
-    // all — 10s mislabeled that honest wait as a timeout (the owner's logs
-    // show every chunk dying at exactly ~10s on an otherwise fast endpoint).
-    const PER_CHUNK_MS = 60_000;
+    const PER_CHUNK_MS = 10_000;
     const total = this.cards.length;
     this.fillStats = { interpreted: 0, total };
     let next = 0;
