@@ -480,8 +480,17 @@ export async function generateRecords<T>(
     );
   };
 
+  // Host is in the URL — never the key (spec §2/ADR-018); model + host pin
+  // the "empty model hangs LiteLLM" and "wrong base URL" lanes the owner hit.
+  const host = (() => {
+    try {
+      return new URL(provRes.config.baseUrl).host;
+    } catch {
+      return provRes.config.baseUrl;
+    }
+  })();
   dbg(
-    `call: ${messages.length} msgs, keys=[${knownKeys.join(" ")}]${max !== undefined ? ` max=${max}` : ""}`,
+    `call: model=${provRes.config.model || "(EMPTY)"} host=${host} msgs=${messages.length} keys=[${knownKeys.join(" ")}]${max !== undefined ? ` max=${max}` : ""}`,
   );
   let first: Awaited<ReturnType<typeof run>>;
   try {

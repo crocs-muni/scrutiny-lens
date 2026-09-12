@@ -113,7 +113,10 @@ interface TranslateOptions {
   profile?: string;
 }
 
-const TRANSLATE_TIMEOUT_MS = 15_000;
+// 60s: a cold model on a shared gateway (e-infra LiteLLM loads models on
+// first use) can take 30-60s to answer at all — 15s mislabeled that honest
+// wait as a timeout (the owner's incident).
+const TRANSLATE_TIMEOUT_MS = 60_000;
 
 type AiAttempt = {
   searches: SearchRequest[];
