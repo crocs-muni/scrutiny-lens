@@ -475,3 +475,82 @@ describe("batchNodeInterpret — batching", () => {
     }
   });
 });
+
+/* ---------- id affinity (spec §2 never-lie) ---------- */
+
+describe("batchNodeInterpret — id affinity", () => {
+  it("drops a record echoing a foreign entityId: that node degrades raw and no sibling is poisoned", async () => {
+    const p1 = product(1);
+    const p2 = product(2);
+    const p3 = product(3);
+    // The model mangles record 2: it describes event 2 but echoes an id that
+    // was never requested. No binding, no adoption: node 2 falls back to its
+    // deterministic skeleton (spec §2 never-lie). // TODO: (issue #59) A
+    // pure foreign echo was already inert under id-lookup, so this guard is
+    // indistinguishable pre/post gate; the repeat/mangle case below is the
+    // failing-first proof. Kept as the never-lie contract.
+    const { call } = fakeLLM(
+      [
+        [`entityId: ${p1.id}`, "title: P1", "typeToken: smartcard"].join("\n"),
+        [
+          `entityId: nope-foreign`,
+          "title: P2",
+          "typeToken: smartcard",
+        ].join("\n"),
+        [`entityId: ${p3.id}`, "title: P3", "typeToken: smartcard"].join("\n"),
+      ].join("\n\n"),
+    );
+    const res = await batchNodeInterpret({
+      events: [p1, p2, p3],
+      graphContext: CTX,
+      provider: PROVIDER,
+      callLLM: call,
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const nodes = res.result.nodes;
+    expect(nodes).toHaveLength(3);
+    expect(nodes[0].title).toBe("P1");
+    expect(nodes[1].entityId).toBe(p2.id); // its own id, never "nope-foreign"
+    expect(nodes[1].typeToken).toBe("unknown"); // degraded — did not adopt
+    expect(nodes[1].title).not.toBe("P2");
+    expect(nodes[2].entityId).toBe(p3.id);
+    expect(nodes[2].title).toBe("P3");
+  });
+
+  it("drops a record repeating a sibling's entityId: the mangled node stays raw, the id owner keeps its own title", async () => {
+    const p1 = product(1);
+    const p2 = product(2);
+    const p3 = product(3);
+    // The model repeats event 3's id for event 2's slot while describing
+    // event 2, ordered AFTER event 3's own record: a last-write map would
+    // overwrite node 3's draft and poison it.
+    const { call } = fakeLLM(
+      [
+        [`entityId: ${p1.id}`, "title: P1", "typeToken: smartcard"].join("\n"),
+        [`entityId: ${p3.id}`, "title: P3", "typeToken: smartcard"].join("\n"),
+        [
+          `entityId: ${p3.id}`,
+          "title: P2-mangle",
+          "typeToken: smartcard",
+        ].join("\n"),
+      ].join("\n\n"),
+    );
+    const res = await batchNodeInterpret({
+      events: [p1, p2, p3],
+      graphContext: CTX,
+      provider: PROVIDER,
+      callLLM: call,
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const nodes = res.result.nodes;
+    expect(nodes).toHaveLength(3);
+    expect(nodes[0].title).toBe("P1");
+    expect(nodes[1].entityId).toBe(p2.id);
+    expect(nodes[1].typeToken).toBe("unknown"); // raw — never adopts the mangle
+    expect(nodes[1].title).not.toBe("P2-mangle");
+    expect(nodes[2].entityId).toBe(p3.id);
+    expect(nodes[2].title).toBe("P3"); // keeps its own record's title
+  });
+});

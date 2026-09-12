@@ -254,6 +254,60 @@ describe("interpretCards batch", () => {
     if (res.ok) return;
     expect(res.kind).toBe("schema_failure");
   });
+
+  it("drops a record echoing a foreign entityId: that card degrades raw and no sibling is poisoned", async () => {
+    const graphs = [graph(0), graph(1), graph(2)];
+    // The model mangles record 2: it describes graph 1's card but echoes an
+    // id that was never requested. No binding, no adoption: card 1 falls back
+    // to its degraded skeleton (spec §2 never-lie). // TODO: (issue #59) A
+    // pure foreign echo was already inert under id-lookup, so this guard is
+    // indistinguishable pre/post gate; the repeat/mangle case below is the
+    // failing-first proof. Kept as the never-lie contract.
+    const json = [mkDraft(0), mkDraft(1, "nope-foreign"), mkDraft(2)].join(
+      "\n\n",
+    );
+    const { call } = fakeLLM(json);
+    const res = await interpretCards({
+      graphs,
+      query: "BSI EAL4 certificate",
+      provider: PROVIDER,
+      callLLM: call,
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const cards = res.result.cards;
+    expect(cards).toHaveLength(3);
+    expect(cards[0].title).toBe("Card 0");
+    expect(cards[1].entityId).toBe("ev-1");
+    expect(cards[1].typeToken).toBe("unknown");
+    expect(cards[1].title).not.toBe("Card 1"); // degraded — didn't adopt "nope-foreign"
+    expect(cards[2].entityId).toBe("ev-2");
+    expect(cards[2].title).toBe("Card 2");
+  });
+
+  it("drops a record repeating a sibling's entityId: the mangled card stays raw, the id owner keeps its own content", async () => {
+    const graphs = [graph(0), graph(1), graph(2)];
+    // The model repeats graph 2's id for graph 1's slot while describing
+    // card 1 (title "Card 1"), ordered AFTER graph 2's own record: a
+    // last-write map would overwrite card 2's draft and poison it.
+    const json = [mkDraft(0), mkDraft(2), mkDraft(1, "ev-2")].join("\n\n");
+    const { call } = fakeLLM(json);
+    const res = await interpretCards({
+      graphs,
+      query: "BSI EAL4 certificate",
+      provider: PROVIDER,
+      callLLM: call,
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const cards = res.result.cards;
+    expect(cards).toHaveLength(3);
+    expect(cards[1].entityId).toBe("ev-1");
+    expect(cards[1].typeToken).toBe("unknown"); // raw — never adopts the mangle
+    expect(cards[2].entityId).toBe("ev-2");
+    expect(cards[2].title).toBe("Card 2"); // keeps its own record's content
+    expect(cards[2].typeToken).toBe("certificate");
+  });
 });
 
 describe("matchBandRule", () => {

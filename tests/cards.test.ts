@@ -409,4 +409,65 @@ describe("fillCards (issue #28, spec §2)", () => {
     // A partial salvage is a success, not a failure — no banner.
     expect(kinds).toEqual([]);
   });
+
+  it("binds records only to requested ids: a foreign echoed id is dropped and its slot stays raw (spec §2 never-lie)", async () => {
+    const [a, b, c] = assembleCards(graphWith(["prod-1", "prod-2", "prod-3"]), [
+      event("prod-1"),
+      event("prod-2"),
+      event("prod-3"),
+    ]);
+    // The model mangles record 2: it describes card b but echoes an id that
+    // was never requested. Nothing may borrow that text — b falls back to
+    // its skeleton and nothing is cached under b's key.
+    // TODO: (issue #59) A pure foreign echo was already inert under id-lookup
+    // (drafts.get(b.id) can never hit "nope-foreign"), so this guard is
+    // indistinguishable pre/post gate; the repeat/mangle case below is the
+    // failing-first proof. Kept as the never-lie contract.
+    const callLLM = async () =>
+      fillKv(
+        { id: a.id, title: "A-title", snippet: "A-snippet" },
+        { id: "nope-foreign", title: "B-title", snippet: "B-snippet" },
+        { id: c.id, title: "C-title", snippet: "C-snippet" },
+      );
+    const filled = await fillCards([a, b, c], { provider: PROVIDER, callLLM });
+    expect(filled[0].interpreted).toBe(true);
+    expect(filled[1].interpreted).toBe(false);
+    expect(filled[1].title).toBe("cve:CVE-2017-15361"); // raw skeleton fallback
+    expect(filled[2].interpreted).toBe(true);
+    expect(filled[2].title).toBe("C-title");
+    // Nothing persisted under the victim's (eventId, model) key.
+    const cached = await getInterpretation(b.id, PROVIDER.model);
+    expect(cached?.bySurface.card).toBeUndefined();
+  });
+
+  it("drops a record that repeats a sibling's id: the mangled card stays raw, the id owner keeps its own content (spec §2 never-lie)", async () => {
+    const [a, b, c] = assembleCards(graphWith(["prod-1", "prod-2", "prod-3"]), [
+      event("prod-1"),
+      event("prod-2"),
+      event("prod-3"),
+    ]);
+    // The model repeats card c's id for card b's slot, describing b's content.
+    // It is ordered AFTER c's own record: a last-write map would overwrite c's
+    // draft with b's text and cache the lie under c's key forever.
+    const callLLM = async () =>
+      fillKv(
+        { id: a.id, title: "A-title", snippet: "A-snippet" },
+        { id: c.id, title: "C-title", snippet: "C-snippet" },
+        { id: c.id, title: "B-title", snippet: "B-snippet" },
+      );
+    const filled = await fillCards([a, b, c], { provider: PROVIDER, callLLM });
+    expect(filled[1].interpreted).toBe(false);
+    expect(filled[1].title).toBe("cve:CVE-2017-15361"); // b never adopts the mangle
+    expect(filled[2].interpreted).toBe(true);
+    expect(filled[2].title).toBe("C-title"); // c keeps its own record
+    expect(filled[2].snippet).toBe("C-snippet");
+    // Neither the mangled card nor the id owner absorbed a poisoned draft.
+    const cachedB = await getInterpretation(b.id, PROVIDER.model);
+    expect(cachedB?.bySurface.card).toBeUndefined();
+    const cachedC = await getInterpretation(c.id, PROVIDER.model);
+    expect(cachedC?.bySurface.card).toEqual({
+      title: "C-title",
+      snippet: "C-snippet",
+    });
+  });
 });
