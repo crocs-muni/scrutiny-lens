@@ -53,17 +53,38 @@ export async function defaultCallLLM({
   temperature,
   signal,
 }: CallLLMArgs): Promise<string> {
+  // Retry/backoff logging for the owner's manual runs: the SDK retries 429s
+  // silently — each swallow only shows up as unexplained wall time in the
+  // records.ts lane. Wrap fetch to log the addressable-but-throttled
+  // responses. Only statuses are logged; body content and the
+  // Authorization header are never copied (spec §2, ADR-018).
+  const lane = provider.name ?? "default";
+  const loggedFetch: typeof fetch = async (input, init) => {
+    const res = await fetch(input, init);
+    if (res.status === 429) {
+      const retryAfter = res.headers.get("retry-after");
+      console.debug(
+        `[ai:${lane}]    429${retryAfter ? ` retry-after=${retryAfter}s` : ""} — SDK backoff retry coming`,
+      );
+    }
+    return res;
+  };
   const p = createOpenAICompatible({
     baseURL: provider.baseUrl,
     name: provider.name,
     apiKey: provider.apiKey,
+    fetch: loggedFetch,
   });
-  const result = await generateText({
-    model: p(provider.model),
-    system,
-    messages,
-    temperature,
-    abortSignal: signal,
-  });
+  const t0 = Date.now();
+  const result = await generateText(
+    {
+      model: p(provider.model),
+      system,
+      messages,
+      temperature,
+      abortSignal: signal,
+    },
+  );
+  console.debug(`[ai:${lane}]    done in ${Date.now() - t0}ms`);
   return result.text;
 }
