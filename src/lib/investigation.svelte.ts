@@ -260,7 +260,11 @@ class Investigation {
   ): Promise<void> {
     const CHUNK = 3;
     const LANES = 4;
-    const PER_CHUNK_MS = 10_000;
+    // 60s: a cold model on a shared gateway (e-infra LiteLLM loads models
+    // on first use) can take 30-60s to answer at all; 10s mislabeled that
+    // honest wait as a timeout — the owner's logs show fill chunks dying
+    // at exactly ~10s on an otherwise-fast endpoint.
+    const PER_CHUNK_MS = 60_000;
     const total = this.cards.length;
     this.fillStats = { interpreted: 0, total };
     let next = 0;
