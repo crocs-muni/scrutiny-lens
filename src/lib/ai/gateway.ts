@@ -45,26 +45,16 @@ export interface GatewayLimits {
 	/** Ceiling on a honored Retry-After (default 15s, under the fill lane's
 	 * 25s per-chunk arm so one cooldown cycle can't expire queued lanes). */
 	maxRetryAfterMs?: number;
-	/** ±20% on every wait (default true) — de-synchronizes re-bursts. */
-	jitter?: boolean;
 }
 
 export const DEFAULT_LIMITS: Required<GatewayLimits> = {
 	maxConcurrent: 2,
 	maxAttempts: 3,
 	timeoutMs: 30_000,
-	maxRetryAfterMs: 15_000,
-	jitter: true
+	maxRetryAfterMs: 15_000
 };
 
 let limits: Required<GatewayLimits> = { ...DEFAULT_LIMITS };
-
-/** Configure global defaults (module-level; tests and future per-endpoint
- * tuning). Raises are pumped immediately. */
-export function configureGateway(over: GatewayLimits): void {
-	limits = { ...limits, ...over };
-	pump();
-}
 
 /** Full reset — test seam. Rejects queued waiters so no ticket leaks. */
 export function resetGateway(): void {
@@ -74,7 +64,6 @@ export function resetGateway(): void {
 	cooldownTimers.clear();
 	limits = { ...DEFAULT_LIMITS };
 	injectedFetch = null;
-	ledger.length = 0;
 	secretHashes.clear();
 }
 
@@ -242,7 +231,6 @@ function isRetryable(status: number | undefined, err: unknown): boolean {
 
 /** ±20% jitter — de-synchronizes simultaneous retries. */
 function jittered(ms: number): number {
-	if (!limits.jitter) return ms;
 	return Math.round(ms * (0.8 + Math.random() * 0.4));
 }
 const secretHashes = new Map<string, string>();
@@ -295,7 +283,6 @@ function waitMs(status: number | undefined, err: unknown, attempt: number): numb
 }
 
 function jitterUp(ms: number): number {
-	if (!limits.jitter) return ms;
 	return Math.round(ms * (1 + Math.random() * 0.2));
 }
 
@@ -308,52 +295,6 @@ function isAbort(callerSignal: AbortSignal | undefined, err: unknown): boolean {
 		callerSignal?.aborted === true ||
 		['AbortError', 'TimeoutError'].includes(String((err as Error | null)?.name))
 	);
-}
-
-/* ------------------------------------------------------------------ *
- * Ledger
- * ------------------------------------------------------------------ */
-
-export interface AttemptRecord {
-	startMs: number;
-	endMs: number;
-	baseUrl: string;
-	model: string;
-	attempt: number;
-	status: 'ok' | 'retry' | 'failed' | 'aborted';
-	httpStatus?: number;
-	/** Scrubbed reason fragment (ADR-018 — never the key). */
-	note?: string;
-}
-
-const ledger: AttemptRecord[] = [];
-const LEDGER_MAX = 200;
-
-function record(
-	args: Pick<CallLLMArgs, 'provider'>,
-	attempt: number,
-	startMs: number,
-	status: AttemptRecord['status'],
-	httpStatus?: number,
-	note?: string
-): void {
-	ledger.push({
-		startMs,
-		endMs: Date.now(),
-		baseUrl: args.provider.baseUrl,
-		model: args.provider.model,
-		attempt,
-		status,
-		httpStatus,
-		note
-	});
-	if (ledger.length > LEDGER_MAX) ledger.shift();
-}
-
-/** Bounded ring of the last 200 attempts — dev/smoke observability, in
- * memory only (nothing persisted; ADR-18-safe by construction). */
-export function recentAttempts(): AttemptRecord[] {
-	return [...ledger];
 }
 
 /* ------------------------------------------------------------------ *
@@ -406,19 +347,14 @@ export const callLLM: CallLLM = async (args) => {
 			outcome = { ok: false, err };
 		}
 		release();
-		if (outcome.ok) {
-			record(args, attempt, startMs, 'ok');
-			return outcome.text;
-		}
+		if (outcome.ok) return outcome.text;
 		const err = outcome.err;
 		if (isAbort(args.signal, err)) {
-			record(args, attempt, startMs, 'aborted');
 			throw err; // caller cancellation / attempt timeout — never retried
 		}
 		const status = statusOf(err);
 		const message = scrubSecrets(String((err as Error | null)?.message ?? err), args.provider.apiKey);
 		if (!isRetryable(status, err) || attempt === limits.maxAttempts) {
-			record(args, attempt, startMs, 'failed', status, message);
 			// The status rides IN the message: e-infra's 429 body carries only
 			// rate-limit prose, and the banner's honest reason (spec §2) must
 			// name the class — "429 Rate limit exceeded…" (ADR-018: no key).
@@ -426,7 +362,6 @@ export const callLLM: CallLLM = async (args) => {
 			// block signature) so kindOf keeps that lane distinct.
 			throw new GatewayError(status === 429 ? `429 ${message}` : message, status, status === undefined);
 		}
-		record(args, attempt, startMs, 'retry', status, message);
 		if (status === 429) {
 			setCooldown(args.provider.baseUrl, Date.now() + waitMs(status, err, attempt));
 		} else {
@@ -453,17 +388,14 @@ async function drainAttempt(
 ): Promise<'retry' | never> {
 	release();
 	if (isAbort(args.signal, err)) {
-		record(args, attempt, startMs, 'aborted');
 		throw err; // caller cancellation / attempt timeout — never retried
 	}
 	const status = statusOf(err);
 	const message = scrubSecrets(String((err as Error | null)?.message ?? err), args.provider.apiKey);
 	if (!isRetryable(status, err) || attempt === limits.maxAttempts) {
-		record(args, attempt, startMs, 'failed', status, message);
 		// Same 429-in-message + network-flag rule as callLLM (see there).
 		throw new GatewayError(status === 429 ? `429 ${message}` : message, status, status === undefined);
 	}
-	record(args, attempt, startMs, 'retry', status, message);
 	if (status === 429) setCooldown(args.provider.baseUrl, Date.now() + waitMs(status, err, attempt));
 	else await sleep(waitMs(status, err, attempt), args.signal);
 	return 'retry';
@@ -474,59 +406,68 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 	attempts: for (let attempt = 1; attempt <= limits.maxAttempts; attempt++) {
 		await acquire(args.provider.baseUrl, args.signal);
 		const startMs = Date.now();
-		const stream = streamText({
-			model: buildModel(args),
-			system: args.system,
-			messages: args.messages,
-			temperature: args.temperature,
-			abortSignal: args.signal,
-			maxRetries: 0
-		});
-		// AI SDK's textStream swallows open-time errors (a 429 just ends it);
-		// the error rides a fullStream 'error' part instead. Walk fullStream —
-		// created ONCE per attempt; its parts are: protocol noise, one error
-		// (retry path), or text-delta (bytes flowing).
-		const events = stream.fullStream[Symbol.asyncIterator]();
-		for (;;) {
-			let part: Awaited<ReturnType<typeof events.next>>['value'] | undefined;
-			try {
-				// First byte races the attempt timeout; the stream itself only
-				// ever sees the CALLER's signal (a long answer must not be cut
-				// by a transport timeout).
-				const first = await withTimeout(events.next(), limits.timeoutMs, args.signal);
-				if (first.done) {
-					release();
-					return; // empty response — nothing to interpret, no lie to tell
-				}
-				part = first.value;
-			} catch (err) {
-				if ((await drainAttempt(args, attempt, startMs, err, release)) === 'retry') continue attempts;
-			}
-			if (part === undefined) continue attempts; // unreachable; safety
-			if (part.type === 'error') {
-				if ((await drainAttempt(args, attempt, startMs, part.error, release)) === 'retry') continue attempts;
-			}
-			if (part.type !== 'text-delta') continue; // protocol part — keep reading
-
-			release(); // bytes are flowing — give the lane back
-			record(args, attempt, startMs, 'ok');
-			yield part.text;
-			// Mid-stream: no retry (output already delivered); errors surface
-			// honestly as their scrubbed text (spec §2).
+		// Per-attempt abort controller: on first-byte timeout, retry, or early
+		// consumer cancel the upstream streamText fetch MUST be aborted —
+		// otherwise the request keeps running against the endpoint with no
+		// waiter (e-infra's 4-concurrent cap fills with zombies).
+		const abortCtrl = new AbortController();
+		try {
+			const stream = streamText({
+				model: buildModel(args),
+				system: args.system,
+				messages: args.messages,
+				temperature: args.temperature,
+				abortSignal: args.signal
+					? AbortSignal.any([args.signal, abortCtrl.signal])
+					: abortCtrl.signal,
+				maxRetries: 0
+			});
+			// AI SDK's textStream swallows open-time errors (a 429 just ends it);
+			// the error rides a fullStream 'error' part instead. Walk fullStream —
+			// created ONCE per attempt; its parts are: protocol noise, one error
+			// (retry path), or text-delta (bytes flowing).
+			const events = stream.fullStream[Symbol.asyncIterator]();
 			for (;;) {
-				const next = await events.next();
-				if (next.done) return;
-				if (next.value.type === 'text-delta') yield next.value.text;
-				else if (next.value.type === 'error') {
-					throw new GatewayError(
-						scrubSecrets(
-							String((next.value.error as Error | null)?.message ?? next.value.error),
-							args.provider.apiKey
-						),
-						statusOf(next.value.error)
-					);
+				let part: Awaited<ReturnType<typeof events.next>>['value'] | undefined;
+				try {
+					// First byte races the attempt timeout; after the first byte,
+					// the attempt abort fires only when this attempt exits.
+					const first = await withTimeout(events.next(), limits.timeoutMs, args.signal);
+					if (first.done) {
+						release();
+						return; // empty response — nothing to interpret, no lie to tell
+					}
+					part = first.value;
+				} catch (err) {
+					if ((await drainAttempt(args, attempt, startMs, err, release)) === 'retry') continue attempts;
+				}
+				if (part === undefined) continue attempts; // unreachable; safety
+				if (part.type === 'error') {
+					if ((await drainAttempt(args, attempt, startMs, part.error, release)) === 'retry') continue attempts;
+				}
+				if (part.type !== 'text-delta') continue; // protocol part — keep reading
+
+				release(); // bytes are flowing — give the lane back
+				yield part.text;
+				// Mid-stream: no retry (output already delivered); errors surface
+				// honestly as their scrubbed text (spec §2).
+				for (;;) {
+					const next = await events.next();
+					if (next.done) return;
+					if (next.value.type === 'text-delta') yield next.value.text;
+					else if (next.value.type === 'error') {
+						throw new GatewayError(
+							scrubSecrets(
+								String((next.value.error as Error | null)?.message ?? next.value.error),
+								args.provider.apiKey
+							),
+							statusOf(next.value.error)
+						);
+					}
 				}
 			}
+		} finally {
+			abortCtrl.abort(); // never leave a first-byte-timeout stream in flight
 		}
 	}
 };
@@ -555,32 +496,25 @@ export async function gatewayFetch(
 		} catch (err) {
 			release();
 			if (isAbort(callerSignal, err)) {
-				record({ provider: { baseUrl, model: '', name: '', apiKey } }, attempt, startMs, 'aborted');
 				throw err;
 			}
 			const status = statusOf(err);
 			const message = scrubSecrets(String((err as Error | null)?.message ?? err), apiKey);
 			if (!isRetryable(status, err) || attempt === limits.maxAttempts) {
-				record({ provider: { baseUrl, model: '', name: '', apiKey } }, attempt, startMs, 'failed', status, message);
 				throw new GatewayError(message, status, status === undefined);
 			}
-			record({ provider: { baseUrl, model: '', name: '', apiKey } }, attempt, startMs, 'retry', status, message);
 			if (status === 429) setCooldown(baseUrl, Date.now() + waitMs(status, err, attempt));
 			else await sleep(waitMs(status, err, attempt), callerSignal);
 			continue;
 		}
 		release();
-		const recordArgs = { provider: { baseUrl, model: '', name: '', apiKey } };
 		if (response.ok || !isRetryable(response.status, { status: response.status })) {
-			record(recordArgs, attempt, startMs, 'ok', response.status);
 			return response;
 		}
 		if (attempt === limits.maxAttempts) {
 			const message = scrubSecrets(`HTTP ${response.status} from ${baseUrl}`, apiKey);
-			record(recordArgs, attempt, startMs, 'failed', response.status, message);
 			throw new GatewayError(message, response.status);
 		}
-		record(recordArgs, attempt, startMs, 'retry', response.status);
 		if (response.status === 429) {
 			const headers: Record<string, string> = {};
 			response.headers.forEach((v, k) => (headers[k] = v));

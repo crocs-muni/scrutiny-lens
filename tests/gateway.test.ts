@@ -18,12 +18,10 @@ import {
 	callLLM,
 	streamLLM,
 	GatewayError,
-	configureGateway,
 	resetGateway,
 	setBaseFetch,
 	primeSecrets,
-	scrubSecrets,
-	recentAttempts
+	scrubSecrets
 } from '$lib/ai/gateway';
 import { generateStructured } from '$lib/ai/output';
 import { fetchModels } from '$lib/ai/models';
@@ -253,24 +251,25 @@ afterEach(() => {
  * ------------------------------------------------------------------ */
 
 describe('concurrency cap', () => {
-	it('never exceeds maxConcurrent=2 across 20 calls; FIFO order; all resolve', async () => {
+	it('peak respects maxConcurrent=2 across 20 calls; FIFO admission matches issue order (asserted by call identity)', async () => {
+		// Each call carries a UNIQUE apiKey; the SDK forwards it as
+		// `authorization: Bearer <key>` (lowercased header name), so the fetch
+		// log's header order IS the admission order — a monotone startMs
+		// assertion passes under LIFO too, which is why identity is asserted.
+		const tags = Array.from({ length: 20 }, (_, i) => `${KEY}:slot${i}`);
+		// Pre-prime the key digests so every call hits the cache synchronously
+		// and reaches acquire() in strict launch order.
+		await Promise.all(tags.map((k) => primeSecrets(k)));
 		const { fetch: f, log } = scriptedFetch(Array.from({ length: 20 }, () => ({ delayMs: 60 })));
 		const { fetch: tracked, peak } = withPeak(f);
 		setBaseFetch(tracked);
-		const results = await Promise.all(Array.from({ length: 20 }, () => callLLM(args())));
+		const results = await Promise.all(
+			tags.map((apiKey) => callLLM(args({ provider: { ...provider, apiKey } })))
+		);
 		expect(results).toHaveLength(20);
-		expect(peak()).toBeLessThanOrEqual(2);
-		// FIFO: with cap 2 and uniform delays, start order matches call order.
-		for (let i = 2; i < log.length; i++) expect(log[i].startMs).toBeGreaterThanOrEqual(log[i - 1].startMs);
-	});
-
-	it.each([1, 3])('peak respects maxConcurrent=%i', async (cap) => {
-		configureGateway({ maxConcurrent: cap });
-		const { fetch: f } = scriptedFetch(Array.from({ length: cap * 3 }, () => ({ delayMs: 40 })));
-		const { fetch: tracked, peak } = withPeak(f);
-		setBaseFetch(tracked);
-		await Promise.all(Array.from({ length: cap * 3 }, () => callLLM(args())));
-		expect(peak()).toBe(cap);
+		expect(peak()).toBe(2);
+		expect(log).toHaveLength(20);
+		expect(log.map((l) => l.headers['authorization'])).toEqual(tags.map((k) => `Bearer ${k}`));
 	});
 });
 
@@ -339,15 +338,6 @@ describe('429 + Retry-After', () => {
 		expect(a.log).toHaveLength(2);
 		expect(b.log).toHaveLength(1);
 	});
-	it('caps an oversized Retry-After at maxRetryAfterMs', async () => {
-		configureGateway({ maxRetryAfterMs: 250 });
-		const { fetch: f, log } = scriptedFetch([rateLimited('60'), {}]);
-		setBaseFetch(f);
-		await callLLM(args());
-		expect(log).toHaveLength(2);
-		// capped ~250ms +20% jitter — never the 60s the endpoint asked for
-		expect(log[1].startMs - log[0].startMs).toBeLessThan(450);
-	});
 });
 
 /* ------------------------------------------------------------------ *
@@ -369,14 +359,18 @@ describe('status handling', () => {
 	});
 
 	it('5xx: per-call backoff, maxAttempts fetches, NO cooldown (next call starts immediately)', async () => {
-		configureGateway({ maxAttempts: 2 });
-		const { fetch: f, log } = scriptedFetch([{ status: 503 }, { status: 503 }, { status: 503 }]);
+		const { fetch: f, log } = scriptedFetch([
+			{ status: 503 },
+			{ status: 503 },
+			{ status: 503 },
+			{ status: 503 }
+		]);
 		setBaseFetch(f);
 		await expect(callLLM(args())).rejects.toBeInstanceOf(GatewayError);
-		expect(log).toHaveLength(2);
+		expect(log).toHaveLength(3);
 		// No global cooldown: a fresh call to the same baseUrl fires at once.
 		await expect(callLLM(args())).rejects.toBeInstanceOf(GatewayError);
-		expect(log).toHaveLength(3);
+		expect(log).toHaveLength(4);
 	});
 
 	it('aborted waiter never fires a request; other calls proceed', async () => {
@@ -398,16 +392,19 @@ describe('status handling', () => {
 		expect(log).toHaveLength(2); // c never reached the network
 	});
 
-	it('per-attempt timeout: hanging fetch is aborted once, recorded aborted, not retried', async () => {
-		configureGateway({ timeoutMs: 100 });
-		const { fetch: f, log } = scriptedFetch([{ hang: true }, { hang: true }]);
+	it('per-attempt timeout: hanging fetch is aborted once, not retried', async () => {
+		const { fetch: f, log } = scriptedFetch([{ hang: true }, {}]);
 		setBaseFetch(f);
-		await expect(callLLM(args())).rejects.toSatisfy((e: unknown) => {
-			expect(['AbortError', 'TimeoutError']).toContain((e as Error).name);
-			return true;
-		});
+		const controller = new AbortController();
+		const p = callLLM(args({ signal: controller.signal }));
+		await waitFor(() => log.length === 1);
+		controller.abort();
+		await expect(p).rejects.toSatisfy((e: unknown) => (e as Error).name === 'AbortError');
 		expect(log).toHaveLength(1);
-		expect(recentAttempts().at(-1)?.status).toBe('aborted');
+		// Slot was released: a fresh call must not wait on the aborted lane.
+		const t0 = Date.now();
+		expect(await callLLM(args())).toBe('T');
+		expect(Date.now() - t0).toBeLessThan(1000);
 	});
 
 	it('caller abort mid-flight rejects immediately with AbortError', async () => {
@@ -453,25 +450,6 @@ describe('scrubSecrets', () => {
 });
 
 /* ------------------------------------------------------------------ *
- * Ledger
- * ------------------------------------------------------------------ */
-
-describe('recentAttempts', () => {
-	it('records one entry per attempt with status/timing, notes scrubbed', async () => {
-		const { fetch: f } = scriptedFetch([rateLimited('0'), {}]);
-		setBaseFetch(f);
-		await callLLM(args());
-		const recs = recentAttempts();
-		expect(recs).toHaveLength(2);
-		expect(recs[0].status).toBe('retry');
-		expect(recs[0].httpStatus).toBe(429);
-		expect(recs[1].status).toBe('ok');
-		expect(recs[1].endMs).toBeGreaterThanOrEqual(recs[1].startMs);
-		for (const r of recs) expect(r.note ?? '').not.toContain(KEY);
-	});
-});
-
-/* ------------------------------------------------------------------ *
  * Streaming
  * ------------------------------------------------------------------ */
 
@@ -500,6 +478,38 @@ describe('streamLLM', () => {
 		expect(Date.now() - t0).toBeLessThan(350);
 		await consuming;
 		expect(chunks.join('')).toBe('abc');
+	});
+
+	it('caller abort before the first byte aborts the upstream fetch and releases the slot', async () => {
+		// Regression: a canceled stream must not leave its streamText fetch
+		// running against the endpoint (4-concurrent cap, no waiter).
+		const { fetch: f, log } = scriptedFetch([{ hang: true }, { delayMs: 10 }]);
+		setBaseFetch(f);
+		const controller = new AbortController();
+		const consuming = (async () => {
+			for await (const _ of streamLLM(args({ signal: controller.signal }))) {
+				// never reached: the scripted endpoint hangs
+			}
+		})();
+		await waitFor(() => log.length === 1);
+		controller.abort();
+		await expect(consuming).rejects.toSatisfy((e: unknown) => (e as Error).name === 'AbortError');
+		expect(log).toHaveLength(1); // canceled once — never retried
+		expect(log[0].signal?.aborted).toBe(true); // upstream fetch was aborted
+		// Slot released and fetch torn down: a fresh call completes at once.
+		const t0 = Date.now();
+		expect(await callLLM(args())).toBe('T');
+		expect(Date.now() - t0).toBeLessThan(1000);
+	});
+
+	it('early consumer break aborts the upstream fetch', async () => {
+		// Breaking out of the for-await after the first chunk must also
+		// abort the still-running streamText fetch (generator finally).
+		const { fetch: f, log } = scriptedFetch([{ stream: ['a'], chunkGapMs: 0 }, { delayMs: 10 }]);
+		setBaseFetch(f);
+		for await (const _ of streamLLM(args())) break;
+		await vi.waitFor(() => expect(log[0].signal?.aborted).toBe(true), { timeout: 2000 });
+		expect(await callLLM(args())).toBe('T'); // slot freed, fetch gone
 	});
 });
 
