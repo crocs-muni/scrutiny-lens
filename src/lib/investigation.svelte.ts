@@ -37,6 +37,30 @@ import {
 import { settings } from "$lib/settings.svelte";
 import { shell } from "$lib/shell.svelte";
 
+/** Interval sleep that resolves early on abort — the lane-stagger's pause
+ * must not outlive the run that scheduled it (spec §8 abort lifecycle). */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal.aborted) return Promise.resolve();
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const done = () => {
+    clearTimeout(id);
+    signal.removeEventListener("abort", done);
+    resolve();
+  };
+  const id = setTimeout(done, ms);
+  signal.addEventListener("abort", done, { once: true });
+  return promise;
+}
+
+/** Per-lane first-fire pause (issue #59): staggers the four fill lanes so
+ * the endpoint never sees 4 chunks in one tick — 1.5s × laneIndex (0 / 1.5
+ * / 3 / 4.5s) against the all-at-once burst that measured the 429 slowness
+ * this morning. Set this to 0 once the gateway (PR #56) lands
+ * serialized-pacing at the transport layer: its cap-2 FIFO then serializes
+ * the lanes itself and this is dead weight. Until then the value is a
+ * UI-lane cap, not a transport cap — the gateway owns the real pacing. */
+const LANE_STAGGER_MS = 1_500;
+
 class Investigation {
   phase = $state<Phase | "idle">("idle");
   /** Per-relay slice receipts, in arrival order — the trace's literal layer. */
@@ -63,6 +87,13 @@ class Investigation {
   selections = $state<Record<string, Set<string>>>({});
   /** Write-descriptions progress for the trace's fifth row (§4 partial). */
   filling = $state(false);
+  /** Cards claimed by a fill lane but not yet merged (issue #59): the
+   * interpretation lane's promised-but-unpaid subset — the badge on their
+   * raw cards reads `interpreting…` while they sit here. Never AI-written
+   * — id membership only — so rule-5 never lies about which cards a lane
+   * has actually fired (spec §2). New Set identity per claim/merge so the
+   * badge re-fires; in-place mutation would pin the first snapshot. */
+  pending = $state<Set<string>>(new Set());
   fillStats = $state<{ interpreted: number; total: number }>({
     interpreted: 0,
     total: 0,
@@ -135,6 +166,7 @@ class Investigation {
     this.facetGroups = [];
     this.selections = {};
     this.filling = false;
+    this.pending = new Set();
     this.fillStats = { interpreted: 0, total: 0 };
     this.fillFailure = null;
     this.elapsedMs = null;
@@ -257,6 +289,7 @@ class Investigation {
     provider: ProviderOverrideInput,
     callLLM: CallLLM,
     controller: AbortController,
+    laneStaggerMs: number = LANE_STAGGER_MS,
   ): Promise<void> {
     const CHUNK = 3;
     const LANES = 4;
@@ -269,10 +302,26 @@ class Investigation {
       next += CHUNK;
       return at;
     };
-    const worker = async (): Promise<void> => {
+    const worker = async (laneIndex: number): Promise<void> => {
       for (let at = claim(); at < total; at = claim()) {
         if (controller.signal.aborted || this.controller !== controller) return;
+        // First-fire stagger (issue #59): lane k sleeps k·laneStaggerMs
+        // before its FIRST claim (at === laneIndex·CHUNK is true on exactly
+        // one iteration per lane) — later claims fire the moment the
+        // previous chunk settles, or the wall-clock penalty would outgrow
+        // the pacing win. Lane 0 (viewport cards first) still fires at t=0.
+        if (laneIndex > 0 && at === laneIndex * CHUNK) {
+          await sleep(laneIndex * laneStaggerMs, controller.signal);
+          if (controller.signal.aborted || this.controller !== controller) return;
+        }
         const chunk = this.cards.slice(at, at + CHUNK);
+        // Claim → pending: the chunk's ids flip to `interpreting…` NOW —
+        // before the fetch fire — so a card mid-fire never reads
+        // identically to one that will never be interpreted (spec §2).
+        // Copy-on-write Set so the badge re-fires per claim.
+        const claimed = new Set(this.pending);
+        for (const c of chunk) claimed.add(c.id);
+        this.pending = claimed;
         const timer = AbortSignal.any([
           controller.signal,
           AbortSignal.timeout(PER_CHUNK_MS),
@@ -300,6 +349,14 @@ class Investigation {
         } catch {
           // rule-5 fallback for this chunk; the lane keeps going.
         }
+        // Merge → pending-out: the chunk's ids leave regardless of outcome
+        // — a settle (interpreted, rule-5 fallback, or lane drop under an
+        // abort) is a settle, never a mid-flight lie (spec §2). Runs even
+        // when the controller swapped out mid-flight so a dead run's
+        // leaked ids can't pin `interpreting…` forever.
+        const settle = new Set(this.pending);
+        for (const c of chunk) settle.delete(c.id);
+        this.pending = settle;
         if (this.controller !== controller) return;
         // One synchronous merge over disjoint indices — the lanes can't
         // clobber each other's writes; UI paints per chunk.
@@ -313,8 +370,32 @@ class Investigation {
       }
     };
     await Promise.all(
-      Array.from({ length: Math.min(LANES, Math.ceil(total / CHUNK)) }, worker),
+      Array.from(
+        { length: Math.min(LANES, Math.ceil(total / CHUNK)) },
+        (_, i) => worker(i),
+      ),
     );
+  }
+
+  /** @internal — test seam for the fill lane (issue #59): seeds cards, arms
+   * a fresh controller (so `this.controller !== controller` bail-outs stay
+   * off the happy path), and runs one fillInChunks cycle against this
+   * instance with a caller-chosen stagger. Underscore-marked like
+   * `_closeForTests`; UI callers go through `start()`. */
+  async _fillInChunksForTests(
+    cards: ProductCard[],
+    provider: ProviderOverrideInput,
+    callLLM: CallLLM,
+    laneStaggerMs: number = 0,
+  ): Promise<void> {
+    const controller = new AbortController();
+    this.controller = controller;
+    this.cards = cards;
+    this.filling = true;
+    this.fillStats = { interpreted: 0, total: cards.length };
+    this.pending = new Set();
+    await this.fillInChunks(provider, callLLM, controller, laneStaggerMs);
+    this.filling = false;
   }
 }
 
@@ -335,6 +416,7 @@ export function resetInvestigation(): void {
   investigation.facetGroups = [];
   investigation.selections = {};
   investigation.filling = false;
+  investigation.pending = new Set();
   investigation.fillStats = { interpreted: 0, total: 0 };
   investigation.fillFailure = null;
   investigation.running = false;
