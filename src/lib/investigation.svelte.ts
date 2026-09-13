@@ -296,13 +296,17 @@ clearFacets(): void {
             provider,
             callLLM,
             signal: timer,
-            // schema_failure means the endpoint ANSWERED but its output
-            // didn't conform — that fact is sticky so a later transport
-            // failure on another lane can't overwrite the truth that the
-            // AI was reachable (spec §2 never-lie).
+            // schema_failure (it answered, output didn't conform) and
+            // rate_limited (it answered 429, asking us to slow down) both
+            // prove the endpoint was REACHABLE — sticky, so a later
+            // transport failure on another lane can't overwrite that truth
+            // (spec §2 never-lie).
             onFailure: (kind) => {
               this.fillFailure =
-                this.fillFailure === "schema_failure" ? "schema_failure" : kind;
+                this.fillFailure === "schema_failure" ||
+                this.fillFailure === "rate_limited"
+                  ? this.fillFailure
+                  : kind;
             },
           });
         } catch {
@@ -352,10 +356,12 @@ export function resetInvestigation(): void {
  * Results-surface banner text for the card-fill lane (spec §6 deterministic
  * wording — never AI-written). Distinguishes a dead endpoint (unreachable/
  * timeout), one blocked by the browser before any HTTP response (browser_blocked
- * — CORS preflight / mixed content, spec §2), and one that answered but
- * produced non-conforming output (schema_failure): the latter must not be
- * mislabeled "AI unreachable" (spec §2 never-lie in the owner's incident the
- * endpoint WAS reachable), and a browser block must not claim the AI is down.
+ * — CORS preflight / mixed content, spec §2), one throttling us (rate_limited
+ * — a 429 IS an answer: the endpoint is up, just asking us to slow down), and
+ * one that answered but produced non-conforming output (schema_failure): the
+ * last two must not be mislabeled "AI unreachable" (spec §2 never-lie — in the
+ * owner's incident the endpoint WAS reachable), and a browser block must not
+ * claim the AI is down.
  */
 export function fillNote(
   interpreted: number,
@@ -368,6 +374,9 @@ export function fillNote(
   }
   if (failure === "schema_failure") {
     return "AI output didn't conform — cards show the raw events";
+  }
+  if (failure === "rate_limited") {
+    return "AI endpoint rate limited — cards show the raw events";
   }
   if (failure === "browser_blocked") {
     return "AI endpoint blocked by the browser (CORS or mixed content) — cards show the raw events";

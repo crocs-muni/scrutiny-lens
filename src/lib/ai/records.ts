@@ -377,6 +377,13 @@ export function formatInstruction(
 }
 
 function kindOf(err: unknown): AIKind {
+  // A 429 is the endpoint ASKING us to slow down — it answered, so this is
+  // not the same truth as unreachable (spec §2 never-lie). The AI SDK's
+  // APICallError carries statusCode; the gateway branch raises a GatewayError
+  // that keeps the same shape once its retries are exhausted.
+  if ((err as { statusCode?: number } | null)?.statusCode === 429) {
+    return "rate_limited";
+  }
   const msg = String((err as Error | null)?.message ?? err).toLowerCase();
   if (/timeout|timed out|etimedout|deadline/i.test(msg)) return "timeout";
   // A fetch that rejected with no HTTP response is the browser-block lane
@@ -471,6 +478,18 @@ export async function generateRecords<T>(
   const sys = [formatInstruction(knownKeys), system]
     .filter(Boolean)
     .join("\n\n");
+  // Host is in the URL — never the key (spec §2/ADR-018); model + host pin
+  // the "empty model hangs LiteLLM" and "wrong base URL" lanes the owner hit.
+  const host = (() => {
+    try {
+      return new URL(provRes.config.baseUrl).host;
+    } catch {
+      return provRes.config.baseUrl;
+    }
+  })();
+  dbg(
+    `call: model=${provRes.config.model || "(EMPTY)"} host=${host} msgs=${messages.length} keys=[${knownKeys.join(" ")}]${max !== undefined ? ` max=${max}` : ""}`,
+  );
   const base = {
     provider: provRes.config,
     system: sys,
@@ -499,24 +518,15 @@ export async function generateRecords<T>(
         return {
           ok: false,
           kind,
-          message: raw,
+          // A throttled endpoint gets a deterministic, endpoint-independent
+          // message: the 429 body is never echoed (spec §2/ADR-018) — host is
+          // URL-derived, key-free.
+          message:
+            kind === "rate_limited" ? `429 Rate limit ${host}` : raw,
         };
       },
     );
   };
-
-  // Host is in the URL — never the key (spec §2/ADR-018); model + host pin
-  // the "empty model hangs LiteLLM" and "wrong base URL" lanes the owner hit.
-  const host = (() => {
-    try {
-      return new URL(provRes.config.baseUrl).host;
-    } catch {
-      return provRes.config.baseUrl;
-    }
-  })();
-  dbg(
-    `call: model=${provRes.config.model || "(EMPTY)"} host=${host} msgs=${messages.length} keys=[${knownKeys.join(" ")}]${max !== undefined ? ` max=${max}` : ""}`,
-  );
   let first: Awaited<ReturnType<typeof run>>;
   try {
     first = await run();
@@ -558,10 +568,14 @@ export async function generateRecords<T>(
       (text) => ({ ok: true, text }) as const,
       (err: unknown) => {
         if (isAbort(err, abortSignal)) throw err;
+        const kind = kindOf(err);
         return {
           ok: false,
-          kind: kindOf(err),
-          message: String((err as Error)?.message ?? err),
+          kind,
+          // Same deterministic surface as the first call: never echo a 429
+          // body (spec §2/ADR-018).
+          message:
+            kind === "rate_limited" ? `429 Rate limit ${host}` : String((err as Error)?.message ?? err),
         } as const;
       },
     );

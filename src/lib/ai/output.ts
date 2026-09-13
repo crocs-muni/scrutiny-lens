@@ -25,7 +25,10 @@ export type AIKind =
   | "schema_failure"
   | "timeout"
   | "invalid_request"
-  | "browser_blocked";
+  | "browser_blocked"
+  // A 429 is the endpoint answering "slow down" — reachable, not down
+  // (spec §2 never-lie: a throttled BYOK endpoint must not read "unreachable").
+  | "rate_limited";
 
 export interface LLMMessage {
   role: "user" | "assistant";

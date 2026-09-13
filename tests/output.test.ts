@@ -1,8 +1,9 @@
 // The AI transport contract (issue #52): generateRecords resolves the
 // provider, forwards it + the abortSignal to the transport, classifies
-// transport failures honestly (unreachable / timeout / browser_blocked —
-// never conflating a browser CORS block with a 5xx, spec §2), propagates
-// aborts, and does not retry when the first call fails at transport level.
+// transport failures honestly (unreachable / timeout / browser_blocked /
+// rate_limited — never conflating a browser CORS block with a 5xx, or a
+// throttling endpoint with a dead one, spec §2), propagates aborts, and
+// does not retry when the first call fails at transport level.
 
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { z } from "zod";
@@ -150,6 +151,34 @@ describe("generateRecords transport", () => {
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.kind).toBe("unreachable");
+  });
+
+  it("maps a 429 statusCode to rate_limited, distinct from unreachable, with a deterministic message", async () => {
+    // A throttled BYOK endpoint ANSWERS 429 — reachable-but-slow, which is
+    // not the same truth as a dead endpoint (spec §2 never-lie). The SDK's
+    // APICallError carries statusCode; after its retries are exhausted the
+    // surfaced error keeps that shape.
+    const call: CallLLM = async () => {
+      const err = new Error("upstream 429 body") as Error & {
+        statusCode?: number;
+      };
+      err.statusCode = 429;
+      throw err;
+    };
+    const r = await generateRecords({
+      schema: Rec,
+      knownKeys: ["id"],
+      messages: [],
+      provider,
+      callLLM: call,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.kind).toBe("rate_limited");
+      // Deterministic and endpoint-independent — the body ("upstream 429
+      // body") is never echoed (spec §2/ADR-018); <host> is URL-derived.
+      expect(r.message).toBe("429 Rate limit x");
+    }
   });
 
   it("maps a browser-blocked fetch (TypeError, no status) to browser_blocked, not unreachable", async () => {
