@@ -3,11 +3,30 @@
 	 * sticky counted sections (Summary · Content · History · Files), a
 	 * resizable splitter, a 32px collapsed handle. The drawer stays MOUNTED
 	 * when collapsed — the section body is clipped, not destroyed — so the
-	 * citation ring (spec §9, chat step) persists across open/closed. */
+	 * citation ring (spec §9, chat step) persists across open/closed.
+	 *
+	 * Subjects (issue #29a): all four sections render the Dossier derivation
+	 * ($lib/dossier.ts) — deterministic by construction (spec §2 rule 1),
+	 * resolve() the only patch source. Design rulings #29 comment
+	 * 2026-09-13: frozen content carries a deterministic state banner;
+	 * History = canonical chain + retraction row + a non-canonical group;
+	 * Files rows speak N1⑦'s arrow language; the active section persists
+	 * across dossier swaps (chrome class, same as height); a retracted
+	 * subject renders fully — Show deleted never gates an opened dossier. */
 
-	import { IconChevronDown, IconChevronUp } from '@tabler/icons-svelte';
+	import {
+		IconChevronDown,
+		IconChevronUp,
+		IconClock,
+		IconCpu,
+		IconShield
+	} from '@tabler/icons-svelte';
+	import { nip19 } from 'nostr-tools';
 	import KeyHint from './KeyHint.svelte';
+	import PublisherChip from '../ui/PublisherChip.svelte';
 	import { COLLAPSE } from '../ui/motion';
+	import { formatRel, shell } from '$lib/shell.svelte';
+	import type { Dossier, HistoryRow } from '$lib/dossier';
 
 	interface Section {
 		key: SectionKey;
@@ -22,8 +41,16 @@
 		height: number;
 		/** Drag clamp upper bound, measured by the parent canvas card. */
 		maxHeight: number;
-		/** Deterministic per-section counts (spec §2 rule 2) — undefined = hidden. */
-		counts?: Partial<Record<SectionKey, number>>;
+		/** The selected subject's dossier — null renders the honest
+		 * no-subject line (ruling 7), never placeholder copy. */
+		dossier: Dossier | null;
+		/** ADR 0001 companion: the subject survives filtering, but the
+		 * drawer says so — persistence is never silent. */
+		hiddenByFilter?: boolean;
+		/** Files rows deep-link (BIBLE 678): selecting a counterparty swaps
+		 * the dossier in place — the metadata-dossier path pre-canvas. */
+		onSelect?: (id: string) => void;
+		onClearFilters?: () => void;
 		onToggle: () => void;
 		onResize: (next: number) => void;
 	}
@@ -32,7 +59,10 @@
 		open,
 		height,
 		maxHeight,
-		counts = {},
+		dossier,
+		hiddenByFilter = false,
+		onSelect,
+		onClearFilters,
 		onToggle,
 		onResize
 	}: Props = $props();
@@ -48,7 +78,16 @@
 		{ key: 'files', label: 'Files' }
 	];
 
-	let active = $state('summary');
+	// Counts live on the dossier (§2 rule 2: each equals its rows rendered);
+	// Content has no meaningful count, so its chip stays hidden.
+	const counts = $derived<Partial<Record<SectionKey, number>>>(
+		dossier === null ? {} : { ...dossier.counts, content: undefined }
+	);
+
+	// The active section is user-owned chrome (ruling 9): dossier swaps keep
+	// it — comparison flows read History-at-A then History-at-B. It lives on
+	// the shell because this component unmounts on every view hop.
+	const active = $derived(shell.drawerSection);
 	let dragging = $state(false);
 
 	function startDrag(event: PointerEvent) {
@@ -66,6 +105,48 @@
 		window.addEventListener('pointermove', move);
 		window.addEventListener('pointerup', up);
 	}
+
+	/** BIBLE's hover convention: relative clock, absolute ISO on hover. */
+	function absolute(createdAt: number): string {
+		const iso = new Date(createdAt * 1000).toISOString();
+		return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+	}
+
+	/** History rows name authors as short npubs (mono) — kind-0 profiles
+	 * belong to the publisher chip, not per-row fetches. */
+	function npubShort(pubkey: string): string {
+		if (pubkey === '') return 'unknown';
+		const npub = nip19.npubEncode(pubkey);
+		return `${npub.slice(0, 14)}…`;
+	}
+
+	/** State word per row (mono vocabulary, all computed). */
+	function rowState(row: HistoryRow): string {
+		switch (row.state) {
+			case 'root':
+				return 'root';
+			case 'applied':
+				return 'applied';
+			case 'halted-here':
+				return 'halted here';
+			case 'fork-parent':
+				return 'shared parent';
+			case 'fork-branch':
+				return 'fork branch';
+			case 'pending':
+				return 'pending';
+			case 'overlay':
+				return row.overlayState ?? 'overlay';
+			case 'retraction':
+				return 'retracted';
+		}
+	}
+
+	/** The only-patchless-chain case: one honest root row (startup mandate) —
+	 * true when no canonical patch, non-canonical entry, or retraction exists. */
+	const bareRoot = $derived(
+		dossier !== null && dossier.history.every((r) => r.state === 'root')
+	);
 </script>
 <section
 	aria-label="Detail drawer"
@@ -96,7 +177,7 @@
 			<button
 				type="button"
 				aria-pressed={active === section.key}
-				onclick={() => (active = section.key)}
+				onclick={() => (shell.drawerSection = section.key)}
 				class="flex h-6 items-center gap-1 rounded-chip px-2 text-[12.5px] font-medium transition-colors duration-100 {active ===
 				section.key
 					? 'bg-accent-tint text-accent-ink'
@@ -108,6 +189,18 @@
 				{/if}
 			</button>
 		{/each}
+		<!-- The collapsed handle names the subject (ruling 2 — selection is
+			marked on this surface too); mono when uninterpreted, matching the
+			fallback vocabulary everywhere else. -->
+		{#if !open && dossier !== null}
+			<span
+				class="ml-2 min-w-0 truncate {dossier.title.interpreted
+					? 'text-[12px] font-medium text-ink'
+					: 'font-mono text-[11px] text-ink-2'}"
+			>
+				{dossier.title.text}
+			</span>
+		{/if}
 		<span class="min-w-0 flex-1"></span>
 		<KeyHint
 			label="Detail drawer"
@@ -127,10 +220,194 @@
 	<!-- Body stays mounted while collapsed (citation-ring persistence, header
 	 * comment); the frame clips it and the copy fades ahead of the height. -->
 	<div class="drawer-copy min-h-0 flex-1 overflow-y-auto px-3 pt-1 pb-3">
-		<p class="max-w-md text-[12.5px] leading-relaxed text-ink-3">
-			The {SECTIONS.find((s) => s.key === active)?.label} dossier renders here once a graph node is
-			selected — the graph canvas arrives with the product-graph step (spec §11 step 3).
-		</p>
+		{#if hiddenByFilter}
+			<!-- ADR 0001: the subject outlives the filter, and says so. -->
+			<div
+				class="mb-2 flex items-center gap-2 rounded-[8px] border border-line bg-inset px-2.5 py-1.5 font-mono text-[11px] text-ink-2"
+			>
+				hidden by the current filter
+				{#if onClearFilters !== undefined}
+					<button
+						type="button"
+						class="text-accent-ink underline underline-offset-2 hover:text-ink"
+						onclick={() => onClearFilters()}
+					>
+						clear filters
+					</button>
+				{/if}
+			</div>
+		{/if}
+
+		{#if dossier === null}
+			<!-- ruling 7: one honest line, section bar above stays constant. -->
+			<p class="max-w-md font-mono text-[11.5px] leading-relaxed text-ink-3">
+				select a result to open its dossier
+			</p>
+		{:else if active === 'summary'}
+			<div class="flex items-center gap-2.5">
+				<!-- ① kind-mapped neutral icon tile (BIBLE N1/N2) -->
+				<span
+					class="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[8px] border border-line bg-inset {dossier.subjectType ===
+					'product'
+						? 'text-accent-ink'
+						: 'text-ink-2'}"
+				>
+					{#if dossier.subjectType === 'product'}
+						<IconCpu size={16} stroke={1.7} aria-hidden="true" />
+					{:else}
+						<IconShield size={16} stroke={1.7} aria-hidden="true" />
+					{/if}
+				</span>
+				<!-- ② title: sans on a cache hit, mono rule-5 on a miss — the
+					exact same two faces the card has (§2 rule 5). -->
+				<span
+					class="min-w-0 truncate {dossier.title.interpreted
+						? 'text-[14px] font-semibold text-ink'
+						: 'font-mono text-[12px] font-medium text-ink-2'}"
+				>
+					{dossier.title.text}
+				</span>
+				{#if dossier.retracted}
+					<!-- protocol kind-5, never presentational (spec §2 rule 2);
+						the drawer's pill matches the card's exactly (ruling 3). -->
+					<span
+						class="shrink-0 rounded-full border border-[oklch(0.93_0.04_20)] bg-red-tint px-2.5 py-0.5 font-mono text-[11px] font-medium text-red"
+					>
+						retracted
+					</span>
+				{/if}
+				<span class="flex-1"></span>
+				<!-- ③ publisher (kind-0 dot+name, npub fallback) · ⑤ time -->
+				<PublisherChip pubkey={dossier.publisher} />
+				<span
+					class="inline-flex shrink-0 items-center gap-1.5 text-ink-2"
+					title={absolute(dossier.createdAt)}
+				>
+					<IconClock size={12} stroke={2} aria-hidden="true" />
+					<span class="font-mono text-[11px]">{formatRel(dossier.createdAt * 1000)}</span>
+				</span>
+			</div>
+			<!-- ④ description: products only, one line, cache-only — a miss
+				renders no line at all rather than fabricated prose. -->
+			{#if dossier.snippet !== undefined}
+				<p class="mt-1.5 text-[13.5px] leading-relaxed text-ink-2">{dossier.snippet}</p>
+			{/if}
+			{#if dossier.identifiers.length > 0}
+				<div class="mt-2 flex flex-wrap items-center gap-1.5">
+					{#each dossier.identifiers as id (id)}
+						<span
+							class="rounded-[6px] border border-line bg-inset px-2 py-[3px] font-mono text-[11px] text-ink-2"
+						>
+							{id}
+						</span>
+					{/each}
+				</div>
+			{/if}
+		{:else if active === 'content'}
+			<!-- Content = resolve()'s chain content verbatim, monospace; frozen
+				content carries its deterministic state banner (ruling 4). -->
+			{#if dossier.content.banner !== null}
+				<p
+					class="mb-2 rounded-[6px] border border-line bg-inset px-2.5 py-1.5 font-mono text-[11px] text-ink-2"
+				>
+					{dossier.content.banner}
+				</p>
+			{/if}
+			{#if dossier.content.text !== null}
+				<pre
+					class="font-mono text-[11.5px] leading-relaxed break-all whitespace-pre-wrap text-ink">{dossier
+						.content.text}</pre>
+			{:else if dossier.content.banner === null}
+				<p class="font-mono text-[11.5px] text-ink-3">no content</p>
+			{/if}
+		{:else if active === 'history'}
+			<div class="flex flex-col gap-1">
+				{#each dossier.history as row, i (row.id + row.state)}
+					{#if i > 0 && !row.canonical && dossier.history[i - 1].canonical}
+						<!-- ruling 5: overlays and pending render as their own
+							group — never silently mixed into the chain. -->
+						<div
+							class="mt-2 mb-1 border-t border-line pt-1.5 font-mono text-[10.5px] tracking-wide text-ink-3 uppercase"
+						>
+							not in the canonical chain
+						</div>
+					{/if}
+					<div class="flex items-center gap-2 text-[12px] text-ink-2">
+						<span class="w-7 shrink-0 font-mono text-[11px] text-ink-3">
+							{row.position !== null ? `#${row.position}` : '·'}
+						</span>
+						{#if row.state === 'retraction'}
+							<span
+								class="shrink-0 rounded-full border border-[oklch(0.93_0.04_20)] bg-red-tint px-2 py-px font-mono text-[10.5px] font-medium text-red"
+							>
+								retracted
+							</span>
+						{:else}
+							<span
+								class="shrink-0 rounded-[6px] border border-line bg-inset px-2 py-px font-mono text-[10.5px] text-ink-2 {row.state ===
+									'overlay' && row.overlayState !== 'clean'
+									? 'border-orange/40 text-orange'
+									: ''}"
+							>
+								{rowState(row)}
+							</span>
+						{/if}
+						{#if bareRoot}
+							<span class="font-mono text-[11px] text-ink-3">no patches observed</span>
+						{/if}
+						<span class="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-3">
+							{row.id.slice(0, 16)}…
+						</span>
+						<span class="shrink-0 font-mono text-[11px] text-ink-3" title={row.author}>
+							{npubShort(row.author)}
+						</span>
+						<span
+							class="shrink-0 font-mono text-[11px] text-ink-2"
+							title={absolute(row.createdAt)}
+						>
+							{formatRel(row.createdAt * 1000)}
+						</span>
+					</div>
+				{/each}
+			</div>
+		{:else}
+			<!-- Files: bindings with this event as endpoint (ruling 8) — the
+				binding's own verb with the arrowhead at the destination end
+				(N1⑦), counterparty label or bare mono id, roles on hover. -->
+			{#if dossier.files.length === 0}
+				<p class="font-mono text-[11.5px] text-ink-3">no bindings reference this event</p>
+			{:else}
+				<div class="flex flex-col gap-1">
+					{#each dossier.files as row (row.bindingId)}
+						<button
+							type="button"
+							class="flex items-center gap-2 rounded-[8px] px-1.5 py-1 text-left text-[12.5px] text-ink-2 transition-colors duration-100 hover:bg-hover"
+							title="{row.destination === 'subject' ? 'root' : 'link'} endpoint · {row.counterpartyId}"
+							onclick={() => onSelect?.(row.counterpartyId)}
+						>
+							<span class="shrink-0 font-mono text-[11px] text-ink-3">
+								{row.destination === 'subject' ? '←' : '→'}
+							</span>
+							{#if row.verb !== ''}
+								<span
+									class="shrink-0 rounded-[6px] border border-line bg-inset px-2 py-px font-mono text-[10.5px] text-ink-2"
+								>
+									{row.verb}
+								</span>
+							{/if}
+							{#if row.counterpartyLabel !== null}
+								<span class="truncate text-[12.5px] font-medium text-ink">
+									{row.counterpartyLabel}
+								</span>
+							{/if}
+							<span class="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-3">
+								{row.counterpartyId.slice(0, 16)}…
+							</span>
+						</button>
+					{/each}
+				</div>
+			{/if}
+		{/if}
 	</div>
 </section>
 

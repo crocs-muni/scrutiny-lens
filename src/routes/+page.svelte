@@ -8,6 +8,7 @@
 	import { Tooltip } from 'bits-ui';
 	import { handleShellKeydown, shell } from '$lib/shell.svelte';
 	import { fillNote, investigation } from '$lib/investigation.svelte';
+	import { deriveDossier } from '$lib/dossier';
 	import { settings } from '$lib/settings.svelte';
 	import SearchHero from '$lib/components/ui/SearchHero.svelte';
 	import TaskTrace from '$lib/components/ui/TaskTrace.svelte';
@@ -58,6 +59,39 @@
 		];
 	});
 	const cohort = $derived(viewCards.length === 0 ? '' : cohortLine(viewCards, viewEvents));
+
+	// — Dossier derivations (#29a) —
+	// Store-level selection (ADR 0001): the dossier resolves against the
+	// full admitted set, so facet filtering can never make evidence vanish.
+	const dossier = $derived.by(() => {
+		const id = investigation.selectedEventId;
+		const session = investigation.result;
+		if (id === null || session === null) return null;
+		return deriveDossier(id, session.admitted, investigation.cards);
+	});
+	// ADR 0001's companion announcement: persistence is never silent. The
+	// flag compares against the surface the subject actually renders on:
+	// product subjects are visible iff their CARD survives the filters
+	// (the interpretation/semantic axes touch cards, not events — an
+	// events-only comparison would suppress the announcement exactly when
+	// it matters), metadata subjects iff their event survives.
+	const selectionHidden = $derived.by(() => {
+		if (dossier === null || investigation.selectedEventId === null) return false;
+		if (Object.keys(investigation.selections).length === 0) return false;
+		const id = investigation.selectedEventId;
+		const isCardSubject = investigation.cards.some((c) => c.id === id);
+		return isCardSubject
+			? !viewCards.some((c) => c.id === id)
+			: !viewEvents.some((e) => e.id === id);
+	});
+
+	/** Card click / Files-row deep-link (BIBLE 678): select, open, land on
+	 * session. Clicking the selected card again re-affirms (ruling 10). */
+	function openDossier(id: string): void {
+		investigation.selectedEventId = id;
+		shell.drawerOpen = true;
+		shell.view = 'session';
+	}
 	const fetched = $derived(investigation.slices.reduce((sum, s) => sum + s.received, 0));
 	const truncated = $derived(investigation.notices.some((n) => n.kind === 'truncated'));
 	// Owner ruling 2026-09-09: the 'N invalid skipped' ledger is removed from
@@ -258,6 +292,21 @@
 											lives at the area edge); breadcrumb owns fetched/truncation -->
 										<div class="mx-auto flex w-full max-w-[760px] items-baseline gap-3 px-1 pb-1 pt-2">
 											<span class="font-mono text-[12.5px] font-semibold text-ink">{cohort}</span>
+											{#if selectionHidden}
+												<!-- the filtering surface owns its half of the
+													announcement (ruling 11): a filtered-out
+													selection is stated where it happened. -->
+												<span class="font-mono text-[11px] text-ink-2">
+													selected event hidden by filters ·
+													<button
+														type="button"
+														class="text-accent-ink underline underline-offset-2 hover:text-ink"
+														onclick={() => investigation.clearFacets()}
+													>
+														clear
+													</button>
+												</span>
+											{/if}
 											<span class="flex-1"></span>
 										</div>
 									{/if}
@@ -281,7 +330,15 @@
 										{:else}
 											{#each showCards ? viewCards : investigation.skeletons as card (card.id)}
 												<div class="w-full max-w-[760px] shrink-0">
-													<ResultCard {card} pending={investigation.pending.has(card.id)} />
+													<!-- skeletons stay inert (ruling 6 — no admitted
+														subject behind them); settled cards open the
+														dossier, the selected one wears the ring. -->
+													<ResultCard
+														{card}
+														pending={investigation.pending.has(card.id)}
+														selected={card.id === investigation.selectedEventId}
+														onOpen={showCards ? () => openDossier(card.id) : undefined}
+													/>
 												</div>
 											{/each}
 										{/if}
@@ -313,6 +370,10 @@
 					open={shell.drawerOpen}
 					height={Math.min(shell.drawerHeight, drawerMax)}
 					maxHeight={drawerMax}
+					{dossier}
+					hiddenByFilter={selectionHidden}
+					onSelect={openDossier}
+					onClearFilters={() => investigation.clearFacets()}
 					onToggle={() => shell.toggleDrawer()}
 					onResize={(next) => (shell.drawerHeight = next)}
 				/>
