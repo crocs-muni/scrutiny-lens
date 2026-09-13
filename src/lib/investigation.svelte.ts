@@ -15,6 +15,8 @@
 // it is never persisted (spec §6).
 
 import { defaultCallLLM, type AIKind, type CallLLM } from "$lib/ai/output";
+import { streamLLM } from "$lib/ai/gateway";
+import type { StreamLLM } from "$lib/ai/records";
 import type { ProviderOverrideInput } from "$lib/ai/provider";
 import { createTransport, type Transport } from "$lib/net/transport";
 import {
@@ -224,7 +226,15 @@ class Investigation {
           this.cards.length > 0
         ) {
           this.filling = true;
-          await this.fillInChunks(provider, callLLM, controller);
+          // Prod passes the gateway's streamText lane: the fill paints
+          // per-record. Tests injecting only callLLM keep the batch path.
+          await this.fillInChunks(
+            provider,
+            callLLM,
+            controller,
+            LANE_STAGGER_MS,
+            streamLLM,
+          );
           if (this.controller === controller) this.filling = false;
         }
       }
@@ -292,15 +302,16 @@ clearFacets(): void {
     callLLM: CallLLM,
     controller: AbortController,
     laneStaggerMs: number = LANE_STAGGER_MS,
+    stream?: StreamLLM,
   ): Promise<void> {
     const CHUNK = 3;
     const LANES = 4;
-    // 60s: a cold model on a shared gateway (e-infra LiteLLM loads models
-    // on first use) can take 30-60s to answer at all, and the gateway's
-    // 429 cooldown cycle needs a lane arm past its Retry-After horizon
-    // (capped at 15s, issue #53) — 10s mislabeled honest waits as
-    // timeouts (the owner's logs show every fill chunk dying at exactly
-    // ~10s on an otherwise-fast endpoint).
+    // 60s: a cold model on a shared BYOK gateway can take 30-60s to answer
+    // at all (first-use cold-loads are common on LiteLLM-style proxies), and
+    // the gateway's 429 cooldown cycle needs a lane arm longer than its
+    // Retry-After horizon (capped at 15s, issue #53) — 10s mislabeled honest
+    // waits as timeouts (every fill chunk died at exactly ~10s on a
+    // measured-fast endpoint, owner incident).
     const PER_CHUNK_MS = 60_000;
     const total = this.cards.length;
     this.fillStats = { interpreted: 0, total };
@@ -344,6 +355,26 @@ clearFacets(): void {
           filled = await fillCards(chunk, {
             provider,
             callLLM,
+            // Streamed fill (issue #64): the chunk's cards paint ONE RECORD
+            // AT A TIME as its blocks decode inside the open stream —
+            // the first filled card lands near that card's own decode time
+            // instead of after the whole 3-card batch. The streamed view
+            // passes the same id-affinity gate as the settle pass, so the
+            // two views of a card can never disagree.
+            streamLLM: stream,
+            // Lanes write disjoint index ranges (one claim chunk each) and
+            // this is one synchronous array-rewrite per paint — the same
+            // clobber-free contract as the settle merge below, just earlier.
+            onPaint: (card, i) => {
+              if (this.controller !== controller) return;
+              const merged = this.cards.slice();
+              merged[at + i] = card;
+              this.cards = merged;
+              this.fillStats = {
+                interpreted: merged.filter((c) => c.interpreted).length,
+                total,
+              };
+            },
             signal: timer,
             // schema_failure (it answered, output didn't conform) and
             // rate_limited (it answered 429, asking us to slow down) both

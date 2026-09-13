@@ -20,7 +20,7 @@ import type { NostrEvent as FabricEvent } from "$lib/fabric";
 import type { ProviderOverrideInput } from "$lib/ai/provider";
 import { getInterpretation, saveInterpretation } from "$lib/db";
 import { type AIKind, type CallLLM } from "$lib/ai/output";
-import { generateRecords } from "$lib/ai/records";
+import { generateRecords, streamRecords, type StreamLLM } from "$lib/ai/records";
 import { z } from "zod";
 
 export interface ProductCard {
@@ -181,7 +181,20 @@ const INSTRUCTIONS = [
 
 export interface FillCardsOptions {
   provider: ProviderOverrideInput;
-  callLLM: CallLLM;
+  /** Batch transport. The fill lanes take it when no `streamLLM` seam is
+   * given — the two paths share the same settles/gates/caches. */
+  callLLM?: CallLLM;
+  /** Stream transport (issue #64): when present, the fill paints cards as
+   * their records complete inside the still-open stream, rather than all at
+   * once after the batch. Streamed records pass one extra check — the
+   * author's id was offered to the view model — mirroring the id-affinity
+   * gate below; the settle pass remains byte-identical to the batch path. */
+  streamLLM?: StreamLLM;
+  /** Progressive paint seam: fired per card the moment its streamed record
+   * survives BOTH gates (block-parse + id-affinity). Settle still happens —
+   * callers must tolerate a card being painted here and merged again at
+   * settle; the consumer-visible truth never differs between the two. */
+  onPaint?: (card: ProductCard, index: number) => void;
   signal?: AbortSignal;
   /** Reports the settle-kind when the fill call fails (unreachable/timeout →
    * transport; schema_failure → the endpoint answered but output didn't
@@ -226,28 +239,8 @@ export async function fillCards(
     return cached.map((c, i) => c ?? cards[i]);
   }
 
-  // One batch-shaped call for all uncached cards — rate-limit-safe (spec §7's
-  // AI-fill budget). KV records salvage per-card: a truncated batch fills the
-  // events that came through and leaves the rest raw (per-card granularity,
-  // spec §2 rule 5), instead of the old all-or-nothing JSON reject.
-  const result = await generateRecords({
-    schema: FillDraft,
-    knownKeys: FILL_KEYS,
-    system: INSTRUCTIONS,
-    messages: [
-      {
-        role: "user",
-        content: JSON.stringify(
-          fresh.map((c) => ({ id: c.id, content: c.contentStart })),
-        ),
-      },
-    ],
-    provider: opts.provider,
-    callLLM: opts.callLLM,
-    abortSignal: opts.signal,
-    temperature: 0.2,
-  });
-
+  const requested = new Set(fresh.map((c) => c.id));
+  const freshIndexById = new Map(fresh.map((c, i) => [c.id, i]));
   // Id affinity gate (spec §2 never-lie, id-mangling incident): bind a
   // record only if its echoed id was actually requested for this batch —
   // a model that repeats or mangles an id must not attach another card's
@@ -258,8 +251,54 @@ export async function fillCards(
     string,
     { id: string; title: string; snippet: string }
   >();
+
+  // One batch-shaped call for all uncached cards — rate-limit-safe (spec §7's
+  // AI-fill budget). KV records salvage per-card: a truncated batch fills the
+  // events that came through and leaves the rest raw (per-card granularity,
+  // spec §2 rule 5), instead of the old all-or-nothing JSON reject.
+  const share = {
+    schema: FillDraft,
+    knownKeys: FILL_KEYS,
+    system: INSTRUCTIONS,
+    messages: [
+      {
+        role: "user" as const,
+        content: JSON.stringify(
+          fresh.map((c) => ({ id: c.id, content: c.contentStart })),
+        ),
+      },
+    ],
+    provider: opts.provider,
+    abortSignal: opts.signal,
+    temperature: 0.2,
+  };
+  const result =
+    opts.streamLLM !== undefined
+      ? await streamRecords({
+          ...share,
+          streamLLM: opts.streamLLM,
+          onRecord: (draft) => {
+            // Progressive paint = the streamed view of the same truth:
+            // the SAME affinity gate the settle pass runs; settle then
+            // guards repeats (first id claim wins) exactly like the batch
+            // path — no streamed record can re-route another card's slot.
+            if (!requested.has(draft.id) || drafts.has(draft.id)) return;
+            drafts.set(draft.id, draft);
+            const idx = freshIndexById.get(draft.id);
+            if (idx === undefined) return;
+            const card = fresh[idx];
+            const painted = {
+              ...card,
+              title: clip(draft.title, CLIP_LIMIT.title),
+              snippet: clip(draft.snippet, CLIP_LIMIT.snippet),
+              interpreted: true,
+            };
+            opts.onPaint?.(painted, idx);
+          },
+        })
+      : await generateRecords({ ...share, callLLM: opts.callLLM });
+
   if (result.ok) {
-    const requested = new Set(fresh.map((c) => c.id));
     for (const draft of result.result) {
       if (!requested.has(draft.id) || drafts.has(draft.id)) continue;
       drafts.set(draft.id, draft);
