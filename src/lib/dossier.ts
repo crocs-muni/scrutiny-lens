@@ -180,11 +180,13 @@ function historyRows(
 ): HistoryRow[] {
 	const byId = new Map(events.map((e) => [e.id, e]));
 	const rows: HistoryRow[] = [];
-	const rootEvent = byId.get(subject.id) ?? subject;
+	// The root row is the subject verbatim: deriveDossier already returned
+	// null when the subject isn't in `events`, and admission dedupes by id —
+	// a `byId.get(subject.id) ?? subject` lookup here would be self-identity.
 	rows.push({
 		id: subject.id,
-		author: rootEvent.pubkey,
-		createdAt: rootEvent.created_at,
+		author: subject.pubkey,
+		createdAt: subject.created_at,
 		position: 0,
 		state: 'root',
 		canonical: true
@@ -303,7 +305,10 @@ function fileRows(
 		const endpoints = bindingEndpoints(event);
 		if (endpoints === undefined) continue;
 		if (endpoints.rootId !== subjectId && endpoints.linkId !== subjectId) continue;
-		const counterpartyId = endpoints.rootId === subjectId ? endpoints.linkId : endpoints.rootId;
+		// One predicate projects both facts: the other endpoint, and which
+		// side of the Metadata → Product arrow the subject sits on (N1⑦).
+		const subjectIsRoot = endpoints.rootId === subjectId;
+		const counterpartyId = subjectIsRoot ? endpoints.linkId : endpoints.rootId;
 		const counterparty = byId.get(counterpartyId);
 		const card = cards.find((c) => c.id === counterpartyId);
 		rows.push({
@@ -316,7 +321,7 @@ function fileRows(
 					: counterparty !== undefined
 						? { text: deriveFallbackTitle(counterparty), interpreted: false }
 						: null,
-			destination: endpoints.rootId === subjectId ? 'subject' : 'counterparty'
+			destination: subjectIsRoot ? 'subject' : 'counterparty'
 		});
 	}
 	return rows;
