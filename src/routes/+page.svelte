@@ -91,6 +91,9 @@
 		investigation.selectedEventId = id;
 		shell.drawerOpen = true;
 		shell.view = 'session';
+		// §8.2 dossier context (#68/#75): patches and deletions are unreachable
+		// by the search's discovery filters, so the dossier fetches them on open.
+		void investigation.ensureSubjectContext(id);
 	}
 	const fetched = $derived(investigation.slices.reduce((sum, s) => sum + s.received, 0));
 	const truncated = $derived(investigation.notices.some((n) => n.kind === 'truncated'));
