@@ -32,6 +32,7 @@
 	import type { ProviderOverrideInput } from '$lib/ai/provider';
 
 	let centerHeight = $state(0);
+
 	// The drawer may grow until the canvas keeps a usable strip.
 	const drawerMax = $derived(Math.max(240, centerHeight - 120));
 

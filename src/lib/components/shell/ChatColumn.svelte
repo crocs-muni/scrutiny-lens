@@ -14,7 +14,7 @@
 	 * says why and points at Settings; events not in memory → transcript
 	 * stays readable, asking is disabled with the reason. */
 
-	import './chat/citations.css';
+	import '../chat/citations.css';
 	import { IconArrowBarToRight, IconMessage } from '@tabler/icons-svelte';
 	import KeyHint from './KeyHint.svelte';
 	import { COLLAPSE } from '../ui/motion';
@@ -145,7 +145,7 @@
 				</div>
 			{/if}
 
-			{#if chat.messages.length === 0 && chat.live === null && chat.error === null}
+			{#if chat.messages.length === 0 && chat.live === null && chat.error === null && composerNote === null}
 				<p class="empty-hint">
 					Ask about this session’s events — every answer is verified against them, quote by
 					quote.
