@@ -28,7 +28,15 @@ import {
   type SkeletonCard,
 } from "$lib/pipeline";
 import type { SearchRequest } from "$lib/ai/agents/query";
-import { resolveGraph } from "$lib/fabric";
+import { fetchSubjectContext } from "$lib/pipeline/traversal";
+import { indexEvent } from "$lib/search";
+import {
+  DELETION_KIND,
+  admitDeletion,
+  admitEvent,
+  resolveGraph,
+  type NostrEvent as FabricEvent,
+} from "$lib/fabric";
 import {
   assembleCards,
   computeFacets,
@@ -125,6 +133,11 @@ class Investigation {
    * (ruling 10). */
   selectedEventId = $state<string | null>(null);
 
+  /** Subjects whose §8.2 dossier context was fetched (or is in flight) —
+   * one traversal per subject per session; dies with the session (start()
+   * re-creates it with the rest of the run's state). */
+  contextFetched = new Set<string>();
+
   private controller: AbortController | null = null;
 
   private applyEvent(controller: AbortController, event: PipelineEvent): void {
@@ -179,6 +192,7 @@ class Investigation {
     this.fillFailure = null;
     this.elapsedMs = null;
     this.selectedEventId = null;
+    this.contextFetched = new Set();
     this.running = true;
     const startedAt = performance.now();
 
@@ -268,6 +282,53 @@ class Investigation {
     // Selection survives an abort (ruling 10): stop() freezes the run but
     // keeps what it painted, so the dossier's evidence is still intact.
     this.controller?.abort();
+  }
+
+  /** §8.2 dossier-context fetch (lens #68, tools #75): discovery filters can
+   * never reach a chain's patches (no i tags, §8.1 step 4) or its deletions
+   * (no #t, §3.2), so opening a dossier fires the traversal legs directly.
+   * Newly admitted events APPEND to the session's admitted set — the dossier
+   * derives from that same array, so History/Retraction rows re-derive in
+   * place; facet groups and the graph canvas deliberately do not re-run
+   * (§3: those are the search's shape, not one subject's context). Silent
+   * degrade (spec §6): a dead relay leaves the dossier exactly as honest as
+   * it was before the fetch. */
+  async ensureSubjectContext(subjectId: string): Promise<void> {
+    const session = this.result;
+    if (session === null) return;
+    if (!session.admitted.some((e) => e.id === subjectId)) return;
+    if (this.contextFetched.has(subjectId)) return;
+    this.contextFetched.add(subjectId);
+    let transport: Transport | null = null;
+    try {
+      transport = createTransport({ urls: settings.relays });
+      const fetched = await fetchSubjectContext(
+        subjectId,
+        settings.relays,
+        transport,
+      );
+      // Session identity guard (lifecycle honesty): a late traversal must
+      // never mix into a newer run's admitted set.
+      if (this.result !== session) return;
+      const known = new Set(session.admitted.map((e) => e.id));
+      for (const event of fetched) {
+        if (known.has(event.id)) continue;
+        known.add(event.id);
+        const admission =
+          event.kind === DELETION_KIND
+            ? admitDeletion(event as unknown as FabricEvent)
+            : admitEvent(event as unknown as FabricEvent);
+        if (!admission.ok) continue;
+        session.admitted.push(event);
+        // Cache write must not outlive the fetch — the next run's
+        // cache-first read sees this traversal for free (§28 repeat-query).
+        void indexEvent(event).catch(() => {});
+      }
+    } catch {
+      // Silent degrade — see the method contract above.
+    } finally {
+      await transport?.close();
+    }
   }
 
   /** Facet selection (spec §3: OR within a group, AND across groups).
@@ -472,6 +533,7 @@ export function resetInvestigation(): void {
   investigation.fillStats = { interpreted: 0, total: 0 };
   investigation.fillFailure = null;
   investigation.selectedEventId = null;
+  investigation.contextFetched = new Set();
   investigation.running = false;
 }
 

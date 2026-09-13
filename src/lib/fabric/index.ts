@@ -59,6 +59,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { z } from 'zod';
 import { tTags, indexerFilter, searchFilter, fullScanFilter } from '@scrutiny-fabric/core';
+import { deletionsFor, patchesReferencing } from '@scrutiny-fabric/core';
 
 /** Every value of the `t` tag on the event — core's derivation, never
  * hand-rolled, per AGENTS.md's "all protocol work via @scrutiny-fabric/core". */
@@ -80,6 +81,11 @@ export type { NostrEvent as CoreNostrEvent } from '@scrutiny-fabric/core';
  * freetext fallback, and last-resort full scan. Re-exported here so the
  * pipeline (issue #28) never hand-rolls a filter. */
 export { indexerFilter, searchFilter, fullScanFilter };
+
+/** §8.2 traversal builders (lens #68, tools #75): patches carry no i tags
+ * (§8.1 step 4) and kind-5 deletions no #t (§3.2), so discovery filters can
+ * never reach them — the dossier fires these legs per subject. */
+export { deletionsFor, patchesReferencing };
 
 /** tagValues(event, key) — every value slot of every tag with that key. The
  * pipeline's skeleton sources index i-tags with it (never hand-rolled). */
@@ -222,6 +228,29 @@ export function admitEvent(event: NostrEvent): AdmitResult {
 		ok: false,
 		reason: reasonFor(verdict)
 	};
+}
+
+/**
+ * Kind-5 deletion admission. admitEvent's protocol validity project does not
+ * apply — deletions are NIP-09 events, not SCRUTINY events, and carry no
+ * `scrutiny-fabric` tags (§3.2) — but the tamper half of the gate does:
+ * structural shape plus NIP-01 id recompute (the schnorr half remains the
+ * documented seam gap in the header). A deleted patch/root must reach the
+ * dossier so retraction can drop it (DEL-1, DQ-2).
+ */
+export function admitDeletion(event: NostrEvent): { ok: true } | { ok: false; reason: string } {
+	const structural = structuralError(event);
+	if (structural !== undefined) return { ok: false, reason: structural };
+	if (event.kind !== DELETION_KIND) {
+		return { ok: false, reason: `expected kind ${DELETION_KIND}, got ${event.kind}` };
+	}
+	if (!eventIdMatches(asCore(event), sha256Hex)) {
+		return {
+			ok: false,
+			reason: 'event id does not match its NIP-01 recompute (contents tampered or id fabricated)'
+		};
+	}
+	return { ok: true };
 }
 
 /**

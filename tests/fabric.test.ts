@@ -18,6 +18,7 @@
 import { describe, it, expect } from 'vitest';
 import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
 import {
+	admitDeletion,
 	admitEvent,
 	resolveGraph,
 	validateAndClassify,
@@ -188,6 +189,38 @@ describe('admitEvent (hash-injected integrity gate)', () => {
 		const result = admitEvent(malformed);
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.reason).toMatch(/malformed event: sig/);
+	});
+});
+
+describe('admitDeletion (kind-5 traversal gate, §3.2 / lens #68)', () => {
+	/** Genuinely-signed kind-5: NIP-09 deletions carry no scrutiny-fabric tags
+	 * (§3.2), so admitEvent's SCRUTINY validity project must never see them —
+	 * only the structural + id-recompute halves. */
+	function selfConsistentDeletion(targetId: string): NostrEvent {
+		return finalizeEvent(
+			{ kind: 5, created_at: 1720000100, tags: [['e', targetId]], content: '' },
+			generateSecretKey()
+		);
+	}
+
+	it('admits a self-consistent kind-5 deletion with no SCRUTINY tags', () => {
+		expect(admitDeletion(selfConsistentDeletion(PRODUCT.id))).toEqual({ ok: true });
+	});
+
+	it('rejects a kind-1 event even when otherwise self-consistent', () => {
+		const result = admitDeletion(selfConsistentProduct());
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toMatch(/expected kind 5/);
+	});
+
+	it('rejects a tampered kind-5 whose id no longer recomputes', () => {
+		const tampered: NostrEvent = {
+			...selfConsistentDeletion(PRODUCT.id),
+			tags: [['e', METADATA.id]]
+		};
+		const result = admitDeletion(tampered);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toMatch(/id does not match/);
 	});
 });
 
