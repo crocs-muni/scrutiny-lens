@@ -306,13 +306,12 @@ function fileRows(
 		const counterpartyId = endpoints.rootId === subjectId ? endpoints.linkId : endpoints.rootId;
 		const counterparty = byId.get(counterpartyId);
 		const card = cards.find((c) => c.id === counterpartyId);
-		const cacheHit = card !== undefined && card.interpreted;
 		rows.push({
 			bindingId: event.id,
 			verb: event.content.trim(),
 			counterpartyId,
 			counterpartyTitle:
-				cacheHit && card !== undefined
+				card !== undefined && card.interpreted
 					? { text: card.title, interpreted: true }
 					: counterparty !== undefined
 						? { text: deriveFallbackTitle(counterparty), interpreted: false }
