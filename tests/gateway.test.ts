@@ -20,6 +20,7 @@ import {
 	GatewayError,
 	resetGateway,
 	setBaseFetch,
+	setLimits,
 	primeSecrets,
 	scrubSecrets
 } from '$lib/ai/gateway';
@@ -392,7 +393,7 @@ describe('status handling', () => {
 		expect(log).toHaveLength(2); // c never reached the network
 	});
 
-	it('per-attempt timeout: hanging fetch is aborted once, not retried', async () => {
+	it('caller abort on a hanging fetch: one AbortError, never retried, slot released', async () => {
 		const { fetch: f, log } = scriptedFetch([{ hang: true }, {}]);
 		setBaseFetch(f);
 		const controller = new AbortController();
@@ -497,6 +498,24 @@ describe('streamLLM', () => {
 		expect(log).toHaveLength(1); // canceled once — never retried
 		expect(log[0].signal?.aborted).toBe(true); // upstream fetch was aborted
 		// Slot released and fetch torn down: a fresh call completes at once.
+		const t0 = Date.now();
+		expect(await callLLM(args())).toBe('T');
+		expect(Date.now() - t0).toBeLessThan(1000);
+	});
+
+	it('attempt timeout before the first byte: TimeoutError via the attempt abort ctrl, never retried', async () => {
+		// The per-attempt timeout, honestly driven: timeoutMs is cranked down to
+		// a few ms through the setLimits seam (beforeEach's resetGateway restores
+		// the 30s default) and the scripted endpoint hangs, so the ONLY thing that
+		// can end the attempt is withTimeout's attempt abort — no caller signal.
+		setLimits({ timeoutMs: 80 });
+		const { fetch: f, log } = scriptedFetch([{ hang: true }, {}]);
+		setBaseFetch(f);
+		const p = streamLLM(args());
+		await expect(p.next()).rejects.toSatisfy((e: unknown) => (e as Error).name === 'TimeoutError');
+		expect(log).toHaveLength(1); // timed out once — never retried
+		expect(log[0].signal?.aborted).toBe(true); // the attempt abort tore the fetch down
+		// Slot was released: a fresh call must not wait on the timed-out lane.
 		const t0 = Date.now();
 		expect(await callLLM(args())).toBe('T');
 		expect(Date.now() - t0).toBeLessThan(1000);

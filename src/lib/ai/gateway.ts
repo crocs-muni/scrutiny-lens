@@ -56,6 +56,13 @@ export const DEFAULT_LIMITS: Required<GatewayLimits> = {
 
 let limits: Required<GatewayLimits> = { ...DEFAULT_LIMITS };
 
+/** Test seam: override one or more limits; resetGateway() restores defaults.
+ * The per-attempt timeout must be drivable down to a few ms so an honest
+ * first-byte-timeout test can watch it fire without a 30s wall clock. */
+export function setLimits(over: Partial<GatewayLimits>): void {
+	limits = { ...limits, ...over };
+}
+
 /** Full reset — test seam. Rejects queued waiters so no ticket leaks. */
 export function resetGateway(): void {
 	for (const w of queue.splice(0)) w.reject(abortError());
