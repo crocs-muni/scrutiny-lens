@@ -110,6 +110,10 @@ class Chat {
 	/** Stale-load guard: hydrate async applies only while this token is
 	 * current — same seam as the investigation run guard. */
 	private hydrateToken = 0;
+	/** Per-session monotonic message clock: wall-clock ties sort
+	 * nondeterministically through the sessionId index, so createdAt only
+	 * counts up from here (hydrate seeds it from the stored transcript). */
+	private lastAt = 0;
 
 	/** Restore a session's transcript and registry numbering. */
 	async hydrate(sessionId: string): Promise<void> {
@@ -119,6 +123,7 @@ class Chat {
 		this.sessionId = sessionId;
 		this.messages = [];
 		this.grounding = [];
+		this.lastAt = 0;
 		this.error = null;
 		const registry = createCitationRegistry();
 		this.registry = registry;
@@ -127,12 +132,14 @@ class Chat {
 		if (this.hydrateToken !== token) return;
 		for (const eventId of pins?.pins ?? []) registry.next(eventId);
 		this.messages = rows;
+		this.lastAt = rows.reduce((max, m) => Math.max(max, m.createdAt), 0);
 	}
 
 	/** No session open: drop the conversation and any in-flight stream. */
 	reset(): void {
 		this.abortInFlight();
 		this.hydrateToken++;
+		this.lastAt = 0;
 		this.sessionId = null;
 		this.messages = [];
 		this.grounding = [];
@@ -172,7 +179,7 @@ class Chat {
 		const controller = new AbortController();
 		this.abortCtl = controller;
 
-		const createdAt = Date.now();
+		const createdAt = Math.max(Date.now(), this.lastAt + 1);
 		const history = this.messages
 			.filter((m) => m.content !== '' || m.availableContext !== undefined)
 			.map((m) => ({
@@ -218,6 +225,8 @@ class Chat {
 					kind: 'answer',
 					createdAt
 				};
+				const assistantAt = createdAt + 1;
+				this.lastAt = assistantAt;
 				let assistant: ChatMessage;
 				if (f.kind === 'ungrounded') {
 					assistant = {
@@ -227,7 +236,7 @@ class Chat {
 						content: '',
 						availableContext: String(f.availableContext),
 						kind: 'ungrounded',
-						createdAt: Date.now()
+						createdAt: assistantAt
 					};
 				} else {
 					const settled = scrubAnswer(
@@ -242,15 +251,20 @@ class Chat {
 						citations: settled.citations.map(toPersistedCitation),
 						...(f.claimsSummary ? { claimsSummary: f.claimsSummary as ClaimsSummary } : {}),
 						kind: 'answer',
-						createdAt: Date.now()
+						createdAt: assistantAt
 					};
 				}
 				this.messages = [...this.messages, userMessage, assistant];
 				this.unseen = true;
-				const pins = this.pins();
-				void putChatMessage(userMessage);
-				void putChatMessage(assistant);
-				void putChatPins({ sessionId, pins });
+				// Settle must MEAN durable (ADR 0003's record semantics): a
+				// hydrate racing an in-flight put would otherwise read a
+				// transcript missing the turn we just rendered. attempt()
+				// still degrades a hard IDB failure to memory-only.
+				await Promise.all([
+					putChatMessage(userMessage),
+					putChatMessage(assistant),
+					putChatPins({ sessionId, pins: this.pins() })
+				]);
 			}
 		} catch (err) {
 			if (controller.signal.aborted || (err as { name?: string } | null)?.name === 'AbortError') {

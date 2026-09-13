@@ -99,6 +99,21 @@ describe('chat store — settle', () => {
 		]);
 	});
 
+	it('a partial match earns its pill with ONLY the verified span rendered (spec §2 rule 3 + issue acceptance)', async () => {
+		// The model's longer tail never renders: the record carries the
+		// matched span and the UI displays span ?? quote — the pill's quote is
+		// verbatim by construction, never the model's extrapolation.
+		const partial = MARKER('ev-vuln', 'According to sources ROCA: Return of Coppersmith Attack');
+		await chat.send('q', ctx({ streamLLM: fakeStream([`Confirmed ${partial}.`]) }));
+		const assistant = chat.messages.at(-1);
+		const cite = assistant?.citations?.[0];
+		expect(cite?.n).toBe(1);
+		expect(cite?.span).toBe('ROCA: Return of Coppersmith Attack');
+		expect(cite?.quote).toBe('According to sources ROCA: Return of Coppersmith Attack'); // audit trail only
+		const rows = await listChatMessages('s1');
+		expect(rows.at(-1)?.citations?.[0]?.span).toBe('ROCA: Return of Coppersmith Attack');
+	});
+
 	it('ungrounded answers persist the honest availableContext record', async () => {
 		await chat.send('what about quantum chips?', ctx({
 			streamLLM: fakeStream(['UNGROUNDED {"availableContext":"only ROCA-era RSA findings"}'])
