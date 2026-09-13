@@ -24,7 +24,7 @@ import {
 	primeSecrets,
 	scrubSecrets
 } from '$lib/ai/gateway';
-import { generateStructured } from '$lib/ai/output';
+import { generateRecords } from '$lib/ai/records';
 import { fetchModels } from '$lib/ai/models';
 import type { CallLLMArgs } from '$lib/ai/output';
 
@@ -296,8 +296,9 @@ describe('429 + Retry-After', () => {
 			rateLimited('0')
 		]);
 		setBaseFetch(f);
-		const res = await generateStructured({
+		const res = await generateRecords({
 			schema: z.object({ t: z.string() }),
+			knownKeys: ['t'],
 			messages: [{ role: 'user', content: 'hi' }],
 			provider
 		});
