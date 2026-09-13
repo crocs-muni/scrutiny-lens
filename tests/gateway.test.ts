@@ -511,8 +511,12 @@ describe('streamLLM', () => {
 		setLimits({ timeoutMs: 80 });
 		const { fetch: f, log } = scriptedFetch([{ hang: true }, {}]);
 		setBaseFetch(f);
-		const p = streamLLM(args());
-		await expect(p.next()).rejects.toSatisfy((e: unknown) => (e as Error).name === 'TimeoutError');
+		const consuming = (async () => {
+			for await (const _ of streamLLM(args())) {
+				// never yielded: no first byte ever arrives
+			}
+		})();
+		await expect(consuming).rejects.toSatisfy((e: unknown) => (e as Error).name === 'TimeoutError');
 		expect(log).toHaveLength(1); // timed out once — never retried
 		expect(log[0].signal?.aborted).toBe(true); // the attempt abort tore the fetch down
 		// Slot was released: a fresh call must not wait on the timed-out lane.
