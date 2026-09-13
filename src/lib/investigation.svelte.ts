@@ -262,7 +262,13 @@ clearFacets(): void {
   ): Promise<void> {
     const CHUNK = 3;
     const LANES = 4;
-    const PER_CHUNK_MS = 25_000;
+    // 60s: a cold model on a shared gateway (e-infra LiteLLM loads models
+    // on first use) can take 30-60s to answer at all, and the gateway's
+    // 429 cooldown cycle needs a lane arm past its Retry-After horizon
+    // (capped at 15s, issue #53) — 10s mislabeled honest waits as
+    // timeouts (the owner's logs show every fill chunk dying at exactly
+    // ~10s on an otherwise-fast endpoint).
+    const PER_CHUNK_MS = 60_000;
     const total = this.cards.length;
     this.fillStats = { interpreted: 0, total };
     let next = 0;
