@@ -9,7 +9,13 @@
 	 *   not interpreted — dashed border, event's own tags + first chars,
 	 *                     "not interpreted" badge; same footer (publisher +
 	 *                     metadata/files/updates counts are deterministic,
-	 *                     never AI).
+	 *                     never AI). While a fill lane holds the card's id in
+	 *                     investigation.pending (claimed, not merged), the badge
+	 *                     reads "interpreting…" — #59's third state. Chose
+	 *                     `pending` over "interpreting" because the Investigation
+	 *                     field names the lane-side SETTLE signal (in-flight
+	 *                     claims), and only the badge TEXT speaks user UI
+	 *                     vocabulary; same split as `filling` / "AI slow…".
 	 *   retracted       — either variant + red warning pill (protocol kind-5,
 	 *                     never presentational, spec §2 rule 2); retracted
 	 *                     interpreted cards name their provenance ("as relays
@@ -22,16 +28,22 @@
 	import PublisherChip from './PublisherChip.svelte';
 	import { IconCheck, IconClock, IconFile, IconLink, IconPencil, IconShare } from '@tabler/icons-svelte';
 
-	interface Props {
-		/** Skeleton during fetch (rule 5), ProductCard once assembled. */
-		card: ProductCard | SkeletonCard;
-		onOpen?(): void;
-	}
+interface Props {
+	/** Skeleton during fetch (rule 5), ProductCard once assembled. */
+	card: ProductCard | SkeletonCard;
+	/** True while a fill lane has claimed this card but not yet merged it
+	 * (issue #59). The dashed variant reads `interpreting…` instead of
+	 * `not interpreted` — the never-lie gap (spec §2): a card 8s into a
+	 * 14s call must not read identically to one that will never be
+	 * interpreted. */
+	pending?: boolean;
+	onOpen?(): void;
+}
 
-	let { card, onOpen }: Props = $props();
+let { card, pending = false, onOpen }: Props = $props();
 
-	const product: ProductCard | null = $derived('identifiers' in card ? card : null);
-	const dashed = $derived(product === null || !product.interpreted);
+const product: ProductCard | null = $derived('identifiers' in card ? card : null);
+const dashed = $derived(product === null || !product.interpreted);
 
 	// Rule-5 fallback title/body — machine vocabulary only (mono).
 	const fallbackTitle = $derived(
@@ -115,7 +127,10 @@
 			<span
 				class="shrink-0 rounded-full border border-line px-2 py-0.5 font-mono text-[10.5px] text-ink-3"
 			>
-				not interpreted
+				<!-- mid-fill raw ≠ settled raw (spec §2): the fill lane's own
+					claim writes `interpreting…`; once the lane settles this id
+					leaves pending and the badge reverts, no ghost state. -->
+				{pending ? 'interpreting…' : 'not interpreted'}
 			</span>
 		</div>
 		<p class="mt-1.5 line-clamp-3 font-mono text-[11px] leading-relaxed break-all text-ink-2">
