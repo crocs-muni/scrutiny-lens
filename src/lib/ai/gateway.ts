@@ -2,13 +2,14 @@
  * W53 · AI gateway — the single transport every LLM request flows through
  * (issue #53).
  *
- * Why this module exists: the primary dev endpoint (e-infra's LiteLLM
- * gateway) caps an account at 4 CONCURRENT requests and answers anything
- * beyond with a 429 whose body leaks the caller's key hash (upstream
- * LiteLLM issue #27884) — and the AI SDK's default retry (maxRetries=2)
- * multiplied our fill lanes into request storms. So the gateway owns:
- *   - a FIFO semaphore (default cap 2 — headroom under e-infra's 4 for other
- *     traffic sharing the key; configurable),
+ * Why this module exists: a BYOK caller can't know its endpoint's true
+ * concurrency ceiling (LiteLLM-style proxies cap accounts per-key and
+ * answer anything beyond with a 429 whose body can even leak a caller-key
+ * hash — upstream LiteLLM issue #27884), and the AI SDK's default retry
+ * (maxRetries=2) multiplied our fill lanes into request storms. So the
+ * gateway owns:
+ *   - a FIFO semaphore (default cap 2 — conservative against unknown
+ *     endpoint ceilings and key-sharing consumers; configurable),
  *   - the ONLY retry loop (generateText/streamText are called with
  *     maxRetries: 0; provider-config maxRetries is ignored by the SDK —
  *     probe-verified), retrying just 429/5xx/network a bounded number of
@@ -54,7 +55,7 @@ export interface GatewayLimits {
 	 * are never taken back, and a stream mid-decode is never retried. */
 	inactivityTimeoutMs?: number;
 	/** Ceiling on a honored Retry-After (default 15s, under the fill lane's
-	 * 25s per-chunk arm so one cooldown cycle can't expire queued lanes). */
+	 * 60s per-chunk arm so one cooldown cycle can't expire queued lanes). */
 	maxRetryAfterMs?: number;
 }
 
@@ -122,12 +123,13 @@ const cooldownTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /* ------------------------------------------------------------------ *
  * Adaptive pacing (issue #64)
  *
- * e-infra's `max_parallel_requests` is a CONCURRENCY ceiling, not a rate
- * quota — the owner's logs show 429s fall exactly when lanes burst, stopping
- * when solo. A static cap + cooldown answers a storm with polite re-attacks
- * at the same size. This layer instead lets the gateway ADMIT adaptively:
- * a per-baseUrl window seeded at the static cap, halved (floor 1) on every
- * 429, grown +1 (ceiling — the static cap) per K consecutive clean answers.
+ * Per-key proxy limits are CONCURRENCY ceilings, not rate quotas —
+ * measured runs showed 429s falling exactly when lanes burst and stopping
+ * when solo. A static cap + cooldown answers a storm with polite
+ * re-attacks at the same size. This layer instead lets the gateway ADMIT
+ * adaptively: a per-baseUrl window seeded at the static cap, halved
+ * (floor 1) on every 429, grown +1 (ceiling — the static cap) per K
+ * consecutive clean answers.
  * In-memory only, resetting with each page load: a bad evening for one run
  * never pins the next one slow. The global maxConcurrent remains the hard
  * ceiling; the window can only subtract from it, never exceed it.
@@ -444,9 +446,9 @@ export const callLLM: CallLLM = async (args) => {
 		const status = statusOf(err);
 		const message = scrubSecrets(String((err as Error | null)?.message ?? err), args.provider.apiKey);
 		if (!isRetryable(status, err) || attempt === limits.maxAttempts) {
-			// The status rides IN the message: e-infra's 429 body carries only
-			// rate-limit prose, and the banner's honest reason (spec §2) must
-			// name the class — "429 Rate limit exceeded…" (ADR-018: no key).
+			// The status rides IN the message: a 429's body typically carries
+			// only rate-limit prose, and the banner's honest reason (spec §2)
+			// must name the class — "429 Rate limit exceeded…" (ADR-018: no key).
 			// network: true when no HTTP response ever arrived (the browser
 			// block signature) so kindOf keeps that lane distinct.
 			throw new GatewayError(status === 429 ? `429 ${message}` : message, status, status === undefined);
@@ -500,7 +502,7 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 		// Per-attempt abort controller: on first-byte timeout, retry, or early
 		// consumer cancel the upstream streamText fetch MUST be aborted —
 		// otherwise the request keeps running against the endpoint with no
-		// waiter (e-infra's 4-concurrent cap fills with zombies).
+		// waiter (a capped endpoint fills its ceiling with zombies).
 		const abortCtrl = new AbortController();
 		try {
 			const stream = streamText({
