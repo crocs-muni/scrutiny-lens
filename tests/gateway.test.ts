@@ -275,6 +275,60 @@ describe('concurrency cap', () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * Adaptive pacing (issue #64): the per-baseUrl window shrinks on 429 and
+ * recovers toward the static cap after a clean window of successes.
+ * ------------------------------------------------------------------ */
+
+describe('adaptive pacing (issue #64)', () => {
+	it('shrinks the baseUrl window after a 429: the next burst admits half as many in-flight', async () => {
+		// A 429 is the endpoint's own "too many" vote — the gateway must shrink
+		// the admitted-in-flight window for that baseUrl, not just cool down
+		// and burst again the same size (spec §2: the limit is a concurrency
+		// ceiling, not a rate ceiling — the owner's logs show storms of them).
+		// One call: attempt 1 → 429, Retry-After honored → attempt 2 succeeds.
+		const first = scriptedFetch([rateLimited('0'), {}]);
+		setBaseFetch(first.fetch);
+		await expect(callLLM(args())).resolves.toBe('T');
+
+		// Window before: 2 (the static cap). After the 429: halved to 1.
+		// A fresh burst of 4 calls must now admit ONE at a time, not two.
+		const burst = scriptedFetch(Array.from({ length: 4 }, () => ({ delayMs: 60 })));
+		const { fetch: tracked, peak } = withPeak(burst.fetch);
+		setBaseFetch(tracked);
+		await Promise.all(Array.from({ length: 4 }, () => callLLM(args())));
+		expect(peak()).toBe(1);
+	});
+
+	it('recovers toward the cap after a clean window of K consecutive successes', async () => {
+		// Same halve first: window = 1, clean-streak = 1 after the retry success.
+		const first = scriptedFetch([rateLimited('0'), {}]);
+		setBaseFetch(first.fetch);
+		await expect(callLLM(args())).resolves.toBe('T');
+
+		// A 2-call burst while the streak is still short of K (1 + 2 = 3 < 4):
+		// window must stay at 1 — the second call waits for the first's slot.
+		// (Exact-K pin: growth must NOT fire on the second burst call, or a
+		// 2-call burst would see two slots and peak 2.)
+		const smallBurst = scriptedFetch(Array.from({ length: 2 }, () => ({ delayMs: 40 })));
+		const small = withPeak(smallBurst.fetch);
+		setBaseFetch(small.fetch);
+		await Promise.all(Array.from({ length: 2 }, () => callLLM(args())));
+		expect(small.peak()).toBe(1);
+
+		// One more clean success reaches K=4 on this baseUrl (1 + 2 + 1):
+		// the window grows back by one. The same burst now admits two.
+		const grow = scriptedFetch([{}]);
+		setBaseFetch(grow.fetch);
+		await expect(callLLM(args())).resolves.toBe('T');
+		const bigBurst = scriptedFetch(Array.from({ length: 4 }, () => ({ delayMs: 40 })));
+		const big = withPeak(bigBurst.fetch);
+		setBaseFetch(big.fetch);
+		await Promise.all(Array.from({ length: 4 }, () => callLLM(args())));
+		expect(big.peak()).toBe(2);
+	});
+});
+
+/* ------------------------------------------------------------------ *
  * 429 handling
  * ------------------------------------------------------------------ */
 
@@ -535,6 +589,39 @@ describe('streamLLM', () => {
 		for await (const _ of streamLLM(args())) break;
 		await vi.waitFor(() => expect(log[0].signal?.aborted).toBe(true), { timeout: 2000 });
 		expect(await callLLM(args())).toBe('T'); // slot freed, fetch gone
+	});
+
+	it('mid-stream silence past inactivityTimeoutMs kills the stream as an honest timeout', async () => {
+		// First byte arrives fast, then the endpoint goes silent forever —
+		// the attempt timeout (seconds-to-cold-load scale) can't express
+		// "healthy model, dead socket". The inactivity arm fires instead,
+		// the upstream fetch is torn down, and the consumer reads an honest
+		// TimeoutError — never a mid-stream retry (bytes already painted).
+		setLimits({ inactivityTimeoutMs: 80, timeoutMs: 30_000 });
+		// TWO chunks: with one, the finish_reason frame arrives immediately
+		// after it (a healthy end-of-stream, no silence window at all).
+		const { fetch: f, log } = scriptedFetch([{ stream: ['he', 'llo'], chunkGapMs: 60_000 }, {}]);
+		setBaseFetch(f);
+		const chunks: string[] = [];
+		const consuming = (async () => {
+			for await (const c of streamLLM(args())) chunks.push(c);
+		})();
+		await expect(consuming).rejects.toSatisfy(
+			(e: unknown) => (e as Error).name === 'TimeoutError'
+		);
+		expect(chunks).toEqual(['he']); // painted bytes are never taken back
+		expect(log).toHaveLength(1); // one attempt — no mid-stream retry
+		expect(log[0].signal?.aborted).toBe(true); // zombie fetch aborted
+		expect(await callLLM(args())).toBe('T'); // slot machinery still healthy
+	});
+
+	it('a slow-but-alive stream (gaps just under the arm) completes untouched', async () => {
+		setLimits({ inactivityTimeoutMs: 400 });
+		const { fetch: f } = scriptedFetch([{ stream: ['he', 'llo'], chunkGapMs: 120 }]);
+		setBaseFetch(f);
+		const chunks: string[] = [];
+		for await (const c of streamLLM(args())) chunks.push(c);
+		expect(chunks.join('')).toBe('hello');
 	});
 });
 

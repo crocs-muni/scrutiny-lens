@@ -30,8 +30,10 @@ import {
   type AIKind,
   type AIResult,
   type CallLLM,
+  type CallLLMArgs,
   type LLMMessage,
 } from "./output";
+import { streamLLM as gatewayStreamLLM } from "./gateway";
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -603,5 +605,170 @@ export async function generateRecords<T>(
     ok: false,
     kind: "schema_failure",
     message: `Response had no valid record after one re-prompt. ${parsed.issues[0] ?? "format not recognized"}`,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Streamed boundary (issue #64): records paint as their blocks complete
+ * inside an open stream, instead of waiting for the batch to be whole.
+ * The settled AIResult is the SAME authoritative full-text parse as
+ * generateRecords — `onRecord` is the earlier progressive view of the
+ * same truth, never additional truth (spec §2 rule 5, earlier).
+ * ------------------------------------------------------------------ */
+
+/** Raw-token stream transport — yields model text chunks as they arrive.
+ * Throws on transport failure. Structurally identical to chat's StreamLLM. */
+export type StreamLLM = (args: CallLLMArgs) => AsyncIterable<string>;
+
+export type StreamRecordsOptions<T> = Omit<
+  GenerateRecordsOptions<T>,
+  "callLLM"
+> & {
+  /** Stream seam; defaults to the app's shared gateway streamText lane. */
+  streamLLM?: StreamLLM;
+  /** Fired the moment a COMPLETE block inside the open stream survives the
+   * per-block gate. Callers must tolerate a record being reported here and
+   * ALSO appearing in the settled result (dedupe per id is the caller's). */
+  onRecord?: (record: T) => void;
+};
+
+/** Everything before the END of the last blank-line boundary: the blocks
+ * whose record has finished arriving. Anything after that boundary is a
+ * still-arriving tail — a half-emitted record must never be painted. */
+function takeCompletedPrefix(text: string): string {
+  const re = /\n{2,}/g;
+  let last = -1;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) last = m.index + m[0].length;
+  return last === -1 ? "" : text.slice(0, last);
+}
+
+/**
+ * Stream a record list from a prompt, KV-gated at our boundary, painting
+ * each gated record as its block completes, with exactly ONE re-prompt when
+ * nothing survives. Settle semantics = generateRecords (same authoritative
+ * parse of the accumulated full text, same degrade kinds, same one repair).
+ */
+export async function streamRecords<T>(
+  opts: StreamRecordsOptions<T>,
+): Promise<AIResult<T[]>> {
+  const {
+    schema,
+    knownKeys,
+    numbers,
+    floats,
+    booleans,
+    lists,
+    max,
+    system,
+    messages,
+    temperature = 0.2,
+    abortSignal,
+    provider,
+    streamLLM: seam,
+    onRecord,
+  } = opts;
+
+  const provRes = getProviderConfig(provider);
+  if (!provRes.ok) {
+    return provRes.kind === "no_key"
+      ? { ok: false, kind: "no_key", message: NO_KEY_MESSAGE }
+      : {
+          ok: false,
+          kind: "invalid_request",
+          message: provRes.issues.join("; "),
+        };
+  }
+  // Host is URL-derived — never the key (spec §2/ADR-018), same surface as
+  // the non-streamed lane.
+  const host = (() => {
+    try {
+      return new URL(provRes.config.baseUrl).host;
+    } catch {
+      return provRes.config.baseUrl;
+    }
+  })();
+
+  const stream = seam ?? gatewayStreamLLM;
+  const sys = [formatInstruction(knownKeys), system]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const kvOpts = { schema, knownKeys, numbers, floats, booleans, lists };
+
+  const run = async (
+    msgs: LLMMessage[],
+  ): Promise<
+    { ok: true; text: string } | { ok: false; kind: AIKind; message: string }
+  > => {
+    let full = "";
+    let consumed = 0;
+    let emitted = 0;
+    try {
+      for await (const delta of stream({
+        provider: provRes.config,
+        system: sys,
+        messages: msgs,
+        temperature,
+        signal: abortSignal,
+      })) {
+        full += delta;
+        const complete = takeCompletedPrefix(full.slice(consumed));
+        if (complete.length > 0) {
+          consumed += complete.length;
+          if (onRecord !== undefined) {
+            // Progressive pass: gate ONLY the blocks whose blank-line
+            // terminator has arrived — a half-emitted record never paints.
+            const progressive = parseRecords(complete, kvOpts);
+            for (const record of progressive.records) {
+              if (max !== undefined && emitted >= max) break;
+              onRecord(record);
+              emitted++;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if (isAbort(err, abortSignal)) throw err;
+      const kind = kindOf(err);
+      return {
+        ok: false,
+        kind,
+        // Same deterministic, endpoint-independent 429 surface as the
+        // non-streamed lane: the 429 body is never echoed (spec §2/ADR-018).
+        message:
+          kind === "rate_limited"
+            ? `429 Rate limit ${host}`
+            : String((err as Error)?.message ?? err),
+      };
+    }
+    return { ok: true, text: full };
+  };
+
+  const first = await run(messages);
+  if (!first.ok) return { ok: false, kind: first.kind, message: first.message };
+  const parsed = cappedParse(first.text, kvOpts, max);
+  if (parsed.records.length > 0) return { ok: true, result: parsed.records };
+
+  // Exactly one re-prompt (same policy as the non-streamed lane): re-state
+  // the format + the gate issue. Never echo the dropped record's content.
+  const second = await run([
+    ...messages,
+    {
+      role: "user" as const,
+      content: `Your previous response contained no valid record. ${parsed.issues.join("; ") || "format not recognized"}\n\n${formatInstruction(knownKeys)}\n\nReturn the records again.`,
+    },
+  ]);
+  if (!second.ok) {
+    return { ok: false, kind: second.kind, message: second.message };
+  }
+  const reparsed = cappedParse(second.text, kvOpts, max);
+  if (reparsed.records.length > 0) {
+    return { ok: true, result: reparsed.records };
+  }
+  return {
+    ok: false,
+    kind: "schema_failure",
+    message: `Response had no valid record after one re-prompt. ${reparsed.issues[0] ?? "format not recognized"}`,
   };
 }

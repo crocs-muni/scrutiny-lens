@@ -24,7 +24,17 @@ import {
   getInterpretation,
   initPersistence,
 } from "$lib/db";
+import type { StreamLLM } from "$lib/ai/records";
 import type { NostrEvent } from "nostr-tools/core";
+
+/** Poll a condition with real timers (deterministic stream-paint assertions). */
+async function waitFor(fn: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!fn()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
+    await new Promise((r) => setTimeout(r, 2));
+  }
+}
 
 function hex(s: string, len = 64) {
   return s
@@ -469,5 +479,98 @@ describe("fillCards (issue #28, spec §2)", () => {
       title: "C-title",
       snippet: "C-snippet",
     });
+  });
+});
+
+// ── Streamed fill (issue #64/owner ruling 2026-09-13): cards paint as their
+// records decode inside a still-open stream — the whole chunk doesn't wait
+// for the last block. The settle pass is byte-identical to the batch path
+// (same authoritative parse, same cache writes); onPaint is the earlier,
+// progressive view of the same truth (spec §2 rule 5, earlier). ──
+
+describe("fillCards streamed (issue #64 round 2)", () => {
+  const PROVIDER = {
+    baseUrl: "https://llm.example/v1",
+    model: "test-model",
+    apiKey: "sk-test-0273810714",
+  };
+
+  beforeEach(async () => {
+    await initPersistence();
+    await clearAllLocalData();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    _closeForTests();
+  });
+
+  it("paints the first card while later records are still streaming; settle carries both", async () => {
+    const [a, b] = assembleCards(graphWith(["prod-1", "prod-2"]), [
+      event("prod-1"),
+      event("prod-2"),
+    ]);
+    let openGate = () => {};
+    const gate = new Promise<void>((r) => (openGate = r));
+    const streamLLM: StreamLLM = async function* () {
+      yield fillKv({ id: a.id, title: "A-title", snippet: "A-snippet" }) + "\n\n";
+      await gate;
+      yield fillKv({ id: b.id, title: "B-title", snippet: "B-snippet" }) + "\n\n";
+    };
+    const painted: Array<{ index: number; title: string }> = [];
+    const promised = fillCards([a, b], {
+      provider: PROVIDER,
+      streamLLM,
+      onPaint: (card, index) => painted.push({ index, title: card.title }),
+    });
+    // Card a must be painted BEFORE the stream's second block — if painting
+    // waited for the whole stream, `painted` would still be empty here.
+    await waitFor(() => painted.length === 1);
+    expect(painted[0]).toEqual({ index: 0, title: "A-title" });
+    openGate();
+    const filled = await promised;
+    // Settle = the same authoritative truth as the batch path (full-text
+    // parse + cache write), not an accumulation of side-effects.
+    expect(filled.map((c) => [c.interpreted, c.title])).toEqual([
+      [true, "A-title"],
+      [true, "B-title"],
+    ]);
+    const cached = await getInterpretation(b.id, PROVIDER.model);
+    expect(cached?.bySurface.card).toEqual({
+      title: "B-title",
+      snippet: "B-snippet",
+    });
+  });
+
+  it("a mid-stream failure keeps the painted card and honestly degrades the rest", async () => {
+    const [a, b, c] = assembleCards(graphWith(["prod-1", "prod-2", "prod-3"]), [
+      event("prod-1"),
+      event("prod-2"),
+      event("prod-3"),
+    ]);
+    const streamLLM: StreamLLM = async function* () {
+      yield fillKv({ id: a.id, title: "A-title", snippet: "A-snippet" }) + "\n\n";
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    };
+    const painted: number[] = [];
+    const kinds: unknown[] = [];
+    const filled = await fillCards([a, b, c], {
+      provider: PROVIDER,
+      streamLLM,
+      onPaint: (_card, index) => painted.push(index),
+      onFailure: (k) => kinds.push(k),
+    });
+    // The painted card is not taken back (what is on screen was true when
+    // painted — spec §2); the un-streamed slots settle raw (rule 5), and
+    // the failure kind names the timeout, distinct from rule-5 silence.
+    expect(painted).toEqual([0]);
+    expect(filled.map((cd) => [cd.interpreted, cd.title])).toEqual([
+      [true, "A-title"],
+      [false, "cve:CVE-2017-15361"],
+      [false, "cve:CVE-2017-15361"],
+    ]);
+    expect(kinds).toEqual(["timeout"]);
+    // Nothing half-streamed got persisted for the unsettled cards.
+    expect((await getInterpretation(b.id, PROVIDER.model))?.bySurface.card).toBeUndefined();
   });
 });

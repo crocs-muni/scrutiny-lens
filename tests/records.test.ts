@@ -415,3 +415,115 @@ class Gatewayish extends Error {
     this.statusCode = s;
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * streamRecords (issue #64/owner ruling 2026-09-13): a chunk's records must
+ * PAINT as their blocks decode, not after the whole batch — spec §2 rule 5
+ * per-record salvage, just earlier. The FINAL return carries the same
+ * authoritative parse semantics as generateRecords (onRecord is the
+ * progressive side-channel; the settled AIResult is the truth).
+ * ------------------------------------------------------------------ */
+
+import { streamRecords, type StreamLLM } from "$lib/ai/records";
+
+/** Streaming fake: yields chunks with a caller-controlled pause between
+ * the first and the rest, so a test can observe progressive emissions
+ * mid-stream deterministically (no wall-clock races). */
+function gatedStream(
+  head: string,
+  tail: string,
+): { stream: StreamLLM; openGate: () => void } {
+  let openGate = () => {};
+  const gate = new Promise<void>((r) => (openGate = r));
+  const stream: StreamLLM = async function* () {
+    yield head;
+    await gate;
+    yield tail;
+  };
+  return { stream, openGate };
+}
+
+async function waitFor(fn: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!fn()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
+    await new Promise((r) => setTimeout(r, 2));
+  }
+}
+
+const PROV_STREAM = {
+  baseUrl: "https://llm.example/v1",
+  model: "m",
+  apiKey: "supersecretkey123",
+};
+
+describe("streamRecords", () => {
+  it("emits onRecord for a completed block while the rest is still streaming", async () => {
+    const t = gatedStream(
+      rec({ id: "a", title: "TA", snippet: "SA" }) + "\n\n",
+      rec({ id: "b", title: "TB", snippet: "SB" }) + "\n\n",
+    );
+    const seen: Array<{ id: string; title: string; snippet: string }> = [];
+    const parsed = streamRecords<z.infer<typeof Rec>>({
+      schema: Rec,
+      knownKeys: KNOWN,
+      messages: [{ role: "user", content: "x" }],
+      provider: PROV_STREAM,
+      streamLLM: t.stream,
+      onRecord: (r) => seen.push(r),
+    });
+    // The generator paused after the first block — if onRecord only fired at
+    // stream end, `seen` would still be empty here.
+    await waitFor(() => seen.length === 1);
+    expect(seen[0]).toEqual({ id: "a", title: "TA", snippet: "SA" });
+    t.openGate();
+    const res = await parsed;
+    // Final return = the authoritative full-text parse (same semantics as
+    // generateRecords; progressive emissions are never subtracted).
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.result.map((r) => r.id)).toEqual(["a", "b"]);
+  });
+
+  it("a mid-stream transport failure degrades honestly but keeps what painted", async () => {
+    const painted: Array<{ id: string }> = [];
+    const failing: StreamLLM = async function* () {
+      yield rec({ id: "a", title: "TA", snippet: "SA" }) + "\n\n";
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    };
+    const res = await streamRecords<z.infer<typeof Rec>>({
+      schema: Rec,
+      knownKeys: KNOWN,
+      messages: [{ role: "user", content: "x" }],
+      provider: PROV_STREAM,
+      streamLLM: failing,
+      onRecord: (r) => painted.push(r),
+    });
+    // The already-decoded block is not taken back (spec §2: what's painted
+    // is true); the settle kind names the timeout, never a generic error.
+    expect(painted.map((r) => r.id)).toEqual(["a"]);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.kind).toBe("timeout");
+  });
+
+  it("runs exactly one re-prompt through the stream seam when nothing survived", async () => {
+    let calls = 0;
+    const stream: StreamLLM = async function* () {
+      calls++;
+      if (calls === 1) {
+        yield "complete gibberish\nno keys here";
+      } else {
+        yield rec({ id: "a", title: "TA", snippet: "SA" }) + "\n\n";
+      }
+    };
+    const res = await streamRecords<z.infer<typeof Rec>>({
+      schema: Rec,
+      knownKeys: KNOWN,
+      messages: [{ role: "user", content: "x" }],
+      provider: PROV_STREAM,
+      streamLLM: stream,
+    });
+    expect(calls).toBe(2);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.result.map((r) => r.id)).toEqual(["a"]);
+  });
+});

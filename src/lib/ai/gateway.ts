@@ -35,13 +35,24 @@ import type { CallLLM, CallLLMArgs } from './output';
  * ------------------------------------------------------------------ */
 
 export interface GatewayLimits {
-	/** In-flight requests across ALL LLM calls (default 2, under e-infra's 4). */
+	/** In-flight requests across ALL LLM calls (default 2). Seeded under
+	 * BROAD BYOK practice — a BYOK caller can't know its endpoint's true
+	 * ceiling, so the floor stays low and a 429 shrinks the window further;
+	 * a 429 proves the endpoint reached the gateway's request, so it is never
+	 * a reason to go ABOVE this static start (spec §2 never-lie). */
 	maxConcurrent?: number;
 	/** Total attempts per logical call (default 3). */
 	maxAttempts?: number;
 	/** Per-attempt timeout, armed when the slot is LEASED (queue wait never
 	 * counts) — default 30s. */
 	timeoutMs?: number;
+	/** Mid-stream silence bound (default 15s): a stream that has produced its
+	 * first byte but then no bytes for this long is a healthy-connection/
+	 * dead-socket case the per-attempt timeout can't express (the attempt
+	 * may legitimately run longer while streaming). The kill aborts the
+	 * upstream fetch and surfaces an honest TimeoutError — painted bytes
+	 * are never taken back, and a stream mid-decode is never retried. */
+	inactivityTimeoutMs?: number;
 	/** Ceiling on a honored Retry-After (default 15s, under the fill lane's
 	 * 25s per-chunk arm so one cooldown cycle can't expire queued lanes). */
 	maxRetryAfterMs?: number;
@@ -51,6 +62,7 @@ export const DEFAULT_LIMITS: Required<GatewayLimits> = {
 	maxConcurrent: 2,
 	maxAttempts: 3,
 	timeoutMs: 30_000,
+	inactivityTimeoutMs: 15_000,
 	maxRetryAfterMs: 15_000
 };
 
@@ -69,6 +81,8 @@ export function resetGateway(): void {
 	for (const t of cooldownTimers.values()) clearTimeout(t);
 	cooldowns.clear();
 	cooldownTimers.clear();
+	paceWindows.clear();
+	activeByBase.clear();
 	limits = { ...DEFAULT_LIMITS };
 	injectedFetch = null;
 	secretHashes.clear();
@@ -105,6 +119,62 @@ let active = 0;
 const cooldowns = new Map<string, number>();
 const cooldownTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/* ------------------------------------------------------------------ *
+ * Adaptive pacing (issue #64)
+ *
+ * e-infra's `max_parallel_requests` is a CONCURRENCY ceiling, not a rate
+ * quota — the owner's logs show 429s fall exactly when lanes burst, stopping
+ * when solo. A static cap + cooldown answers a storm with polite re-attacks
+ * at the same size. This layer instead lets the gateway ADMIT adaptively:
+ * a per-baseUrl window seeded at the static cap, halved (floor 1) on every
+ * 429, grown +1 (ceiling — the static cap) per K consecutive clean answers.
+ * In-memory only, resetting with each page load: a bad evening for one run
+ * never pins the next one slow. The global maxConcurrent remains the hard
+ * ceiling; the window can only subtract from it, never exceed it.
+ * ------------------------------------------------------------------ */
+
+const paceWindows = new Map<string, { window: number; streak: number }>();
+const activeByBase = new Map<string, number>();
+const PACE_GROWTH_K = 4; // consecutive successes needed to grow the window by one
+
+function paceWindow(baseUrl: string): number {
+	const entry = paceWindows.get(baseUrl);
+	return entry ? entry.window : limits.maxConcurrent;
+}
+
+function paceState(baseUrl: string): { window: number; streak: number } {
+	let entry = paceWindows.get(baseUrl);
+	if (!entry) {
+		entry = { window: limits.maxConcurrent, streak: 0 };
+		paceWindows.set(baseUrl, entry);
+	}
+	return entry;
+}
+
+function recordSuccess(baseUrl: string): void {
+	const s = paceState(baseUrl);
+	s.streak += 1;
+	if (s.streak >= PACE_GROWTH_K) {
+		s.streak = 0;
+		s.window = Math.min(limits.maxConcurrent, s.window + 1);
+	}
+}
+
+function recordRateLimited(baseUrl: string): void {
+	const s = paceState(baseUrl);
+	s.streak = 0;
+	s.window = Math.max(1, Math.floor(s.window / 2));
+}
+
+function pacingAdmits(baseUrl: string): boolean {
+	return (activeByBase.get(baseUrl) ?? 0) < paceWindow(baseUrl);
+}
+
+function admitFor(baseUrl: string): void {
+	active++;
+	activeByBase.set(baseUrl, (activeByBase.get(baseUrl) ?? 0) + 1);
+}
+
 function pump(): void {
 	if (active >= limits.maxConcurrent) return;
 	const now = Date.now();
@@ -119,8 +189,12 @@ function pump(): void {
 			i++; // parked for this endpoint; a later baseUrl may still run
 			continue;
 		}
+		if (!pacingAdmits(w.baseUrl)) {
+			i++; // window is full for this endpoint; another baseUrl may still run
+			continue;
+		}
 		queue.splice(i, 1);
-		active++;
+		admitFor(w.baseUrl);
 		w.run();
 		if (active >= limits.maxConcurrent) return;
 	}
@@ -150,8 +224,12 @@ function acquire(baseUrl: string, signal?: AbortSignal): Promise<void> {
 		reject(abortError());
 		return promise;
 	}
-	if (active < limits.maxConcurrent && (cooldowns.get(baseUrl) ?? 0) <= Date.now()) {
-		active++;
+	if (
+		active < limits.maxConcurrent &&
+		pacingAdmits(baseUrl) &&
+		(cooldowns.get(baseUrl) ?? 0) <= Date.now()
+	) {
+		admitFor(baseUrl);
 		waiter.run();
 		return promise;
 	}
@@ -159,8 +237,9 @@ function acquire(baseUrl: string, signal?: AbortSignal): Promise<void> {
 	return promise;
 }
 
-function release(): void {
+function release(baseUrl: string): void {
 	active--;
+	activeByBase.set(baseUrl, Math.max(0, (activeByBase.get(baseUrl) ?? 0) - 1));
 	pump();
 }
 
@@ -353,8 +432,11 @@ export const callLLM: CallLLM = async (args) => {
 		} catch (err) {
 			outcome = { ok: false, err };
 		}
-		release();
-		if (outcome.ok) return outcome.text;
+		release(args.provider.baseUrl);
+		if (outcome.ok) {
+			recordSuccess(args.provider.baseUrl);
+			return outcome.text;
+		}
 		const err = outcome.err;
 		if (isAbort(args.signal, err)) {
 			throw err; // caller cancellation / attempt timeout — never retried
@@ -370,6 +452,7 @@ export const callLLM: CallLLM = async (args) => {
 			throw new GatewayError(status === 429 ? `429 ${message}` : message, status, status === undefined);
 		}
 		if (status === 429) {
+			recordRateLimited(args.provider.baseUrl);
 			setCooldown(args.provider.baseUrl, Date.now() + waitMs(status, err, attempt));
 		} else {
 			await sleep(waitMs(status, err, attempt), args.signal);
@@ -390,10 +473,9 @@ async function drainAttempt(
 	args: CallLLMArgs,
 	attempt: number,
 	startMs: number,
-	err: unknown,
-	release: () => void
+	err: unknown
 ): Promise<'retry' | never> {
-	release();
+	release(args.provider.baseUrl);
 	if (isAbort(args.signal, err)) {
 		throw err; // caller cancellation / attempt timeout — never retried
 	}
@@ -403,8 +485,10 @@ async function drainAttempt(
 		// Same 429-in-message + network-flag rule as callLLM (see there).
 		throw new GatewayError(status === 429 ? `429 ${message}` : message, status, status === undefined);
 	}
-	if (status === 429) setCooldown(args.provider.baseUrl, Date.now() + waitMs(status, err, attempt));
-	else await sleep(waitMs(status, err, attempt), args.signal);
+	if (status === 429) {
+		recordRateLimited(args.provider.baseUrl);
+		setCooldown(args.provider.baseUrl, Date.now() + waitMs(status, err, attempt));
+	} else await sleep(waitMs(status, err, attempt), args.signal);
 	return 'retry';
 }
 
@@ -441,30 +525,39 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 					// the attempt abort fires only when this attempt exits.
 					const first = await withTimeout(events.next(), limits.timeoutMs, args.signal);
 					if (first.done) {
-						release();
+						release(args.provider.baseUrl);
 						return; // empty response — nothing to interpret, no lie to tell
 					}
 					part = first.value;
 				} catch (err) {
-					if ((await drainAttempt(args, attempt, startMs, err, release)) === 'retry') continue attempts;
+					if ((await drainAttempt(args, attempt, startMs, err)) === 'retry') continue attempts;
 				}
 				if (part === undefined) {
 					// Unreachable safety (first.done was false, so part was assigned)
 					// — but the slot must not be held across the next attempt either way.
-					release();
+					release(args.provider.baseUrl);
 					continue attempts;
 				}
 				if (part.type === 'error') {
-					if ((await drainAttempt(args, attempt, startMs, part.error, release)) === 'retry') continue attempts;
+					if ((await drainAttempt(args, attempt, startMs, part.error)) === 'retry') continue attempts;
 				}
 				if (part.type !== 'text-delta') continue; // protocol part — keep reading
 
-				release(); // bytes are flowing — give the lane back
+				// First byte = a successful attempt for the pacing window (issue #64):
+				// count it BEFORE giving the slot back.
+				recordSuccess(args.provider.baseUrl);
+				release(args.provider.baseUrl); // bytes are flowing — give the lane back
 				yield part.text;
 				// Mid-stream: no retry (output already delivered); errors surface
 				// honestly as their scrubbed text (spec §2).
 				for (;;) {
-					const next = await events.next();
+					// Inactivity arm: the per-attempt timeout covers "nothing ever
+					// arrived", but a stream that answered once and then went
+					// silent (healthy connection, dead socket/runtime) would hang
+					// a consumer until its own caller-side arm fired. Kill it
+					// honestly here — the Generator's `finally` aborts the
+					// upstream fetch, and the painted bytes stay painted.
+					const next = await withTimeout(events.next(), limits.inactivityTimeoutMs, args.signal);
 					if (next.done) return;
 					if (next.value.type === 'text-delta') yield next.value.text;
 					else if (next.value.type === 'error') {
@@ -506,7 +599,7 @@ export async function gatewayFetch(
 			if (signal) signals.push(signal);
 			response = await liveFetch(url, { ...rest, signal: AbortSignal.any(signals) });
 		} catch (err) {
-			release();
+			release(baseUrl);
 			if (isAbort(callerSignal, err)) {
 				throw err;
 			}
@@ -515,12 +608,15 @@ export async function gatewayFetch(
 			if (!isRetryable(status, err) || attempt === limits.maxAttempts) {
 				throw new GatewayError(message, status, status === undefined);
 			}
-			if (status === 429) setCooldown(baseUrl, Date.now() + waitMs(status, err, attempt));
-			else await sleep(waitMs(status, err, attempt), callerSignal);
+			if (status === 429) {
+				recordRateLimited(baseUrl);
+				setCooldown(baseUrl, Date.now() + waitMs(status, err, attempt));
+			} else await sleep(waitMs(status, err, attempt), callerSignal);
 			continue;
 		}
-		release();
+		release(baseUrl);
 		if (response.ok || !isRetryable(response.status, { status: response.status })) {
+			if (response.ok) recordSuccess(baseUrl);
 			return response;
 		}
 		if (attempt === limits.maxAttempts) {
@@ -528,6 +624,7 @@ export async function gatewayFetch(
 			throw new GatewayError(message, response.status);
 		}
 		if (response.status === 429) {
+			recordRateLimited(baseUrl);
 			const headers: Record<string, string> = {};
 			response.headers.forEach((v, k) => (headers[k] = v));
 			setCooldown(baseUrl, Date.now() + waitMs(429, { responseHeaders: headers }, attempt));
