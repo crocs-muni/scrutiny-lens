@@ -441,7 +441,12 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 				} catch (err) {
 					if ((await drainAttempt(args, attempt, startMs, err, release)) === 'retry') continue attempts;
 				}
-				if (part === undefined) continue attempts; // unreachable; safety
+				if (part === undefined) {
+					// Unreachable safety (first.done was false, so part was assigned)
+					// — but the slot must not be held across the next attempt either way.
+					release();
+					continue attempts;
+				}
 				if (part.type === 'error') {
 					if ((await drainAttempt(args, attempt, startMs, part.error, release)) === 'retry') continue attempts;
 				}
