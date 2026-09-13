@@ -90,6 +90,9 @@ describe('chat store — settle', () => {
 		resetChat();
 		await chat.hydrate('s1');
 		expect(chat.messages).toHaveLength(4);
+		// The monotonic clock pins turn order across hydration: question,
+		// answer, question, answer — never a transposed pair.
+		expect(chat.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
 		expect(chat.registry.eventIdFor(1)).toBe('ev-prod');
 		expect(chat.registry.eventIdFor(2)).toBe('ev-vuln');
 		// History maps through: answer 2 still resolves citation numbers.
