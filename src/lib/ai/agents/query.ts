@@ -130,7 +130,7 @@ async function translateViaAi(
 ): Promise<AiAttempt> {
   if (!opts.provider) return { searches: [] };
   // The run's signal alone can't distinguish "cold model accepted-but-stalled";
-  // its 15s arm lets a hanging translate degrade deterministically (spec §4).
+  // its 60s arm lets a hanging translate degrade deterministically (spec §4).
   // generateRecords rethrows aborted-signal errors, so the
   const timer = AbortSignal.timeout(TRANSLATE_TIMEOUT_MS);
   const combined = opts.signal ? AbortSignal.any([opts.signal, timer]) : timer;
@@ -151,7 +151,7 @@ async function translateViaAi(
     if (!opts.signal?.aborted && timer.aborted) {
       return {
         searches: [],
-        degradation: { kind: "timeout", message: "AI did not answer in 15s" },
+        degradation: { kind: "timeout", message: "AI did not answer in 60s" },
       };
     }
     throw err;
