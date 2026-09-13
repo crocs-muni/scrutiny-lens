@@ -37,10 +37,14 @@ interface Props {
 	 * 14s call must not read identically to one that will never be
 	 * interpreted. */
 	pending?: boolean;
+	/** The drawer's current subject (issue #29a ruling 2): the G1:1063 accent
+	 * ring marks selection on this surface — color + halo via box-shadow only,
+	 * so the ring never reflows the list. */
+	selected?: boolean;
 	onOpen?(): void;
 }
 
-let { card, pending = false, onOpen }: Props = $props();
+let { card, pending = false, onOpen, selected = false }: Props = $props();
 
 const product: ProductCard | null = $derived('identifiers' in card ? card : null);
 const dashed = $derived(product === null || !product.interpreted);
@@ -107,9 +111,13 @@ const dashed = $derived(product === null || !product.interpreted);
 	tabindex={onOpen !== undefined ? 0 : undefined}
 	onclick={open}
 	onkeydown={keyOpen}
-	class="rounded-[12px] border bg-surface px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-shadow duration-150
-		{dashed ? 'border-dashed border-line-strong' : 'border-line'}
-		{onOpen !== undefined ? 'cursor-pointer hover:shadow-raised' : ''}
+	class="rounded-[12px] border bg-surface px-4 py-3.5 transition-shadow duration-150
+		{selected ? 'border-accent' : dashed ? 'border-dashed border-line-strong' : 'border-line'}
+		{selected
+			? 'shadow-[0_0_0_4px_var(--accent-tint),0_8px_20px_-8px_rgba(15,23,42,0.2)]'
+			: 'shadow-[0_1px_2px_rgba(15,23,42,0.05)]'}
+		{onOpen !== undefined ? 'cursor-pointer' : ''}
+		{onOpen !== undefined && !selected ? 'hover:shadow-raised' : ''}
 		[content-visibility:auto] [contain-intrinsic-size:auto_150px]"
 >
 	{#if dashed}

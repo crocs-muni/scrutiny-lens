@@ -47,7 +47,7 @@ export interface ProductCard {
  * Deterministic assembly
  * ------------------------------------------------------------------ */
 
-function deriveFallbackTitle(event: NostrEvent): string {
+export function deriveFallbackTitle(event: NostrEvent): string {
   const identifiers = tagValues(event, "i");
   if (identifiers.length > 0) return identifiers[0];
   const head = event.content.trim().split(/\s+/).slice(0, 5).join(" ");

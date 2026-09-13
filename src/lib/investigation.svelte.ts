@@ -119,6 +119,12 @@ class Investigation {
    * session-store work, spec §0). */
   sessionId = $state<string | null>(null);
 
+  /** The selected dossier subject (issue #29a, ADR 0001): store-level —
+   * facet filters and view hops never clear it; it dies exactly where the
+   * investigation itself dies (start/stop/reset). No deselect gesture
+   * (ruling 10). */
+  selectedEventId = $state<string | null>(null);
+
   private controller: AbortController | null = null;
 
   private applyEvent(controller: AbortController, event: PipelineEvent): void {
@@ -172,6 +178,7 @@ class Investigation {
     this.fillStats = { interpreted: 0, total: 0 };
     this.fillFailure = null;
     this.elapsedMs = null;
+    this.selectedEventId = null;
     this.running = true;
     const startedAt = performance.now();
 
@@ -258,6 +265,8 @@ class Investigation {
   /** Abort the in-flight run (spec §8) without clearing what it already
    * painted — the abort settles it through the same finally path. */
   stop(): void {
+    // Selection survives an abort (ruling 10): stop() freezes the run but
+    // keeps what it painted, so the dossier's evidence is still intact.
     this.controller?.abort();
   }
 
@@ -462,6 +471,7 @@ export function resetInvestigation(): void {
   investigation.pending = new Set();
   investigation.fillStats = { interpreted: 0, total: 0 };
   investigation.fillFailure = null;
+  investigation.selectedEventId = null;
   investigation.running = false;
 }
 

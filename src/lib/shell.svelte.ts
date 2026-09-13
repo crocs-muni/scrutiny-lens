@@ -18,6 +18,10 @@ export interface SessionRow {
 /** Center column stages (issue #10: swaps search → results → session; `results` arrives with the trace step, spec §11 step 2). */
 export type CenterView = 'search' | 'results' | 'session';
 
+/** The four dossier sections (spec §9) — shared so the drawer and the
+ * state that outlives it reference one union. */
+export type DrawerSection = 'summary' | 'content' | 'history' | 'files';
+
 class ShellState {
 	railOpen = $state(true);
 	/** Chat column is resident only while a session is open (spec §9). */
@@ -28,6 +32,11 @@ class ShellState {
 	sessions = $state<SessionRow[]>([]);
 	drawerOpen = $state(true);
 	drawerHeight = $state(320);
+	/** The drawer's active dossier section (issue #29a ruling 9): user-owned
+	 * chrome like height/open, held at shell level because the drawer itself
+	 * unmounts on every session→results→session hop — component-local state
+	 * would reset to Summary on every card-click swap. */
+	drawerSection = $state<DrawerSection>('summary');
 
 	toggleRail() {
 		this.railOpen = !this.railOpen;
@@ -106,6 +115,7 @@ export function resetShell() {
 	shell.sessions = [];
 	shell.drawerOpen = true;
 	shell.drawerHeight = 320;
+	shell.drawerSection = 'summary';
 }
 
 /** Keyboard map (spec §9): Ctrl+\ rail · Ctrl+. chat · Ctrl+; drawer · Ctrl+, settings
