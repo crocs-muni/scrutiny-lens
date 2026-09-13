@@ -237,7 +237,7 @@ class Investigation {
     this.selections = next;
   }
 
-  clearFacets(): void {
+clearFacets(): void {
     this.selections = {};
   }
   /** Chunked interpretation fill (spec §7: cards start rendering
@@ -246,9 +246,11 @@ class Investigation {
    * output-token decode dominates wall clock (fix was researched against
    * many-small-parallel practice — see PR #42 review-round record), so
    * lanes interleave requests instead of one serial 100-150s walk.
-   * Each chunk keeps its own 10s arm: a timed-out chunk degrades to
-   * rule-5 on ITS 3 cards only (spec §4: degrade only the unfinished
-   * items), and a stuck lane never holds the cursor hostage.
+   * Each chunk keeps its own 25s arm — past the gateway's 429-cooldown
+   * horizon (Retry-After capped at 15s, issue #53) so a lane survives one
+   * cooldown cycle in-queue instead of expiring on its timer. A timed-out
+   * chunk degrades to rule-5 on ITS 3 cards only (spec §4: degrade only
+   * the unfinished items), and a stuck lane never holds the cursor hostage.
    * Claim-cursor is synchronous — no double-claim; each lane's merge is
    * one synchronous rewrite (disjoint indices), so lanes can't clobber
    * each other. Cached interpretations return instantly — the first
@@ -260,7 +262,7 @@ class Investigation {
   ): Promise<void> {
     const CHUNK = 3;
     const LANES = 4;
-    const PER_CHUNK_MS = 10_000;
+    const PER_CHUNK_MS = 25_000;
     const total = this.cards.length;
     this.fillStats = { interpreted: 0, total };
     let next = 0;
