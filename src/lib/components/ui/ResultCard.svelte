@@ -116,8 +116,7 @@ const dashed = $derived(product === null || !product.interpreted);
 		{selected
 			? 'shadow-[0_0_0_4px_var(--accent-tint),0_8px_20px_-8px_rgba(15,23,42,0.2)]'
 			: 'shadow-[0_1px_2px_rgba(15,23,42,0.05)]'}
-		{onOpen !== undefined && !selected ? 'cursor-pointer hover:shadow-raised' : ''}
-		{onOpen !== undefined && selected ? 'cursor-pointer' : ''}
+		{onOpen !== undefined ? (selected ? 'cursor-pointer' : 'cursor-pointer hover:shadow-raised') : ''}
 		[content-visibility:auto] [contain-intrinsic-size:auto_150px]"
 >
 	{#if dashed}

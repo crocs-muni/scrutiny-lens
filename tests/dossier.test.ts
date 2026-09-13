@@ -191,6 +191,22 @@ describe('retraction is protocol truth, not presentation', () => {
 		expect(row?.id).toBe('del');
 	});
 
+	it('retraction row closes the canonical block, never the non-canonical group', () => {
+		const root = productRoot('v1\n', [], 'root');
+		const overlay = patchEvent('root', 'root', 'v1\n', 'hostile\n', 2000, FOREIGN, 'ov1');
+		const deletion = signed(
+			{ kind: DELETION_KIND, created_at: 4000, tags: [['e', 'root']], content: '' },
+			AUTHOR,
+			'del'
+		);
+		const d = deriveDossier('root', [root, overlay, deletion], [])!;
+		const retractIdx = d.history.findIndex((r) => r.state === 'retraction');
+		const firstNonCanonical = d.history.findIndex((r) => !r.canonical);
+		expect(retractIdx).toBeGreaterThanOrEqual(0);
+		expect(firstNonCanonical).toBeGreaterThan(-1);
+		expect(retractIdx).toBeLessThan(firstNonCanonical);
+	});
+
 	it('foreign-author kind-5 is not honoured (DEL-1) — no pill, no row', () => {
 		const root = productRoot('v1\n', [], 'root');
 		const deletion = signed(
@@ -238,7 +254,11 @@ describe('files rows mirror the seam edge semantics', () => {
 		const m = deriveDossier('meta1', [root, meta, binding], [])!;
 		expect(m.subjectType).toBe('metadata');
 		expect(m.files[0].destination).toBe('counterparty');
-		expect(m.files[0].counterpartyLabel).toBe('prod');
+		expect(m.files[0].counterpartyTitle).toEqual({ text: 'prod', interpreted: false });
+
+		// cache hit → the AI title sans-flagged; never a second vocabulary.
+		const cached = deriveDossier('meta1', [root, meta, binding], [cardFor(root)])!;
+		expect(cached.files[0].counterpartyTitle).toEqual({ text: 'AI title', interpreted: true });
 	});
 
 	it('foreign overlay lands non-canonical with its §7.3 state word', () => {
@@ -268,6 +288,6 @@ describe('store-level honesty guards', () => {
 			'bind1'
 		);
 		const d = deriveDossier('root', [root, binding], [])!;
-		expect(d.files[0].counterpartyLabel).toBeNull();
+		expect(d.files[0].counterpartyTitle).toBeNull();
 	});
 });

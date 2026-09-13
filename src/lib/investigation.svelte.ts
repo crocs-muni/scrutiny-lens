@@ -265,7 +265,8 @@ class Investigation {
   /** Abort the in-flight run (spec §8) without clearing what it already
    * painted — the abort settles it through the same finally path. */
   stop(): void {
-    this.selectedEventId = null;
+    // Selection survives an abort (ruling 10): stop() freezes the run but
+    // keeps what it painted, so the dossier's evidence is still intact.
     this.controller?.abort();
   }
 

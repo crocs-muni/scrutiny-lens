@@ -18,6 +18,10 @@ export interface SessionRow {
 /** Center column stages (issue #10: swaps search → results → session; `results` arrives with the trace step, spec §11 step 2). */
 export type CenterView = 'search' | 'results' | 'session';
 
+/** The four dossier sections (spec §9) — shared so the drawer and the
+ * state that outlives it reference one union. */
+export type DrawerSection = 'summary' | 'content' | 'history' | 'files';
+
 class ShellState {
 	railOpen = $state(true);
 	/** Chat column is resident only while a session is open (spec §9). */
@@ -32,7 +36,7 @@ class ShellState {
 	 * chrome like height/open, held at shell level because the drawer itself
 	 * unmounts on every session→results→session hop — component-local state
 	 * would reset to Summary on every card-click swap. */
-	drawerSection = $state<'summary' | 'content' | 'history' | 'files'>('summary');
+	drawerSection = $state<DrawerSection>('summary');
 
 	toggleRail() {
 		this.railOpen = !this.railOpen;

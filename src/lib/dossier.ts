@@ -35,6 +35,7 @@ import {
 	resolve,
 	scrutinyEventType,
 	tagValues,
+	type CoreNostrEvent,
 	type NostrEvent,
 	type OverlayState,
 	type Resolution
@@ -81,8 +82,10 @@ export interface FileRow {
 	 * no verb carried; the row omits it (BIBLE: never zero-shown). */
 	verb: string;
 	counterpartyId: string;
-	/** Observed counterparty's rule-5/cache title; null → bare mono id. */
-	counterpartyLabel: string | null;
+	/** Observed counterparty's title — cache-first (sans) or rule-5 fallback
+	 * (mono), the same DossierTitle voice split as the section title (§9
+	 * writing rule); null when the counterparty wasn't fetched → bare mono id. */
+	counterpartyTitle: DossierTitle | null;
 	/** Metadata → Product per the fabric seam: the root endpoint is the
 	 * arrowhead end. 'subject' — the dossier's event is the product. */
 	destination: 'subject' | 'counterparty';
@@ -158,9 +161,12 @@ function contentOf(resolution: Resolution): DossierContent {
 }
 
 /** Honoured retractions of the subject (DEL-1: kind-5, same pubkey, e-tag). */
-function retractionOf(subject: NostrEvent, events: NostrEvent[]): NostrEvent | undefined {
-	const deletions = events.filter((e) => e.kind === DELETION_KIND);
-	if (!isDefaultViewRetracted(subject as never, deletions as never)) return undefined;
+function retractionOf(
+	subject: CoreNostrEvent,
+	coreEvents: CoreNostrEvent[]
+): CoreNostrEvent | undefined {
+	const deletions = coreEvents.filter((e) => e.kind === DELETION_KIND);
+	if (!isDefaultViewRetracted(subject, deletions)) return undefined;
 	return deletions.find(
 		(d) => d.pubkey === subject.pubkey && tagValues(d, 'e').includes(subject.id)
 	);
@@ -169,7 +175,8 @@ function retractionOf(subject: NostrEvent, events: NostrEvent[]): NostrEvent | u
 function historyRows(
 	subject: NostrEvent,
 	resolution: Resolution,
-	events: NostrEvent[]
+	events: NostrEvent[],
+	coreEvents: CoreNostrEvent[]
 ): HistoryRow[] {
 	const byId = new Map(events.map((e) => [e.id, e]));
 	const rows: HistoryRow[] = [];
@@ -231,6 +238,22 @@ function historyRows(
 		}
 	}
 
+	// The retraction event is its own row, closing the CANONICAL block
+	// (ruling 5: chain + retraction + a distinct non-canonical group —
+	// pushing it here, never after the group, keeps it out of the
+	// "not in the canonical chain" bucket regardless of what else resolves).
+	const retraction = retractionOf(subject as unknown as CoreNostrEvent, coreEvents);
+	if (retraction !== undefined) {
+		rows.push({
+			id: retraction.id,
+			author: retraction.pubkey,
+			createdAt: retraction.created_at,
+			position: null,
+			state: 'retraction',
+			canonical: true
+		});
+	}
+
 	// Non-canonical group (issue #29 ruling 5): root-author pending patches,
 	// then foreign overlays carrying their §7.3 state word.
 	for (const id of resolution.pending) {
@@ -257,19 +280,6 @@ function historyRows(
 			canonical: false
 		});
 	}
-
-	// The retraction event is its own row, always with the red pill.
-	const retraction = retractionOf(subject, events);
-	if (retraction !== undefined) {
-		rows.push({
-			id: retraction.id,
-			author: retraction.pubkey,
-			createdAt: retraction.created_at,
-			position: null,
-			state: 'retraction',
-			canonical: true
-		});
-	}
 	return rows;
 }
 
@@ -280,26 +290,32 @@ function historyRows(
  * intentional: a delivered binding is evidence even when its other end
  * wasn't fetched; the footer count reads as "bound metadata in this result
  * set", the dossier count reads as "bindings referencing this event". */
-function fileRows(subjectId: string, events: NostrEvent[], cards: ProductCard[]): FileRow[] {
+function fileRows(
+	subjectId: string,
+	events: NostrEvent[],
+	coreEvents: CoreNostrEvent[],
+	cards: ProductCard[]
+): FileRow[] {
 	const byId = new Map(events.map((e) => [e.id, e]));
 	const rows: FileRow[] = [];
-	for (const event of events) {
-		if (scrutinyEventType(event as never) !== 'binding') continue;
-		const endpoints = bindingEndpoints(event as never);
+	for (const event of coreEvents) {
+		if (scrutinyEventType(event) !== 'binding') continue;
+		const endpoints = bindingEndpoints(event);
 		if (endpoints === undefined) continue;
 		if (endpoints.rootId !== subjectId && endpoints.linkId !== subjectId) continue;
 		const counterpartyId = endpoints.rootId === subjectId ? endpoints.linkId : endpoints.rootId;
 		const counterparty = byId.get(counterpartyId);
 		const card = cards.find((c) => c.id === counterpartyId);
+		const cacheHit = card !== undefined && card.interpreted;
 		rows.push({
 			bindingId: event.id,
 			verb: event.content.trim(),
 			counterpartyId,
-			counterpartyLabel:
-				card !== undefined && card.interpreted
-					? card.title
+			counterpartyTitle:
+				cacheHit && card !== undefined
+					? { text: card.title, interpreted: true }
 					: counterparty !== undefined
-						? deriveFallbackTitle(counterparty)
+						? { text: deriveFallbackTitle(counterparty), interpreted: false }
 						: null,
 			destination: endpoints.rootId === subjectId ? 'subject' : 'counterparty'
 		});
@@ -318,21 +334,26 @@ export function deriveDossier(
 ): Dossier | null {
 	const subject = events.find((e) => e.id === subjectId);
 	if (subject === undefined) return null;
-	const type = scrutinyEventType(subject as never);
+	// One cast per boundary (fabric seam policy); helpers downstream consume
+	// core's wire type, never re-cast.
+	const coreEvents = events as unknown as CoreNostrEvent[];
+	const coreSubject = subject as unknown as CoreNostrEvent;
+	const type = scrutinyEventType(coreSubject);
 	if (type !== 'product' && type !== 'metadata') return null;
 
 	const card = cards.find((c) => c.id === subjectId);
 	const interpreted = card !== undefined && card.interpreted;
-	const resolution = resolve(subjectId, events as never);
+	const resolution = resolve(subjectId, coreEvents);
+	const retraction = retractionOf(coreSubject, coreEvents);
 	const content = contentOf(resolution);
-	const history = historyRows(subject, resolution, events);
-	const files = fileRows(subjectId, events, cards);
+	const history = historyRows(subject, resolution, events, coreEvents);
+	const files = fileRows(subjectId, events, coreEvents, cards);
 	const identifiers = [...new Set(tagValues(subject, 'i'))];
 
 	return {
 		subject,
 		subjectType: type,
-		retracted: retractionOf(subject, events) !== undefined,
+		retracted: retraction !== undefined,
 		title: {
 			text: interpreted && card !== undefined ? card.title : deriveFallbackTitle(subject),
 			interpreted

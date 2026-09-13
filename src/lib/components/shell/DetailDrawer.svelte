@@ -25,15 +25,13 @@
 	import KeyHint from './KeyHint.svelte';
 	import PublisherChip from '../ui/PublisherChip.svelte';
 	import { COLLAPSE } from '../ui/motion';
-	import { formatRel, shell } from '$lib/shell.svelte';
+	import { formatRel, shell, type DrawerSection } from '$lib/shell.svelte';
 	import type { Dossier, HistoryRow } from '$lib/dossier';
 
 	interface Section {
-		key: SectionKey;
+		key: DrawerSection;
 		label: string;
 	}
-	/** The four dossier sections (spec §9) — counts are keyed to exactly these. */
-	type SectionKey = 'summary' | 'content' | 'history' | 'files';
 
 	interface Props {
 		open: boolean;
@@ -80,7 +78,7 @@
 
 	// Counts live on the dossier (§2 rule 2: each equals its rows rendered);
 	// Content has no meaningful count, so its chip stays hidden.
-	const counts = $derived<Partial<Record<SectionKey, number>>>(
+	const counts = $derived<Partial<Record<DrawerSection, number>>>(
 		dossier === null ? {} : { ...dossier.counts, content: undefined }
 	);
 
@@ -395,9 +393,15 @@
 									{row.verb}
 								</span>
 							{/if}
-							{#if row.counterpartyLabel !== null}
-								<span class="truncate text-[12.5px] font-medium text-ink">
-									{row.counterpartyLabel}
+							{#if row.counterpartyTitle !== null}
+								<!-- §9 writing rule: sans only on a cache hit;
+									rule-5 fallback titles are machine-made, mono. -->
+								<span
+									class="truncate {row.counterpartyTitle.interpreted
+										? 'text-[12.5px] font-medium text-ink'
+										: 'font-mono text-[11.5px] text-ink-2'}"
+								>
+									{row.counterpartyTitle.text}
 								</span>
 							{/if}
 							<span class="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-3">

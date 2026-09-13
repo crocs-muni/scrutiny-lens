@@ -71,6 +71,10 @@ export { tTags };
 export { bindingEndpoints, isDefaultViewRetracted, DELETION_KIND, scrutinyEventType };
 export { resolve } from '@scrutiny-fabric/core';
 export type { Resolution, ChainState, OverlayState } from '@scrutiny-fabric/core';
+/** Core's deeply-readonly wire type — exported so consumers cast ONCE per
+ * boundary (`as unknown as CoreNostrEvent`) instead of sprinkling `as never`
+ * per call site (the seam's own policy, header comment above). */
+export type { NostrEvent as CoreNostrEvent } from '@scrutiny-fabric/core';
 
 /** Relay filter builders (§8.1 of the protocol spec): exact i-tag, NIP-50
  * freetext fallback, and last-resort full scan. Re-exported here so the
