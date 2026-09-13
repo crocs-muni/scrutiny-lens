@@ -28,7 +28,13 @@ export const DB_NAME = 'scrutiny-lens';
 // #27) reopens at 3 without firing an upgrade and listEvents NotFoundErrors
 // into eternal memory-only — the exact degrade that hid this. Bumping forces
 // the upgrade to fire for every live db at ≤ 3, letting the guards backfill.
-export const DB_VERSION = 4;
+//
+// v5 (issue #30) adds the two chat stores (chatMessages, chatPins) as the
+// same no-op store-set change: the guarded creates below are inert on a
+// database that somehow already has them, and inert against the two stores'
+// absence on pre-v5 databases — the bump is what guarantees the upgrade
+// fires at all, exactly the v4 lesson restated.
+export const DB_VERSION = 5;
 const SETTINGS_KEY = 'app';
 
 /** Ring size for the dead-letter store; deadLetter.ts imports this so the
@@ -63,6 +69,42 @@ export interface PersistedSession {
 	unseen?: boolean;
 }
 
+/** Mirrors the AI agent's chat-message shape (issue #30), kept field-for-field
+ * so the parse/verify layer can round-trip its records without reshaping. */
+export interface PersistedChatCitation {
+	n: number;
+	eventId: string;
+	quote: string;
+	span?: string;
+	nodeTitle?: string;
+	colorIndex: number;
+}
+
+export interface PersistedChatMessage {
+	id: string;
+	sessionId: string;
+	role: 'user' | 'assistant';
+	/** Canonical [N] markers for VERIFIED citations only — unverified claims
+	 * stay plain prose (ADR 0003: failed quotes are dropped silently). */
+	content: string;
+	citations?: PersistedChatCitation[];
+	/** Drops counting (ADR 0003) so conformance tests can assert zero
+	 * unverified pills render. */
+	claimsSummary?: {
+		total: number;
+		verbatim: number;
+		partial: number;
+		extrapolatory: number;
+	};
+	/** Ungrounded answers carry no content; the honest "what the session
+	 * contains" prose is the record (issue #30 degraded-state ruling). */
+	availableContext?: string;
+	/** No 'error': errors are transient transport state and never persist —
+	 * with 'pending' and 'aborted' they die in memory (ADR 0003). */
+	kind: 'answer' | 'ungrounded';
+	createdAt: number;
+}
+
 /** Cached fetched event (issue #27, spec §11 step 2). `ttags` is the derived
  * list of t-tag VALUES the multiEntry index keys on — IDB has no nested-
  * array keyPath, so the derivation denormalizes on write. No ring cap (the
@@ -82,6 +124,12 @@ interface LensDB extends DBSchema {
 		value: CachedEvent;
 		indexes: { ttags: string; created_at: number };
 	};
+	chatMessages: {
+		key: string;
+		value: PersistedChatMessage;
+		indexes: { sessionId: string };
+	};
+	chatPins: { key: string; value: { sessionId: string; pins: string[] } };
 }
 
 let conn: IDBPDatabase<LensDB> | undefined;
@@ -181,6 +229,17 @@ async function open(): Promise<void> {
 						events.createIndex('created_at', 'created_at');
 					}
 				}
+				if (!db.objectStoreNames.contains('chatMessages')) {
+					// v5 (issue #30): per-session chat transcript. Same guard shape
+					// as every store above — a database that somehow already has
+					// it reopens unchanged, older DBs get it when the v5 bump
+					// fires the upgrade.
+					const chatMessages = db.createObjectStore('chatMessages', { keyPath: 'id' });
+					chatMessages.createIndex('sessionId', 'sessionId');
+				}
+				if (!db.objectStoreNames.contains('chatPins')) {
+					db.createObjectStore('chatPins', { keyPath: 'sessionId' });
+				}
 			}
 		});
 		persistent = true;
@@ -274,15 +333,62 @@ export async function putSession(row: PersistedSession): Promise<void> {
 	}, undefined);
 }
 
+/** Session deletion is a cascade (issue #30): the row, every chat message
+ * for the session, and its pinned citation numbers go in ONE transaction —
+ * never a partial teardown whose surviving messages would re-number citations
+ * on reload (ADR 0003: numbers stay pinned per conversation). */
 export async function deleteSession(id: string): Promise<void> {
 	await attempt(async (d) => {
-		await d.delete('sessions', id);
+		const tx = d.transaction(['sessions', 'chatMessages', 'chatPins'], 'readwrite');
+		await tx.objectStore('sessions').delete(id);
+		// Messages ride the sessionId index — an exact-key cursor walk scoped by
+		// the index so deleteSession touches ONLY this session's rows.
+		const messages = tx.objectStore('chatMessages').index('sessionId');
+		for (let cursor = await messages.openCursor(id); cursor; cursor = await cursor.continue()) {
+			await cursor.delete();
+		}
+		await tx.objectStore('chatPins').delete(id);
+		await tx.done;
 	}, undefined);
 }
 
 /** Newest first — the sidebar rail's display order (SidebarRecents anatomy). */
 export async function listSessions(): Promise<PersistedSession[]> {
 	return attempt(async (d) => (await d.getAllFromIndex('sessions', 'createdAt')).reverse(), []);
+}
+
+/** Persists a settled chat frame (issue #30). Errors never land here — ADR
+ * 0003's "pending shimmer pills and aborted streams persist nothing", so
+ * `kind` is only 'answer' | 'ungrounded'. */
+export async function putChatMessage(msg: PersistedChatMessage): Promise<void> {
+	await attempt(async (d) => {
+		await d.put('chatMessages', normalize(msg));
+	}, undefined);
+}
+
+/** A session's chat, OLDEST first. The sessionId index SCOPES the walk; it
+ * does not order it (IDB returns same-key rows in primary-key order), so
+ * chronological order is the JS sort, not the cursor's. */
+export async function listChatMessages(sessionId: string): Promise<PersistedChatMessage[]> {
+	return attempt(async (d) => {
+		const rows = await d.getAllFromIndex('chatMessages', 'sessionId', sessionId);
+		return rows.sort((a, b) => a.createdAt - b.createdAt);
+	}, []);
+}
+
+/** Persists the citation-number registry for a conversation (ADR 0003:
+ * "registry pins persisted so numbers/colors survive reload") — ordered
+ * eventIds in pinned-number order, the restore source on session open. */
+export async function putChatPins(pins: { sessionId: string; pins: string[] }): Promise<void> {
+	await attempt(async (d) => {
+		await d.put('chatPins', normalize(pins));
+	}, undefined);
+}
+
+export async function getChatPins(
+	sessionId: string
+): Promise<{ sessionId: string; pins: string[] } | null> {
+	return attempt(async (d) => (await d.get('chatPins', sessionId)) ?? null, null);
 }
 
 /** Appends and trims inside one transaction, keeping the DEAD_LETTER_CAP
