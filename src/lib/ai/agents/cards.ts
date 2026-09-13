@@ -682,9 +682,17 @@ export async function interpretCards(
     }
 
     // Id-binding: a salvaged partial page maps by entityId, never by
-    // position — a dropped record degrades only its own card.
+    // position — a dropped record degrades only its own card. Id affinity
+    // gate (spec §2 never-lie, id-mangling incident): bind only records
+    // whose echoed entityId was requested for this page; foreign echoes and
+    // repeats of an already-claimed id are dropped, so a mangled id can't
+    // paste another card's text onto this one.
+    const requested = new Set(page.map((g) => g.entityId));
     const drafts = new Map<string, CardDraft>();
-    for (const draft of res.result) drafts.set(draft.entityId, draft);
+    for (const draft of res.result) {
+      if (!requested.has(draft.entityId) || drafts.has(draft.entityId)) continue;
+      drafts.set(draft.entityId, draft);
+    }
     for (let j = 0; j < page.length; j++) {
       const ctx: DeadLetterCtx = {
         entityId: page[j].entityId,

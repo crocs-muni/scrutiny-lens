@@ -248,12 +248,22 @@ export async function fillCards(
     temperature: 0.2,
   });
 
+  // Id affinity gate (spec §2 never-lie, id-mangling incident): bind a
+  // record only if its echoed id was actually requested for this batch —
+  // a model that repeats or mangles an id must not attach another card's
+  // text to this one and persist the lie into the (eventId, model) cache.
+  // Foreign echoes and repeats of an already-claimed id are dropped; the
+  // per-item fallback then leaves that card raw (rule 5).
   const drafts = new Map<
     string,
     { id: string; title: string; snippet: string }
   >();
   if (result.ok) {
-    for (const draft of result.result) drafts.set(draft.id, draft);
+    const requested = new Set(fresh.map((c) => c.id));
+    for (const draft of result.result) {
+      if (!requested.has(draft.id) || drafts.has(draft.id)) continue;
+      drafts.set(draft.id, draft);
+    }
   } else {
     // Never-lie: surface WHY the fill failed so the banner distinguishes a
     // dead endpoint (unreachable/timeout) from one that answered but whose

@@ -578,9 +578,17 @@ export async function batchNodeInterpret(
     }
 
     // Id-binding: a salvaged partial page maps by entityId, never by
-    // position — a dropped record degrades only its own event.
+    // position — a dropped record degrades only its own event. Id affinity
+    // gate (spec §2 never-lie, id-mangling incident): bind only records
+    // whose echoed entityId was requested for this page; foreign echoes and
+    // repeats of an already-claimed id are dropped, so a mangled id can't
+    // paste another event's text onto this one.
+    const requested = new Set(pageEvents.map((e) => e.id));
     const drafts = new Map<string, NodeDraft>();
-    for (const draft of res.result) drafts.set(draft.entityId, draft);
+    for (const draft of res.result) {
+      if (!requested.has(draft.entityId) || drafts.has(draft.entityId)) continue;
+      drafts.set(draft.entityId, draft);
+    }
     for (let j = 0; j < pageEvents.length; j++) {
       const ctx: DeadLetterCtx = {
         entityId: pageEvents[j].id,

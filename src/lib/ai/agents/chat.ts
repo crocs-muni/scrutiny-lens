@@ -29,9 +29,8 @@
  * stream quietly — no error frame is emitted for an intentional disconnect.
  */
 
-import { streamText } from 'ai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
+import { streamLLM } from '../gateway';
 import type { CallLLMArgs, LLMMessage } from '../output';
 import { extractedGate, type ExtractionState } from '../verifier';
 import { createCitationRegistry, type Citation } from '../citationRegistry';
@@ -128,27 +127,10 @@ const GROUNDING_INSTRUCTIONS = [
  * Default streaming transport
  * ------------------------------------------------------------------ */
 
-async function* defaultStreamLLM({
-	provider,
-	system,
-	messages,
-	temperature,
-	signal
-}: CallLLMArgs): AsyncIterable<string> {
-	const p = createOpenAICompatible({
-		baseURL: provider.baseUrl,
-		name: provider.name,
-		apiKey: provider.apiKey
-	});
-	const result = streamText({
-		model: p(provider.model),
-		system,
-		messages,
-		temperature,
-		abortSignal: signal
-	});
-	for await (const delta of result.textStream) yield delta;
-}
+/** Gateway streaming arm (issue #53): shares the gateway's FIFO slots and
+ * per-baseUrl cooldown with the non-streaming lanes. Structurally identical
+ * to StreamLLM (yields raw model text chunks; throws on transport failure). */
+const defaultStreamLLM: StreamLLM = streamLLM;
 
 /* ------------------------------------------------------------------ *
  * Final parse: resolve markers through the registry + verifier
