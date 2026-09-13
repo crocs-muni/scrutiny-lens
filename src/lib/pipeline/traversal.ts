@@ -7,24 +7,37 @@
  *   round 1 — the chain's patches (patchesReferencing, one root-anchored
  *             query reaches every depth since each patch carries `e root`,
  *             PT-1) plus the subject's own deletions (deletionsFor, DQ-2);
- *   round 2 — deletionsFor every patch round 1 observed (DQ-2 polls
+ *   round 2 — deletionsFor every patch round 1 surfaced (DQ-2 polls
  *             per cached patch: a retracted patch must drop out of the
  *             chain, and relays may store deletions they omit from
  *             default filter results).
  *
- * One route per filter: fetchRouted merges a route's filters into ONE REQ,
- * and merging the kind-1 patch filter with the kind-5 deletion filter would
- * AND their shapes (deletions never carry `scrutiny-*` t tags, §3.2) —
- * a merged REQ would answer nothing and look like an empty relay.
+ * One route per filter: a route's filters are merged into ONE REQ with
+ * nostr-tools' mergeFilters, which UNIONs values key-by-key — merging the
+ * kind-1 patch filter with the kind-5 deletion filter yields
+ * {kinds:[1,5], '#t':['scrutiny-patch'], '#e':[id]}, whose `#t` key kills
+ * exactly the deletions (they carry no `scrutiny-*` t tags, §3.2) while
+ * still returning patches — silently losing half the leg behind a
+ * healthy-looking answer.
+ *
+ * Round-2 poll targets are the round-1 patches that classifyByRole binds
+ * to THIS subject (expected type AND a marked e-tag naming it, DQ-4) —
+ * a PT-valid patch an unrelated chain's relay slipped into the answer
+ * never spawns a stray REQ.
+ *
+ * Deferrals (lens #68, owner ruling 2026-09-14 — named here per #68's
+ * own call-out requirement): bindings legs (`bindingsReferencing` per
+ * admitted product/metadata + second hop, the Files-count/deep-link
+ * acceptance), search-time first-sight deletion polling for every cached
+ * event (DQ-2's first half), and periodic re-poll (DQ-2's second half).
  */
 
 import type { NostrEvent } from 'nostr-tools/core';
 import type { Filter } from 'nostr-tools/filter';
 import {
-	DELETION_KIND,
+	classifyByRole,
 	deletionsFor,
 	patchesReferencing,
-	scrutinyEventType,
 	type CoreNostrEvent
 } from '$lib/fabric';
 import type { FetchRoute, Transport } from '$lib/net/transport';
@@ -46,20 +59,16 @@ export async function fetchSubjectContext(
 	const first = await transport.fetchRouted(roundOne, () => {});
 	const events = [...first.events];
 
-	// Deletion polling targets patch-shaped events only (the relay answer is
-	// untrusted; polling deletionsFor of any junk id it returned would turn
-	// garbage answers into garbage REQs).
-	const patches = events.filter(
-		(event) =>
-			event.kind !== DELETION_KIND &&
-			scrutinyEventType(event as unknown as CoreNostrEvent) === 'patch'
-	);
+	// Deletion polls target only patches bound to THIS subject: expected
+	// type plus a marked e-tag naming it (DQ-4 via core's classifyByRole —
+	// relay answers are untrusted).
+	const patches = classifyByRole(events as unknown as CoreNostrEvent[], subjectId, 'patch');
 	if (patches.length === 0) return events;
 
-	const roundTwo: FetchRoute[] = patches.map((patch) => ({
-		label: `traversal:deletions:patch:${patch.id}`,
+	const roundTwo: FetchRoute[] = patches.map(({ event }) => ({
+		label: `traversal:deletions:patch:${event.id}`,
 		urls,
-		filters: [deletionsFor(patch.id) as Filter]
+		filters: [deletionsFor(event.id) as Filter]
 	}));
 	const second = await transport.fetchRouted(roundTwo, () => {});
 	const seen = new Set(events.map((event) => event.id));

@@ -159,6 +159,34 @@ describe('fetchSubjectContext (§8.2, tools #75)', () => {
 		expect(events.map((e) => e.id).sort()).toEqual([impostor.id, strayDeletion.id].sort());
 	});
 
+	it('never polls deletions for a patch-shaped answer that is not anchored at this subject (DQ-4)', async () => {
+		const subjectId = 'ab'.repeat(32);
+		const otherRootId = 'cd'.repeat(32);
+		// PT-valid patch of ANOTHER chain that a bugged/hostile relay slipped
+		// into the answer — classifyByRole must not bind it to this subject.
+		const foreignPatch = patchOn(otherRootId);
+		// Patch-shaped and names the subject, but the naming tag is UNMARKED —
+		// DQ-4 asks for a role, and an unmarked tag carries none.
+		const unmarked = forge(
+			1,
+			[
+				['t', 'scrutiny-fabric'],
+				['t', 'scrutiny-v0.8.1'],
+				['t', 'scrutiny-patch'],
+				['e', subjectId, '', '', '']
+			],
+			'--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new'
+		);
+		const transport = new StubTransport(
+			new Map([['traversal:patches', [foreignPatch, unmarked]]])
+		);
+
+		const events = await fetchSubjectContext(subjectId, URLS, transport);
+
+		expect(transport.rounds).toHaveLength(1);
+		expect(events.map((e) => e.id).sort()).toEqual([foreignPatch.id, unmarked.id].sort());
+	});
+
 	it('dedupes a deletion that arrives in both rounds', async () => {
 		const subjectId = 'ab'.repeat(32);
 		const patch = patchOn(subjectId);

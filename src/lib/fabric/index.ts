@@ -84,8 +84,11 @@ export { indexerFilter, searchFilter, fullScanFilter };
 
 /** §8.2 traversal builders (lens #68, tools #75): patches carry no i tags
  * (§8.1 step 4) and kind-5 deletions no #t (§3.2), so discovery filters can
- * never reach them — the dossier fires these legs per subject. */
+ * never reach them — the dossier fires these legs per subject. classifyByRole
+ * accompanies them: DQ-4's role inspection (type tag AND marker) for `#e`
+ * traversal results — never hand-rolled in consumers. */
 export { deletionsFor, patchesReferencing };
+export { classifyByRole } from '@scrutiny-fabric/core';
 
 /** tagValues(event, key) — every value slot of every tag with that key. The
  * pipeline's skeleton sources index i-tags with it (never hand-rolled). */
@@ -206,6 +209,18 @@ export type AdmitResult =
 	| { ok: true; type: ScrutinyEventType }
 	| { ok: false; reason: string };
 
+/** The tamper half every admission gate shares: wire shape (ours, zod), then
+ * the NIP-01 id recompute (core's — tampers and fabricated ids). The reason
+ * string is the gate, not decoration. */
+function tamperReason(event: NostrEvent): string | undefined {
+	const structural = structuralError(event);
+	if (structural !== undefined) return structural;
+	if (!eventIdMatches(asCore(event), sha256Hex)) {
+		return 'event id does not match its NIP-01 recompute (contents tampered or id fabricated)';
+	}
+	return undefined;
+}
+
 /**
  * Strict single-event gate for events about to enter the graph: NIP-01 id
  * recompute via the injected hash (tampers and fabricated ids rejected), then
@@ -213,15 +228,8 @@ export type AdmitResult =
  * must supply the referenced events and go through `validateAndClassify`.
  */
 export function admitEvent(event: NostrEvent): AdmitResult {
-	const structural = structuralError(event);
-	if (structural !== undefined) return { ok: false, reason: structural };
-	if (!eventIdMatches(asCore(event), sha256Hex)) {
-		return {
-			ok: false,
-			reason:
-				'event id does not match its NIP-01 recompute (contents tampered or id fabricated)'
-		};
-	}
+	const tampered = tamperReason(event);
+	if (tampered !== undefined) return { ok: false, reason: tampered };
 	const verdict = validateEvent(asCore(event));
 	if (verdict.status === 'valid') return { ok: true, type: verdict.type };
 	return {
@@ -239,18 +247,39 @@ export function admitEvent(event: NostrEvent): AdmitResult {
  * dossier so retraction can drop it (DEL-1, DQ-2).
  */
 export function admitDeletion(event: NostrEvent): { ok: true } | { ok: false; reason: string } {
-	const structural = structuralError(event);
-	if (structural !== undefined) return { ok: false, reason: structural };
 	if (event.kind !== DELETION_KIND) {
 		return { ok: false, reason: `expected kind ${DELETION_KIND}, got ${event.kind}` };
 	}
-	if (!eventIdMatches(asCore(event), sha256Hex)) {
-		return {
-			ok: false,
-			reason: 'event id does not match its NIP-01 recompute (contents tampered or id fabricated)'
-		};
-	}
+	const tampered = tamperReason(event);
+	if (tampered !== undefined) return { ok: false, reason: tampered };
 	return { ok: true };
+}
+
+/**
+ * Batch admission for §8.2 traversal context (lens #68): admitEvent's tamper
+ * half PLUS batch-resolved protocol validity. A per-event admitEvent can
+ * never admit a patch — without a lookup backing, every patch's `e root` and
+ * `e reply` are unobserved and core holds it `pending` (UR-2) — so traversal
+ * admission MUST resolve references against the batch the consumer already
+ * holds (the subject plus the session's admitted events). Kind-5 deletions
+ * route through admitDeletion's gate. Candidates already in the batch are
+ * excluded; returns the admissible subset in candidate order (dropped
+ * events are the caller's silence by design — traversal context is
+ * best-effort).
+ */
+export function admitBatch(batch: NostrEvent[], candidates: NostrEvent[]): NostrEvent[] {
+	const batchIds = new Set(batch.map((event) => event.id));
+	const fresh = candidates.filter((event) => !batchIds.has(event.id));
+	const kindOne = fresh.filter((event) => event.kind !== DELETION_KIND);
+	const untampered = kindOne.filter((event) => tamperReason(event) === undefined);
+	const validIds = new Set(
+		validateAndClassify([...batch, ...untampered]).valid.map((event) => event.id)
+	);
+	return fresh.filter(
+		(event) =>
+			(event.kind === DELETION_KIND && admitDeletion(event).ok) ||
+			(event.kind !== DELETION_KIND && validIds.has(event.id))
+	);
 }
 
 /**

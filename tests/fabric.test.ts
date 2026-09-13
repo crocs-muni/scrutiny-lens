@@ -17,7 +17,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
+import { fencePatchPayload } from '@scrutiny-fabric/core';
 import {
+	admitBatch,
 	admitDeletion,
 	admitEvent,
 	resolveGraph,
@@ -192,17 +194,17 @@ describe('admitEvent (hash-injected integrity gate)', () => {
 	});
 });
 
-describe('admitDeletion (kind-5 traversal gate, §3.2 / lens #68)', () => {
-	/** Genuinely-signed kind-5: NIP-09 deletions carry no scrutiny-fabric tags
-	 * (§3.2), so admitEvent's SCRUTINY validity project must never see them —
-	 * only the structural + id-recompute halves. */
-	function selfConsistentDeletion(targetId: string): NostrEvent {
-		return finalizeEvent(
-			{ kind: 5, created_at: 1720000100, tags: [['e', targetId]], content: '' },
-			generateSecretKey()
-		);
-	}
+/** Genuinely-signed kind-5: NIP-09 deletions carry no scrutiny-fabric tags
+ * (§3.2), so admitEvent's SCRUTINY validity project must never see them —
+ * only the structural + id-recompute halves. */
+function selfConsistentDeletion(targetId: string): NostrEvent {
+	return finalizeEvent(
+		{ kind: 5, created_at: 1720000100, tags: [['e', targetId]], content: '' },
+		generateSecretKey()
+	);
+}
 
+describe('admitDeletion (kind-5 traversal gate, §3.2 / lens #68)', () => {
 	it('admits a self-consistent kind-5 deletion with no SCRUTINY tags', () => {
 		expect(admitDeletion(selfConsistentDeletion(PRODUCT.id))).toEqual({ ok: true });
 	});
@@ -221,6 +223,91 @@ describe('admitDeletion (kind-5 traversal gate, §3.2 / lens #68)', () => {
 		const result = admitDeletion(tampered);
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.reason).toMatch(/id does not match/);
+	});
+});
+
+describe('admitBatch (§8.2 traversal admission, lens #68)', () => {
+	/** One author key for the whole chain: root-author patches are the
+	 * canonical-chain shape, and finalizeEvent gives every event a
+	 * NIP-01-recomputing id (the tamper gate admits them). */
+	const AUTHOR_KEY = generateSecretKey();
+
+	function productRoot(): NostrEvent {
+		return finalizeEvent(
+			{
+				kind: 1,
+				created_at: 1720000000,
+				tags: [
+					['t', 'scrutiny-fabric'],
+					['t', 'scrutiny-product'],
+					['t', 'scrutiny-v0.8.1']
+				],
+				content: 'Widget X certificate'
+			},
+			AUTHOR_KEY
+		);
+	}
+
+	function chainPatch(rootId: string, parentId: string, seq: number): NostrEvent {
+		return finalizeEvent(
+			{
+				kind: 1,
+				created_at: 1720000000 + seq,
+				tags: [
+					['t', 'scrutiny-fabric'],
+					['t', 'scrutiny-v0.8.1'],
+					['t', 'scrutiny-patch'],
+					['e', rootId, '', 'root', ''],
+					['e', parentId, '', 'reply', '']
+				],
+				content: fencePatchPayload(`--- a/content\n+++ b/content\n@@ -1 +1 @@\n-v${seq}\n+v${seq + 1}\n`)
+			},
+			AUTHOR_KEY
+		);
+	}
+
+	it('admits a whole chain whose root is in the batch — the exact case per-event admission drops', () => {
+		const root = productRoot();
+		const p1 = chainPatch(root.id, root.id, 1);
+		const p2 = chainPatch(root.id, p1.id, 2);
+
+		// The P1-shaped trap: without a lookup backing, core holds EVERY
+		// patch pending (UR-2), and admitEvent's gate is 'pending'-proof.
+		expect(admitEvent(p1).ok).toBe(false);
+
+		expect(admitBatch([root], [p1, p2])).toEqual([p1, p2]);
+	});
+
+	it('excludes a patch whose root is absent from the batch (pending, not admitted)', () => {
+		const root = productRoot();
+		const p1 = chainPatch(root.id, root.id, 1);
+		expect(admitBatch([], [p1])).toEqual([]);
+	});
+
+	it('admits kind-5 deletions of batch events alongside patches', () => {
+		const root = productRoot();
+		const p1 = chainPatch(root.id, root.id, 1);
+		const retraction = selfConsistentDeletion(p1.id);
+		expect(admitBatch([root], [p1, retraction])).toEqual([p1, retraction]);
+	});
+
+	it('excludes tampered events and candidates already in the batch', () => {
+		const root = productRoot();
+		const p1 = chainPatch(root.id, root.id, 1);
+		const tampered: NostrEvent = {
+			...p1,
+			content: fencePatchPayload('--- a/content\n+++ b/content\n@@ -1 +1 @@\n-v1\n+V2\n')
+		};
+		expect(admitBatch([root, p1], [p1, tampered])).toEqual([]);
+	});
+
+	it('excludes non-SCRUTINY kind-1 junk the relay answered with', () => {
+		const root = productRoot();
+		const junk = finalizeEvent(
+			{ kind: 1, created_at: 1720000009, tags: [['e', root.id, '', 'reply', '']], content: 'hi' },
+			AUTHOR_KEY
+		);
+		expect(admitBatch([root], [junk])).toEqual([]);
 	});
 });
 
