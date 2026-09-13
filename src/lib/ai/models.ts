@@ -11,6 +11,7 @@
 // both down together.
 
 import { z } from 'zod';
+import { gatewayFetch, GatewayError } from './gateway';
 
 export type ModelsResult =
 	| { ok: true; models: string[] }
@@ -30,12 +31,27 @@ export async function fetchModels(
 	const url = `${baseUrl.replace(/\/+$/, '')}/models`;
 	let response: Response;
 	try {
-		response = await fetch(url, {
+		// Route GET /models through the AI gateway's fetch (issue #53): it runs
+		// the FIFO semaphore, per-baseUrl 429 cooldown, and retry/backoff, and
+		// returns the final Response for the same mapping below.
+		response = await gatewayFetch(url, {
 			headers: { Authorization: `Bearer ${apiKey}` },
-			signal
+			signal,
+			apiKey
 		});
 	} catch (error) {
 		if (error instanceof DOMException && error.name === 'AbortError') throw error;
+		// Endpoint answered but retries exhausted (e.g. a 429 that never let us
+		// through, or a 5xx past maxAttempts): GatewayError carries the surviving
+		// HTTP status — honest as 'http', never mislabeled 'network'. A status-less
+		// GatewayError (network: true) is the CORS/mixed-content block: the request
+		// never reached the server, so it is 'network'.
+		if (error instanceof GatewayError) {
+			if (error.network === true || error.statusCode === undefined) {
+				return { ok: false, kind: 'network' };
+			}
+			return { ok: false, kind: 'http', status: error.statusCode ?? 0 };
+		}
 		return { ok: false, kind: 'network' };
 	}
 	if (!response.ok) return { ok: false, kind: 'http', status: response.status };

@@ -12,7 +12,9 @@
     "postbuild": "node -e \"require('fs').copyFileSync('build/index.html','build/404.html')\"",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "smoke:parse": "vitest run tests/smoke-parse.test.ts",
+    "smoke": "vite dev --open /smoke"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.10",

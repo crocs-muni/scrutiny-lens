@@ -109,6 +109,7 @@ function blockToEntries(
 ): Array<[string, unknown]> | null {
   const sorted = [...knownKeys].sort((a, b) => b.length - a.length);
   const entries: Array<[string, unknown]> = [];
+  const seen = new Set<string>();
   let lastKey: string | null = null;
 
   const pushCont = (line: string): void => {
@@ -134,6 +135,17 @@ function blockToEntries(
       continue;
     }
     const value = line === match ? "" : line.slice(match.length + 1).trim();
+    // First-wins on a duplicate key (spec §2: never let prose that looks
+    // like another known key silently overwrite a real field — last-wins
+    // would corrupt e.g. a snippet's own content into the title slot,
+    // passing zod with junk). The duplicate's line continues the CURRENT
+    // in-context value (the value the previous key is accumulating), so
+    // nothing is silently dropped and the zod gate sees the honest record.
+    if (seen.has(match)) {
+      pushCont(`${match}: ${value}`);
+      continue;
+    }
+    seen.add(match);
     lastKey = match;
     entries.push([match, value]);
   }
@@ -188,10 +200,10 @@ function materialize(
 
 function coerce(
   entries: Array<[string, unknown]>,
-  ints: string[],
-  floats: string[],
-  bools: string[],
-  listKeys: string[],
+  ints: readonly string[],
+  floats: readonly string[],
+  bools: readonly string[],
+  listKeys: readonly string[],
 ): Array<[string, unknown]> {
   const out: Array<[string, unknown]> = [];
   for (const [k, v] of entries) {
@@ -285,10 +297,10 @@ export function parseRecords<T>(
     lists = [],
   } = opts;
   const sorted = [...knownKeys].sort((a, b) => b.length - a.length);
-  const ints = numbers.filter((n) => sorted.includes(n));
-  const flts = floats.filter((n) => sorted.includes(n));
-  const bools = booleans.filter((n) => sorted.includes(n));
-  const listKeys = lists.filter((l) => sorted.includes(l));
+  const ints = [...numbers].filter((n) => sorted.includes(n));
+  const flts = [...floats].filter((n) => sorted.includes(n));
+  const bools = [...booleans].filter((n) => sorted.includes(n));
+  const listKeys = [...lists].filter((l) => sorted.includes(l));
   const normalized = normalize(text);
 
   let blocks = splitBlocks(normalized)
@@ -403,6 +415,16 @@ function cappedParse<T>(
     ? { records: r.records.slice(0, max), issues: r.issues }
     : r;
 }
+/** Scrub the configured key out of a message for lane logging (ADR-018):
+ * error bodies can echo the request URL, which for a key-in-query-string
+ * endpoint shape would otherwise leak into console.debug. The raw message
+ * stays on the AIResult (the caller's honest-degrade path truncates it
+ * before it reaches the banner). */
+function scrubKey(msg: unknown, apiKey: string): string {
+  const s = String((msg as Error | null)?.message ?? msg);
+  return apiKey ? s.split(apiKey).join("<key>") : s;
+}
+
 /**
  * Generate a list of records from a prompt, KV-gated at our boundary, with
  * exactly ONE re-prompt when nothing survives. Never throws on a model
@@ -439,6 +461,13 @@ export async function generateRecords<T>(
   }
 
   const call = seam ?? defaultCallLLM;
+  // Diagnostic lane for the owner's manual runs (issue: "AI translate
+  // degraded (timeout)"). Key-free, content-free — spec §2: never log the
+  // dropable record content or the apiKey, only shapes + timings.
+  const started = Date.now();
+  const lane = provider?.name ?? "default";
+  const el = () => `${String(Date.now() - started).padStart(5, " ")}ms`;
+  const dbg = (msg: string) => console.debug(`[ai:${lane}] ${el()} ${msg}`);
   const sys = [formatInstruction(knownKeys), system]
     .filter(Boolean)
     .join("\n\n");
@@ -451,26 +480,63 @@ export async function generateRecords<T>(
   };
   const run = (): Promise<
     { ok: true; text: string } | { ok: false; kind: AIKind; message: string }
-  > =>
-    call(base).then(
-      (text) => ({ ok: true, text }),
+  > => {
+    const t0 = Date.now();
+    return call(base).then(
+      (text) => {
+        dbg(`resp: ${text.length} chars in ${Date.now() - t0}ms`);
+        return { ok: true, text };
+      },
       (err: unknown) => {
         if (isAbort(err, abortSignal)) throw err;
+        const kind = kindOf(err);
+        // The raw message rides the AIResult (the caller's honest-degrade
+        // truncates it into the banner); only the lane log is scrubbed.
+        const raw = String((err as Error)?.message ?? err);
+        dbg(
+          `fail: ${kind} after ${Date.now() - t0}ms — ${scrubKey(raw, provRes.config.apiKey)}`,
+        );
         return {
           ok: false,
-          kind: kindOf(err),
-          message: String((err as Error)?.message ?? err),
+          kind,
+          message: raw,
         };
       },
     );
+  };
 
-  const first = await run();
-  if (!first.ok) return { ok: false, kind: first.kind, message: first.message };
+  // Host is in the URL — never the key (spec §2/ADR-018); model + host pin
+  // the "empty model hangs LiteLLM" and "wrong base URL" lanes the owner hit.
+  const host = (() => {
+    try {
+      return new URL(provRes.config.baseUrl).host;
+    } catch {
+      return provRes.config.baseUrl;
+    }
+  })();
+  dbg(
+    `call: model=${provRes.config.model || "(EMPTY)"} host=${host} msgs=${messages.length} keys=[${knownKeys.join(" ")}]${max !== undefined ? ` max=${max}` : ""}`,
+  );
+  let first: Awaited<ReturnType<typeof run>>;
+  try {
+    first = await run();
+  } catch (err) {
+    dbg(`throw: ${scrubKey(err, provRes.config.apiKey)} (${kindOf(err)})`);
+    throw err;
+  }
+  if (!first.ok) {
+    dbg(
+      `transport ${first.kind}: ${scrubKey(first.message, provRes.config.apiKey)}`,
+    );
+    return { ok: false, kind: first.kind, message: first.message };
+  }
+  dbg(`first: ${first.text.length} chars`);
   let parsed = cappedParse(
     first.text,
     { schema, knownKeys, numbers, floats, booleans, lists },
     max,
   );
+  dbg(`parse: ${parsed.records.length} records, ${parsed.issues.length} issues`);
   if (parsed.records.length > 0) return { ok: true, result: parsed.records };
 
   // Exactly one re-prompt: re-state the format + the gate issue. Never echo
@@ -485,26 +551,40 @@ export async function generateRecords<T>(
       },
     ],
   };
-  const second = await call(retry).then(
-    (text) => ({ ok: true, text }) as const,
-    (err: unknown) => {
-      if (isAbort(err, abortSignal)) throw err;
-      return {
-        ok: false,
-        kind: kindOf(err),
-        message: String((err as Error)?.message ?? err),
-      } as const;
-    },
-  );
-  if (!second.ok)
+  dbg("re-prompt");
+  let second: Awaited<ReturnType<typeof run>>;
+  try {
+    second = await call(retry).then(
+      (text) => ({ ok: true, text }) as const,
+      (err: unknown) => {
+        if (isAbort(err, abortSignal)) throw err;
+        return {
+          ok: false,
+          kind: kindOf(err),
+          message: String((err as Error)?.message ?? err),
+        } as const;
+      },
+    );
+  } catch (err) {
+    dbg(`throw: ${scrubKey(err, provRes.config.apiKey)} (${kindOf(err)})`);
+    throw err;
+  }
+  if (!second.ok) {
+    dbg(
+      `transport ${second.kind}: ${scrubKey(second.message, provRes.config.apiKey)}`,
+    );
     return { ok: false, kind: second.kind, message: second.message };
+  }
+  dbg(`second: ${second.text.length} chars`);
   parsed = cappedParse(
     second.text,
     { schema, knownKeys, numbers, floats, booleans, lists },
     max,
   );
+  dbg(`parse: ${parsed.records.length} records, ${parsed.issues.length} issues`);
   if (parsed.records.length > 0) return { ok: true, result: parsed.records };
 
+  dbg("schema_failure: no record after re-prompt");
   return {
     ok: false,
     kind: "schema_failure",
