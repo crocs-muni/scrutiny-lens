@@ -167,6 +167,53 @@ describe("parseRecords", () => {
     expect(records[0].reasons).toEqual(["alpha", "beta", "gamma"]);
   });
 
+  it("first-wins on a duplicate key: a prose line that matches another known key folds into the current value, never overwrites the first (spec §2)", () => {
+    // The snippet's prose quotes a `category:`-shaped line. Last-wins would
+    // silently swap the title; first-wins must keep the first title and
+    // fold the collision into the running value, surfaced honestly by zod
+    // or the gate downstream.
+    const text =
+      "id: a\ntitle: Real title\nsnippet: A snippet mentioning category: BSI EAL4+ as a fact.\ntitle: Category: BSI EAL4+";
+    const { records } = parseRecords<Record<string, unknown>>(text, {
+      knownKeys: KNOWN,
+      schema: Rec,
+    });
+    expect(records[0].title).toBe("Real title");
+    expect(records[0].snippet).toBe(
+      "A snippet mentioning category: BSI EAL4+ as a fact. title: Category: BSI EAL4+",
+    );
+  });
+
+  it("an unrecognized mid-record line appends to the running value (continuation), so nothing is silently dropped", () => {
+    const text = [
+      "id: a",
+      "title: T",
+      "snippet: S detail one",
+      "assurance: EAL4+", // NOT a known key here → continuation, not a new field
+      "more detail two",
+    ].join("\n");
+    const { records } = parseRecords<Record<string, unknown>>(text, {
+      knownKeys: KNOWN,
+    });
+    expect(records[0].snippet).toBe("S detail one assurance: EAL4+ more detail two");
+    expect(records[0]).not.toHaveProperty("assurance");
+  });
+
+  it("a duplicate list-key line adds a new item, not a silent overwrite", () => {
+    const text = [
+      "id: a",
+      "title: T",
+      "snippet: S",
+      "reasons: one",
+      "reasons: two",
+    ].join("\n");
+    const { records } = parseRecords<Record<string, unknown>>(text, {
+      knownKeys: KNOWN,
+      lists: ["reasons"],
+    });
+    expect(records[0].reasons).toEqual(["one", "reasons: two"]);
+  });
+
   it("JSON salvage nests objects and index-keys arrays (snippet.highlights)", () => {
     const text = JSON.stringify([
       {
@@ -296,6 +343,67 @@ describe("generateRecords", () => {
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.kind).toBe("unreachable");
+  });
+});
+
+describe("API key scrubbing in the lane log (ADR-018)", () => {
+  it("the console.debug lane never leaks the configured apiKey, even when the transport error echoes the request URL", async () => {
+    const seen: string[] = [];
+    const orig = console.debug;
+    console.debug = (...args: unknown[]) => {
+      seen.push(args.map((a) => String(a)).join(" "));
+    };
+    const SECRET = "sk-live-1234567890";
+    const call: CallLLM = async () => {
+      // The failure shape that bit dbPrivacy: the error message embeds the
+      // request URL, which itself carries the key.
+      throw new Error(
+        `GET https://api.example.com/v1/chat?key=${SECRET} failed with 401`,
+      );
+    };
+    try {
+      const res = await generateRecords({
+        schema: Rec,
+        knownKeys: KNOWN,
+        messages: [],
+        provider: { baseUrl: "https://api.example.com/v1", model: "m", apiKey: SECRET } as never,
+        callLLM: call,
+      });
+      expect(res.ok).toBe(false);
+      // The raw truth rides the AIResult (the caller's honest-degrade path
+      // truncates it into the banner)…
+      if (!res.ok) expect(res.message).toContain(SECRET);
+      // … but the log lane must be scrubbed.
+      const lane = seen.join("\n");
+      expect(lane).not.toContain(SECRET);
+      expect(lane).toContain("<key>");
+    } finally {
+      console.debug = orig;
+    }
+  });
+
+  it("a key-free error message passes through the lane unchanged", async () => {
+    const seen: string[] = [];
+    const orig = console.debug;
+    console.debug = (...args: unknown[]) => {
+      seen.push(args.map((a) => String(a)).join(" "));
+    };
+    const call: CallLLM = async () => {
+      throw new Error("upstream 500");
+    };
+    try {
+      await generateRecords({
+        schema: Rec,
+        knownKeys: KNOWN,
+        messages: [],
+        provider: PROV,
+        callLLM: call,
+      });
+      const lane = seen.join("\n");
+      expect(lane).toContain("upstream 500");
+    } finally {
+      console.debug = orig;
+    }
   });
 });
 

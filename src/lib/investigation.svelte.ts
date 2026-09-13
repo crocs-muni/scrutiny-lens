@@ -269,7 +269,7 @@ class Investigation {
     this.selections = next;
   }
 
-  clearFacets(): void {
+clearFacets(): void {
     this.selections = {};
   }
   /** Chunked interpretation fill (spec §7: cards start rendering
@@ -278,9 +278,11 @@ class Investigation {
    * output-token decode dominates wall clock (fix was researched against
    * many-small-parallel practice — see PR #42 review-round record), so
    * lanes interleave requests instead of one serial 100-150s walk.
-   * Each chunk keeps its own 10s arm: a timed-out chunk degrades to
-   * rule-5 on ITS 3 cards only (spec §4: degrade only the unfinished
-   * items), and a stuck lane never holds the cursor hostage.
+   * Each chunk keeps its own 25s arm — past the gateway's 429-cooldown
+   * horizon (Retry-After capped at 15s, issue #53) so a lane survives one
+   * cooldown cycle in-queue instead of expiring on its timer. A timed-out
+   * chunk degrades to rule-5 on ITS 3 cards only (spec §4: degrade only
+   * the unfinished items), and a stuck lane never holds the cursor hostage.
    * Claim-cursor is synchronous — no double-claim; each lane's merge is
    * one synchronous rewrite (disjoint indices), so lanes can't clobber
    * each other. Cached interpretations return instantly — the first
@@ -293,7 +295,13 @@ class Investigation {
   ): Promise<void> {
     const CHUNK = 3;
     const LANES = 4;
-    const PER_CHUNK_MS = 10_000;
+    // 60s: a cold model on a shared gateway (e-infra LiteLLM loads models
+    // on first use) can take 30-60s to answer at all, and the gateway's
+    // 429 cooldown cycle needs a lane arm past its Retry-After horizon
+    // (capped at 15s, issue #53) — 10s mislabeled honest waits as
+    // timeouts (the owner's logs show every fill chunk dying at exactly
+    // ~10s on an otherwise-fast endpoint).
+    const PER_CHUNK_MS = 60_000;
     const total = this.cards.length;
     this.fillStats = { interpreted: 0, total };
     let next = 0;
@@ -337,13 +345,17 @@ class Investigation {
             provider,
             callLLM,
             signal: timer,
-            // schema_failure means the endpoint ANSWERED but its output
-            // didn't conform — that fact is sticky so a later transport
-            // failure on another lane can't overwrite the truth that the
-            // AI was reachable (spec §2 never-lie).
+            // schema_failure (it answered, output didn't conform) and
+            // rate_limited (it answered 429, asking us to slow down) both
+            // prove the endpoint was REACHABLE — sticky, so a later
+            // transport failure on another lane can't overwrite that truth
+            // (spec §2 never-lie).
             onFailure: (kind) => {
               this.fillFailure =
-                this.fillFailure === "schema_failure" ? "schema_failure" : kind;
+                this.fillFailure === "schema_failure" ||
+                this.fillFailure === "rate_limited"
+                  ? this.fillFailure
+                  : kind;
             },
           });
         } catch {
@@ -426,10 +438,12 @@ export function resetInvestigation(): void {
  * Results-surface banner text for the card-fill lane (spec §6 deterministic
  * wording — never AI-written). Distinguishes a dead endpoint (unreachable/
  * timeout), one blocked by the browser before any HTTP response (browser_blocked
- * — CORS preflight / mixed content, spec §2), and one that answered but
- * produced non-conforming output (schema_failure): the latter must not be
- * mislabeled "AI unreachable" (spec §2 never-lie in the owner's incident the
- * endpoint WAS reachable), and a browser block must not claim the AI is down.
+ * — CORS preflight / mixed content, spec §2), one throttling us (rate_limited
+ * — a 429 IS an answer: the endpoint is up, just asking us to slow down), and
+ * one that answered but produced non-conforming output (schema_failure): the
+ * last two must not be mislabeled "AI unreachable" (spec §2 never-lie — in the
+ * owner's incident the endpoint WAS reachable), and a browser block must not
+ * claim the AI is down.
  */
 export function fillNote(
   interpreted: number,
@@ -442,6 +456,9 @@ export function fillNote(
   }
   if (failure === "schema_failure") {
     return "AI output didn't conform — cards show the raw events";
+  }
+  if (failure === "rate_limited") {
+    return "AI endpoint rate limited — cards show the raw events";
   }
   if (failure === "browser_blocked") {
     return "AI endpoint blocked by the browser (CORS or mixed content) — cards show the raw events";

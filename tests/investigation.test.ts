@@ -1,8 +1,9 @@
 // Results-surface fill banner (spec §2 never-lie, §6 deterministic wording):
 // the zero-interpreted text must reflect WHY the fill failed. A dead endpoint
 // (unreachable/timeout) says "AI unreachable", but an endpoint that answered
-// and produced non-conforming output (schema_failure) must NOT be labeled
-// unreachable — that is the owner's incident.
+// and produced non-conforming output (schema_failure) — or answered 429,
+// throttling us (rate_limited) — must NOT be labeled unreachable: that is the
+// owner's incident.
 
 import { describe, expect, it } from 'vitest';
 import { fillNote } from '../src/lib/investigation.svelte';
@@ -24,6 +25,12 @@ describe("fillNote — says the truth about why cards aren't interpreted", () =>
 		expect(note).toBe(
 			'AI endpoint blocked by the browser (CORS or mixed content) — cards show the raw events'
 		);
+		expect(note).not.toContain('unreachable');
+	});
+
+	it('endpoint answered 429 (throttled) → names rate limiting, not "unreachable"', () => {
+		const note = fillNote(0, 5, 'rate_limited');
+		expect(note).toBe('AI endpoint rate limited — cards show the raw events');
 		expect(note).not.toContain('unreachable');
 	});
 

@@ -113,7 +113,11 @@ interface TranslateOptions {
   profile?: string;
 }
 
-const TRANSLATE_TIMEOUT_MS = 15_000;
+// 60s: a cold model on a shared gateway (e-infra LiteLLM loads models on
+// first use) can take 30-60s to answer at all; 15s mislabeled that honest
+// wait as a timeout — the owner's logs show every translate call dying at
+// exactly 15s while the endpoint answers 401s in 150ms.
+const TRANSLATE_TIMEOUT_MS = 60_000;
 
 type AiAttempt = {
   searches: SearchRequest[];
@@ -126,7 +130,7 @@ async function translateViaAi(
 ): Promise<AiAttempt> {
   if (!opts.provider) return { searches: [] };
   // The run's signal alone can't distinguish "cold model accepted-but-stalled";
-  // its 15s arm lets a hanging translate degrade deterministically (spec §4).
+  // its 60s arm lets a hanging translate degrade deterministically (spec §4).
   // generateRecords rethrows aborted-signal errors, so the
   const timer = AbortSignal.timeout(TRANSLATE_TIMEOUT_MS);
   const combined = opts.signal ? AbortSignal.any([opts.signal, timer]) : timer;
@@ -147,7 +151,7 @@ async function translateViaAi(
     if (!opts.signal?.aborted && timer.aborted) {
       return {
         searches: [],
-        degradation: { kind: "timeout", message: "AI did not answer in 15s" },
+        degradation: { kind: "timeout", message: "AI did not answer in 60s" },
       };
     }
     throw err;
