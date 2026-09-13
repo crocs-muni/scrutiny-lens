@@ -1,283 +1,69 @@
 /**
- * W3 · AI pipeline core — structured LLM output with honest degradation.
+ * W3 · AI pipeline core — shared types and the default transport.
  *
- * ── C1: ai v7 (7.0.79) structured-output API surface (verified against the
- *    installed `node_modules/ai/dist/index.d.ts`) ─────────────────────────────
- *   • `generateText` / `streamText`  — imported from `'ai'` (https://ai-sdk.dev).
- *   • `generateObject` / `streamObject` still exist but are marked
- *     `@deprecated Use generateText with an output setting instead.`
- *   • The recommended surface is `generateText({ ..., output })` where `output`
- *     comes from the `Output` namespace exported by `'ai'`:
- *       Output.object({ schema, name?, description? })  → schema-typed object
- *       Output.array({ element, name?, description? })  → array of elements
- *       Output.text() / Output.choice({ options }) / Output.json()
- *     With an `output` spec the SDK itself parses + validates and returns the
- *     typed value at `result.output` (throws otherwise).
- *   • Provider: `createOpenAICompatible({ baseURL, name, apiKey, fetch? })` from
- *     `'@ai-sdk/openai-compatible'`; call the instance with a model id →
- *     `LanguageModelV4` accepted by `generateText`.
- *
- *   Design note: this module deliberately drives `generateText` in plain-text
- *   mode and performs its OWN JSON + zod gate. Rationale (locked contract):
- *     - the pipeline needs EXACTLY ONE repair-retry that appends the zod error
- *       text to the prompt and then degrades honestly to an `AIResult`;
- *     - the SDK's `Output.object` mode runs its own opaque repair loop and
- *       throws typed errors instead of returning a degraded result, which is
- *       not controllable/deterministic for offline tests.
- *   The `Output.array` surface (C1) is exercised for real in
- *   `scripts/c3-array-smoke.mts` to answer "does batched structured output work
- *   on our models"; the plumbing here can adopt it by swapping the transport.
- * ─────────────────────────────────────────────────────────────────────────────
+ * The structured-output surface (issue #52) lives in records.ts: KV-format
+ * record blocks parsed per-record with honest degradation. This module keeps
+ * what every AI surface shares:
+ *   • the AIResult/AIKind honest-degradation contract,
+ *   • the LLMMessage/CallLLM seam types,
+ *   • defaultCallLLM — the one real transport (openai-compatible →
+ *     generateText → .text), which the app orchestrator and generateRecords
+ *     both start from (issue #37).
  */
 
-import { z } from 'zod';
-import { generateText } from 'ai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { getProviderConfig, NO_KEY_MESSAGE, type ProviderConfig, type ProviderOverrideInput } from './provider';
+import { generateText } from "ai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import type { ProviderConfig } from "./provider";
 
 /** Honest-degradation contract: never throw on an LLM failure. */
 export type AIResult<T> =
-	| { ok: true; result: T }
-	| { ok: false; kind: AIKind; message: string };
+  { ok: true; result: T } | { ok: false; kind: AIKind; message: string };
 
 export type AIKind =
-	| 'no_key'
-	| 'unreachable'
-	| 'schema_failure'
-	| 'timeout'
-	| 'invalid_request'
-	| 'browser_blocked';
+  | "no_key"
+  | "unreachable"
+  | "schema_failure"
+  | "timeout"
+  | "invalid_request"
+  | "browser_blocked";
 
 export interface LLMMessage {
-	role: 'user' | 'assistant';
-	content: string;
+  role: "user" | "assistant";
+  content: string;
 }
 
 export interface CallLLMArgs {
-	provider: ProviderConfig;
-	system?: string;
-	messages: LLMMessage[];
-	temperature: number;
-	signal?: AbortSignal;
+  provider: ProviderConfig;
+  system?: string;
+  messages: LLMMessage[];
+  temperature: number;
+  signal?: AbortSignal;
 }
 
 /** Injectable transport — returns the raw model text. Throws on transport failure. */
 export type CallLLM = (args: CallLLMArgs) => Promise<string>;
 
-export interface GenerateStructuredOptions<T> {
-	schema: z.ZodType<T>;
-	system?: string;
-	messages: LLMMessage[];
-	/** Default 0.2 (grill Q5: one small model, temp 0.2 for extraction). */
-	temperature?: number;
-	abortSignal?: AbortSignal;
-	/** BYOK override resolved through provider.ts (ADR-018: apiKey never echoed). */
-	provider?: ProviderOverrideInput;
-	/** Test seam; defaults to the real generateText transport. */
-	callLLM?: CallLLM;
-}
-
 /** Default transport: resolve provider → openai-compatible → generateText → .text.
- * Exported: the app-level investigation orchestrator starts runSearch with
- * exactly this transport (issue #37) — it used to be private to the
- * generateStructured seam. */
-export async function defaultCallLLM({ provider, system, messages, temperature, signal }: CallLLMArgs): Promise<string> {
-	const p = createOpenAICompatible({
-		baseURL: provider.baseUrl,
-		name: provider.name,
-		apiKey: provider.apiKey
-	});
-	const result = await generateText({
-		model: p(provider.model),
-		system,
-		messages,
-		temperature,
-		abortSignal: signal
-	});
-	return result.text;
-}
-
-function isAbort(signal: AbortSignal | undefined, err: unknown): boolean {
-	return (
-		signal?.aborted === true ||
-		(err as { name?: string } | null)?.name === 'AbortError' ||
-		(String((err as Error | null)?.message ?? '')
-			.toLowerCase()
-			.includes('abort'))
-	);
-}
-
-function kindOf(err: unknown): AIKind {
-	const status = (err as { statusCode?: number } | null)?.statusCode;
-	if (status !== undefined) {
-		return status >= 300 && status < 500 ? 'invalid_request' : 'unreachable';
-	}
-	const msg = String((err as Error | null)?.message ?? err).toLowerCase();
-	if (/timeout|timed out|etimedout|deadline/i.test(msg)) return 'timeout';
-	// A fetch that rejected without ever delivering an HTTP response surfaces
-	// as a TypeError ("Failed to fetch" / "NetworkError…" / "Load failed")
-	// with no statusCode — the browser CORS-preflight / mixed-content block
-	// signature (spec §2 never-lie). The request never reached the server, so
-	// this is NOT the same truth as a 5xx (the endpoint ANSWERED but failed):
-	// keep the lanes distinct so the UI never mislabels a browser block
-	// "AI unreachable".
-	if (
-		err instanceof TypeError &&
-		/failed to fetch|fetch failed|networkerror|load failed|mixed content/i.test(msg)
-	) {
-		return 'browser_blocked';
-	}
-	return 'unreachable';
-}
-
-type ParseOutcome<T> = { ok: true; value: T } | { ok: false; issues: string[] };
-
-/**
- * Tolerant JSON extraction for real-world OpenAI-compatible endpoints
- * (e-infra / local llama / Claude-compatible hosts often ignore `response_format`
- * and emit markdown-fenced or prose-prefixed JSON). Returns the raw substring
- * that is (or wraps) a single top-level JSON value — an object `{ … }` or an
- * array `[ … ]` — or `null` when the text carries none. Extraction only widens
- * *what* is handed to the zod gate — the schema still runs on the extracted
- * value, so genuine zod-mismatch post-extraction still fails/quarantines as
- * before (spec §2 never-lie; no coercing of malformed content).
- */
-export function extractJsonObject(text: string): string | null {
-	const trimmed = (text ?? '').trim();
-	if (trimmed === '') return null;
-
-	// Already-valid JSON wins outright.
-	try {
-		JSON.parse(trimmed);
-		return trimmed;
-	} catch {
-		// not directly parseable — tolerant extraction below
-	}
-
-	// Strip a surrounding markdown fence (```  or ```json … ```) when present.
-	const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed);
-	if (fenced) {
-		const inner = fenced[1].trim();
-		try {
-			JSON.parse(inner);
-			return inner;
-		} catch {
-			return matchTopLevelValue(inner);
-		}
-	}
-
-	// Otherwise brace/bracket-match the first top-level { … } / [ … ] span.
-	return matchTopLevelValue(trimmed);
-}
-
-/** First top-level { … } / [ … ] span, ignoring quotes (strings may hold braces/brackets). */
-function matchTopLevelValue(text: string): string | null {
-	let depth = 0;
-	let inString = false;
-	let escaped = false;
-	let start = -1;
-	for (let i = 0; i < text.length; i++) {
-		const ch = text[i];
-		if (inString) {
-			if (escaped) escaped = false;
-			else if (ch === '\\') escaped = true;
-			else if (ch === '"') inString = false;
-			continue;
-		}
-		if (ch === '"') {
-			inString = true;
-			continue;
-		}
-		if (ch === '{' || ch === '[') {
-			if (depth === 0) start = i;
-			depth++;
-		} else if (ch === '}' || ch === ']') {
-			if (start === -1) continue; // stray closing bracket in prose before any value
-			depth--;
-			if (depth === 0) return text.slice(start, i + 1);
-		}
-	}
-	return null;
-}
-
-function parseResult<T>(schema: z.ZodType<T>, text: string): ParseOutcome<T> {
-	const extracted = extractJsonObject(text);
-	if (extracted === null) {
-		return { ok: false, issues: ['response is not valid JSON'] };
-	}
-	let json: unknown;
-	try {
-		json = JSON.parse(extracted);
-	} catch (e) {
-		return { ok: false, issues: [`response is not valid JSON: ${(e as Error).message}`] };
-	}
-	const parsed = schema.safeParse(json);
-	if (!parsed.success) {
-		return {
-			ok: false,
-			issues: parsed.error.issues.map(
-				(i) => `${i.path.join('.') || '(root)'}: ${i.message}`
-			)
-		};
-	}
-	return { ok: true, value: parsed.data };
-}
-
-async function attempt<T>(
-	call: CallLLM,
-	args: CallLLMArgs
-): Promise<{ kind: 'ok'; text: string } | { kind: 'err'; kindOf: AIKind; message: string }> {
-	try {
-		const text = await call(args);
-		return { kind: 'ok', text };
-	} catch (err) {
-		if (isAbort(args.signal, err)) throw err; // propagate caller cancellation
-		return { kind: 'err', kindOf: kindOf(err), message: String((err as Error)?.message ?? err) };
-	}
-}
-
-/**
- * Generate a single structured value from a prompt, zod-gated at our boundary,
- * with exactly ONE repair-retry that appends the validation issue text, then
- * degrades honestly. Never throws on LLM failure (abort is propagated).
- */
-export async function generateStructured<T>(opts: GenerateStructuredOptions<T>): Promise<AIResult<T>> {
-	const { schema, system, messages, temperature = 0.2, abortSignal, provider, callLLM } = opts;
-
-	const provRes = getProviderConfig(provider);
-	if (!provRes.ok) {
-		return provRes.kind === 'no_key'
-			? { ok: false, kind: 'no_key', message: NO_KEY_MESSAGE }
-			: { ok: false, kind: 'invalid_request', message: provRes.issues.join('; ') };
-	}
-
-	const call = callLLM ?? defaultCallLLM;
-	const base: CallLLMArgs = { provider: provRes.config, system, messages, temperature, signal: abortSignal };
-
-	const first = await attempt(call, base);
-	if (first.kind === 'err') return { ok: false, kind: first.kindOf, message: first.message };
-
-	const parsed = parseResult(schema, first.text);
-	if (parsed.ok) return { ok: true, result: parsed.value };
-
-	// Exactly one repair retry: append the zod issue text to the prompt.
-	const retryPrompt: LLMMessage[] = [
-		...messages,
-		{
-			role: 'user',
-			content: `Your previous response failed validation:\n${parsed.issues.join('\n')}\n\nReturn JSON matching the schema.`
-		}
-	];
-
-	const second = await attempt(call, { ...base, messages: retryPrompt });
-	if (second.kind === 'err') return { ok: false, kind: second.kindOf, message: second.message };
-
-	const reparsed = parseResult(schema, second.text);
-	if (reparsed.ok) return { ok: true, result: reparsed.value };
-
-	return {
-		ok: false,
-		kind: 'schema_failure',
-		message: `Response failed schema validation after one repair. ${reparsed.issues.join(' ')}`
-	};
+ * Exported: the app-level investigation orchestrator and generateRecords
+ * (records.ts, issue #52) both start from exactly this transport (issue #37). */
+export async function defaultCallLLM({
+  provider,
+  system,
+  messages,
+  temperature,
+  signal,
+}: CallLLMArgs): Promise<string> {
+  const p = createOpenAICompatible({
+    baseURL: provider.baseUrl,
+    name: provider.name,
+    apiKey: provider.apiKey,
+  });
+  const result = await generateText({
+    model: p(provider.model),
+    system,
+    messages,
+    temperature,
+    abortSignal: signal,
+  });
+  return result.text;
 }
