@@ -273,6 +273,13 @@ function historyRows(
 	return rows;
 }
 
+/** Files rows scan ADMITTED bindings directly — deliberately NOT
+ * graph.edges (resolveGraph drops bindings whose counterparty isn't in the
+ * batch, a drawing convenience, not evidence judgment). Divergence from the
+ * card footer's "N metadata" (graph-derived, both-endpoints-present only) is
+ * intentional: a delivered binding is evidence even when its other end
+ * wasn't fetched; the footer count reads as "bound metadata in this result
+ * set", the dossier count reads as "bindings referencing this event". */
 function fileRows(subjectId: string, events: NostrEvent[], cards: ProductCard[]): FileRow[] {
 	const byId = new Map(events.map((e) => [e.id, e]));
 	const rows: FileRow[] = [];
