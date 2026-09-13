@@ -288,7 +288,7 @@ describe('429 + Retry-After', () => {
 		expect(log[1].startMs - log[0].startMs).toBeGreaterThanOrEqual(950);
 	});
 
-	it('sole retry layer: exactly maxAttempts fetches on persistent 429; kind unreachable; message carries 429 but not the key', async () => {
+	it('sole retry layer: exactly maxAttempts fetches on persistent 429; kind rate_limited; message carries 429 but not the key', async () => {
 		const { fetch: f, log } = scriptedFetch([
 			rateLimited('0'),
 			rateLimited('0'),
@@ -304,9 +304,10 @@ describe('429 + Retry-After', () => {
 		});
 		expect(res.ok).toBe(false);
 		if (!res.ok) {
-			// A 429 is a quota fact, surfaced honestly as unreachable-with-reason
-			// (spec §2), never invalid_request — and never with the key (ADR-018).
-			expect(res.kind).toBe('unreachable');
+			// A 429 is a quota fact, surfaced honestly as rate-limited-with-reason
+			// (spec §2), never conflated with a dead endpoint or an invalid
+			// request — and never with the key (ADR-018).
+			expect(res.kind).toBe('rate_limited');
 			expect(res.message).not.toContain(KEY);
 			expect(res.message).toContain('429');
 		}
