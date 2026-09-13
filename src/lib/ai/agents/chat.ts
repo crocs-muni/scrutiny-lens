@@ -1,5 +1,5 @@
 /**
- * W5 · Chat agent — grounded chat over the visible graph, REAL SSE streaming.
+ * W5 · Chat agent — grounded chat over the session's admitted events, REAL SSE streaming.
  *
  * Pipeline:
  *   1. System prompt: ground EVERY claim to a visible node with the inline
@@ -33,7 +33,7 @@ import { z } from 'zod';
 import { streamLLM } from '../gateway';
 import type { CallLLMArgs, LLMMessage } from '../output';
 import { extractedGate, type ExtractionState } from '../verifier';
-import { createCitationRegistry, type Citation } from '../citationRegistry';
+import { createCitationRegistry, type Citation, type CitationRegistry } from '../citationRegistry';
 import { bestIdentifier } from '../projector';
 import type { NostrEvent } from '../../fabric';
 import {
@@ -54,11 +54,18 @@ export interface ChatHistoryMessage {
 export interface ChatGroundOptions {
 	question: string;
 	history: ChatHistoryMessage[];
-	visibleEvents: NostrEvent[];
+	/** Grounding set: the events the chat may cite. Issue #30 / ADR 0002:
+	 * this is the session's full ADMITTED set — facet filtering must never
+	 * shrink what the chat may say (renamed from `visibleEvents`). */
+	groundingEvents: NostrEvent[];
 	rootSummary: string;
 	profile?: string;
 	provider?: ProviderOverrideInput;
 	abortSignal?: AbortSignal;
+	/** Citation registry. Pass a conversation-scoped registry so citation
+	 * numbers (and their color pairing) stay stable across turns (ADR 0003);
+	 * a fresh per-call registry is the default for one-shot callers. */
+	registry?: CitationRegistry;
 	/** Test seam — chunked raw model text. Defaults to the streamText transport. */
 	streamLLM?: StreamLLM;
 }
@@ -114,13 +121,15 @@ interface ResolvedMarker {
 const UNGROUNDED_SENTINEL = 'UNGROUNDED';
 
 const GROUNDING_INSTRUCTIONS = [
-	'You are the SCRUTINY chat agent. Answer ONLY from the visible nodes supplied in the user message — never from prior knowledge.',
+	// ADR 0002: the grounding set below is the session's admitted events, not a
+	// view-filtered subset — the wording must not resurrect "visible nodes".
+	'You are the SCRUTINY chat agent. Answer ONLY from the session events supplied in the user message — never from prior knowledge.',
 	'',
 	'Rules:',
-	'1. Ground EVERY factual claim to a visible node using the inline marker syntax: [N]{"eventId":"<event id>","quote":"<short quote>"}. N counts citations starting at 1.',
+	'1. Ground EVERY factual claim to a session event using the inline marker syntax: [N]{"eventId":"<event id>","quote":"<short quote>"}. N counts citations starting at 1.',
 	'2. The quote MUST be copied verbatim from the event content (a contiguous subset is acceptable). If you cannot quote it, do not make the claim.',
 	'3. Never fabricate event ids, identifiers, or quotes.',
-	`4. If the question cannot be answered from the visible nodes, reply with EXACTLY one line: ${UNGROUNDED_SENTINEL} {"availableContext":"<what the graph does contain>"} — no other text.`
+	`4. If the question cannot be answered from the session events, reply with EXACTLY one line: ${UNGROUNDED_SENTINEL} {"availableContext":"<what the session does contain>"} — no other text.`
 ].join('\n');
 
 /* ------------------------------------------------------------------ *
@@ -142,9 +151,9 @@ function nodeTitleOf(event: NostrEvent): string {
 
 function resolveFinal(
 	fullText: string,
-	events: NostrEvent[]
+	events: NostrEvent[],
+	registry: CitationRegistry
 ): { content: string; citations: ChatCitation[]; claimsSummary?: ClaimsSummary } {
-	const registry = createCitationRegistry();
 	const citations: ChatCitation[] = [];
 	const summary: ClaimsSummary = { total: 0, verbatim: 0, partial: 0, extrapolatory: 0 };
 	const replacements: Array<{ raw: string; replacement: string }> = [];
@@ -286,14 +295,14 @@ export function chatground(opts: ChatGroundOptions): ReadableStream<Uint8Array> 
 			const stream = opts.streamLLM ?? defaultStreamLLM;
 
 			const system = buildSystemPrompt({ profile, extra: GROUNDING_INSTRUCTIONS });
-			const nodeList = opts.visibleEvents.map((e) => ({ eventId: e.id, tags: e.tags, content: e.content }));
+			const nodeList = opts.groundingEvents.map((e) => ({ eventId: e.id, tags: e.tags, content: e.content }));
 			const messages: LLMMessage[] = [
 				...opts.history.map((h) => ({ role: h.role, content: h.content })),
 				{
 					role: 'user',
 					content: [
 						`Graph root: ${opts.rootSummary}`,
-						`Visible nodes: ${JSON.stringify(nodeList)}`,
+						`Session events: ${JSON.stringify(nodeList)}`,
 						`Question: ${opts.question}`
 					].join('\n')
 				}
@@ -335,7 +344,12 @@ export function chatground(opts: ChatGroundOptions): ReadableStream<Uint8Array> 
 				return done();
 			}
 
-			const { content, citations, claimsSummary } = resolveFinal(full, opts.visibleEvents);
+			const registry = opts.registry ?? createCitationRegistry();
+			const { content, citations, claimsSummary } = resolveFinal(
+				full,
+				opts.groundingEvents,
+				registry
+			);
 
 			controller.enqueue(
 				frame({

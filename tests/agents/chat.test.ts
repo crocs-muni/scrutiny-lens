@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { NostrEvent } from '$lib/fabric';
 import type { CallLLMArgs } from '$lib/ai/output';
 import { chatground, type StreamLLM } from '$lib/ai/agents/chat';
+import { createCitationRegistry } from '$lib/ai/citationRegistry';
 
 const PROVIDER = { baseUrl: 'https://llm.example.com/v1', model: 'test-model', apiKey: 'test-key' };
 
@@ -56,7 +57,7 @@ function baseOpts(over: Partial<Parameters<typeof chatground>[0]> = {}): Paramet
 	return {
 		question: 'Which products are affected by ROCA?',
 		history: [],
-		visibleEvents: EVENTS,
+		groundingEvents: EVENTS,
 		rootSummary: 'Infineon M7794 · ROCA exposure',
 		provider: PROVIDER,
 		...over
@@ -149,6 +150,45 @@ describe('chatground — streaming frames', () => {
 		expect(citations.map((c) => c.n)).toEqual([1, 2, 1]);
 		expect(citations.map((c) => c.colorIndex)).toEqual([0, 1, 0]);
 		expect(final.content).toBe('A [1] b [2] c [1]');
+	});
+});
+
+/* ---------- per-conversation registry (ADR 0003) ---------- */
+
+describe('chatground — conversation registry', () => {
+	// Citation numbers (and their color pairing) are pinned per conversation:
+	// a shared registry means "report 2" names the same event across every
+	// turn of the chat, which the default fresh-registry path cannot promise.
+	it('an injected registry keeps numbers stable across turns', async () => {
+		const registry = createCitationRegistry();
+		const q1 = '[1]{"eventId":"ev-prod","quote":"Infineon RSA library used in smartcards (ROCA)."}';
+		const f1 = await readFrames(
+			chatground(baseOpts({ registry, streamLLM: fakeStream([`A ${q1}`]).stream }))
+		);
+		expect((f1[f1.length - 1].citations as Array<Record<string, unknown>>)[0].n).toBe(1);
+
+		// Turn 2 cites ev-vuln first, then ev-prod again: ev-prod must keep 1,
+		// ev-vuln must get 2 — monotonic pin order, never re-numbered.
+		const q2a = '[1]{"eventId":"ev-vuln","quote":"ROCA: Return of Coppersmith Attack on RSA key generation."}';
+		const q2b = '[2]{"eventId":"ev-prod","quote":"Infineon RSA library used in smartcards (ROCA)."}';
+		const f2 = await readFrames(
+			chatground(baseOpts({ registry, streamLLM: fakeStream([`B ${q2a} and ${q2b}`]).stream }))
+		);
+		const final = f2[f2.length - 1];
+		expect(final.content).toBe('B [2] and [1]');
+		const cites = final.citations as Array<Record<string, unknown>>;
+		expect(cites.map((c) => [c.n, c.eventId])).toEqual([
+			[2, 'ev-vuln'],
+			[1, 'ev-prod']
+		]);
+		expect(registry.eventIdFor(1)).toBe('ev-prod');
+		expect(registry.eventIdFor(2)).toBe('ev-vuln');
+	});
+
+	it('without an injected registry, each call re-pins from 1 (default one-shot)', async () => {
+		const marker = '[1]{"eventId":"ev-vuln","quote":"ROCA: Return of Coppersmith Attack on RSA key generation."}';
+		const frames = await readFrames(chatground(baseOpts({ streamLLM: fakeStream([`A ${marker}`]).stream })));
+		expect((frames[frames.length - 1].citations as Array<Record<string, unknown>>)[0].n).toBe(1);
 	});
 });
 
