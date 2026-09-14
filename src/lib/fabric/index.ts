@@ -59,7 +59,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { z } from 'zod';
 import { tTags, indexerFilter, searchFilter, fullScanFilter } from '@scrutiny-fabric/core';
-import { deletionsFor, patchesReferencing } from '@scrutiny-fabric/core';
+import { bindingsReferencing, deletionsFor, patchesReferencing } from '@scrutiny-fabric/core';
 
 /** Every value of the `t` tag on the event — core's derivation, never
  * hand-rolled, per AGENTS.md's "all protocol work via @scrutiny-fabric/core". */
@@ -87,7 +87,7 @@ export { indexerFilter, searchFilter, fullScanFilter };
  * never reach them — the dossier fires these legs per subject. classifyByRole
  * accompanies them: DQ-4's role inspection (type tag AND marker) for `#e`
  * traversal results — never hand-rolled in consumers. */
-export { deletionsFor, patchesReferencing };
+export { bindingsReferencing, deletionsFor, patchesReferencing };
 export { classifyByRole } from '@scrutiny-fabric/core';
 
 /** tagValues(event, key) — every value slot of every tag with that key. The

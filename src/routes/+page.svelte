@@ -18,6 +18,7 @@
 	import ResultsEmpty from '$lib/components/ui/ResultsEmpty.svelte';
 	import ResultsError from '$lib/components/ui/ResultsError.svelte';
 	import { applyFacets, cohortLine } from '$lib/pipeline/cards';
+	import type { PipelineNotice } from '$lib/pipeline';
 	import {
 		afterSemantics,
 		iTagSelections,
@@ -207,12 +208,19 @@
 	const footerNotes = $derived(
 		degradedLegs.map((l) => `relay ${l.url} ${l.status}`)
 	);
-	const capabilityNote = $derived.by(() => {
-		const items = investigation.notices.filter((n) => n.kind === 'capability');
+	// §4 honesty lane: every notice class surfaces as ONE roll-up banner —
+	// verbatim per-notice facts live in the trace's ticks. Must be invoked
+	// from a $derived so the $state read stays tracked.
+	function noticeRollup(kind: PipelineNotice['kind'], plural: string): string {
+		const items = investigation.notices.filter((n) => n.kind === kind);
 		if (items.length === 0) return '';
 		if (items.length === 1) return items[0].message;
-		return `${items.length} relays report no or unverifiable search support — details in the trace`;
-	});
+		return `${items.length} ${plural} — details in the trace`;
+	}
+	const capabilityNote = $derived(
+		noticeRollup('capability', 'relays report no or unverifiable search support')
+	);
+	const traversalNote = $derived(noticeRollup('traversal', 'context-fetch warnings'));
 	// §4: no AI key set — everything still works; the hint belongs on the
 	// RESULTS surface too (the hero's NoKeyBanner is invisible post-submit).
 	const noKey = $derived(settings.apiKey === '' && investigation.result !== null);
@@ -335,6 +343,7 @@
 									{@render note(noKey, 'no-key', 'no AI key set — cards show raw events · set one in Settings (Ctrl+,)')}
 									{@render note(aiNote !== '', 'ai-note', aiNote)}
 									{@render note(degradedNote !== '', 'degraded', degradedNote)}
+									{@render note(traversalNote !== '', 'traversal', traversalNote)}
 									{#if investigation.result !== null}
 										<!-- header: cohort only (spec §3); centers on the same 760
 											rail as cards (scroller spans wider so its scrollbar

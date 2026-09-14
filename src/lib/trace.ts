@@ -108,7 +108,13 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 		});
 	}
 	for (const notice of notices) {
-		addTick({ text: notice.message, warn: notice.kind === 'capability' || notice.kind === 'truncated' });
+		addTick({
+			text: notice.message,
+			warn:
+				notice.kind === 'capability' ||
+				notice.kind === 'truncated' ||
+				notice.kind === 'traversal'
+		});
 	}
 	// Three rows (spec §2.1): interpret (translate) → sources (fetch) →
 	// decouple (admit/reject + descriptions fill). Status is state-derived:
