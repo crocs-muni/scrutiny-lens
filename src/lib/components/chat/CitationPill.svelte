@@ -25,9 +25,9 @@
 	let { citation, ownsCard, onOpenDossier }: Props = $props();
 
 	let pinned = $state(false);
-	let pillHover = $state(false);
-	// Transient hover-open dies with the cursor; the pin survives both flee paths.
-	let open = $derived(ownsCard && (pinned || pillHover || spotlight.has(citation.n)));
+	// Transient hover-open dies with the cursor (the spotlight carries it);
+	// the pin survives both flee paths.
+	let open = $derived(ownsCard && (pinned || spotlight.has(citation.n)));
 	let copied = $state(false);
 	/** Verified display quote — the matched span (verbatim by construction),
 	 * else the model's verbatim quote. */
@@ -52,12 +52,8 @@
 		class="cite-pill {spotlight.lit([citation.n]) ? 'spotlit' : ''}"
 		style="--cite: var(--cite-{citation.colorIndex}); --cite-tint: var(--cite-{citation.colorIndex}-tint);"
 		aria-label="Citation {citation.n}: {citation.nodeTitle ?? 'cited event'}"
-		onmouseenter={() => {
-			pillHover = true;
-			spotlight.hover([citation.n]);
-		}}
+		onmouseenter={() => spotlight.hover([citation.n])}
 		onmouseleave={() => {
-			pillHover = false;
 			if (spotlight.active.length === 1 && spotlight.has(citation.n)) spotlight.hover(null);
 		}}
 		onclick={() => (pinned = !pinned)}
