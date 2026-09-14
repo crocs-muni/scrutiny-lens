@@ -34,6 +34,7 @@
 	import '../chat/citations.css';
 	import GraphNode, { type GraphNodeData } from './GraphNode.svelte';
 	import CanvasToolbar from './CanvasToolbar.svelte';
+	import FlowActions, { type FlowViewportActions } from './FlowActions.svelte';
 	import { deriveEgo, FIT_OPTIONS } from '$lib/graph/ego';
 	import { investigation } from '$lib/investigation.svelte';
 	import { shell } from '$lib/shell.svelte';
@@ -56,6 +57,9 @@
 	let { events, cards, root, selectedEventId, onSelect, onDeselect }: Props = $props();
 
 	const nodeTypes = { scrutiny: GraphNode };
+	/** Live viewport actions, registered from inside the flow (see
+	 * FlowActions: provider-scope init binds a dead store on remount). */
+	let viewport = $state<FlowViewportActions | null>(null);
 
 	const ego = $derived.by(() => {
 		if (root === null) return { nodes: [], edges: [] };
@@ -135,7 +139,7 @@
 		class="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[14px] border border-line bg-surface"
 	>
 		<SvelteFlowProvider>
-			<CanvasToolbar />
+			<CanvasToolbar actions={viewport} />
 			<div class="min-h-0 flex-1">
 				<SvelteFlow
 					bind:nodes
@@ -153,6 +157,7 @@
 					aria-label="Session graph"
 				>
 					<Background variant={BackgroundVariant.Dots} gap={22} size={1} bgColor="var(--line-strong)" />
+					<FlowActions onReady={(a) => (viewport = a)} />
 				</SvelteFlow>
 			</div>
 		</SvelteFlowProvider>

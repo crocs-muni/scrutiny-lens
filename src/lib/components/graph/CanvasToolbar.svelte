@@ -2,10 +2,13 @@
 	/* CANVAS TOOLBAR (#29b, G1's strip): zoom in / out, fit, undo-expand
 	 * (only while the stack is non-empty — BIBLE's chip), and the
 	 * Show-deleted switch (N3: retracted nodes are hidden by default).
-	 * Lives above the flow, INSIDE the provider, because useSvelteFlow's
-	 * context reads at component init. */
+	 *
+	 * Viewport actions arrive via props from FlowActions (a child of
+	 * <SvelteFlow>) — this strip is deliberately in the provider's scope for
+	 * chrome, and a provider-scope useSvelteFlow() binds a DEAD store after
+	 * any remount (SvelteFlow hot-swaps it on mount), which is why the
+	 * hook is never called here. Actions are null for the first frame. */
 
-	import { useSvelteFlow } from '@xyflow/svelte';
 	import {
 		IconArrowBackUp,
 		IconMaximize,
@@ -14,11 +17,15 @@
 	} from '@tabler/icons-svelte';
 	import { investigation } from '$lib/investigation.svelte';
 	import { shell } from '$lib/shell.svelte';
-	import { FIT_OPTIONS } from '$lib/graph/ego';
+	import type { FlowViewportActions } from './FlowActions.svelte';
 
-	const { zoomIn, zoomOut, fitView } = useSvelteFlow();
+	interface Props {
+		actions: FlowViewportActions | null;
+	}
+	let { actions }: Props = $props();
+
 	const btn =
-		'flex h-8 w-8 items-center justify-center rounded-[7px] text-ink-2 transition-colors hover:bg-hover';
+		'flex h-8 w-8 items-center justify-center rounded-[7px] text-ink-2 transition-colors hover:bg-hover disabled:opacity-40';
 </script>
 
 <div
@@ -26,19 +33,18 @@
 	role="toolbar"
 	aria-label="Graph toolbar"
 >
-	<!-- bare calls: scaleBy's transition path (options.duration) did nothing
-	 *	 in 1.6.5 (browser-verified); the Controls plugin calls these bare too. -->
-	<button class={btn} title="Zoom in" aria-label="Zoom in" onclick={() => zoomIn()}
+	<button class={btn} title="Zoom in" aria-label="Zoom in" disabled={actions === null} onclick={() => actions?.zoomIn()}
 		><IconZoomIn size={14} /></button
 	>
-	<button class={btn} title="Zoom out" aria-label="Zoom out" onclick={() => zoomOut()}
+	<button class={btn} title="Zoom out" aria-label="Zoom out" disabled={actions === null} onclick={() => actions?.zoomOut()}
 		><IconZoomOut size={14} /></button
 	>
 	<button
 		class={btn}
 		title="Fit to view"
 		aria-label="Fit to view"
-		onclick={() => fitView(FIT_OPTIONS)}><IconMaximize size={14} /></button
+		disabled={actions === null}
+		onclick={() => actions?.fit()}><IconMaximize size={14} /></button
 	>
 	{#if investigation.expandedHubs.length > 0}
 		<button
