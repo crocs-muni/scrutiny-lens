@@ -48,6 +48,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 | AI slow (>10s batch, >30s chat) | Render whatever is ready; degrade only the unfinished items |
 | All relays dead | Error screen: per-relay status, edit list, retry. Never demo data |
 | Some relays dead | Results from the rest + corner notice |
+| Traversal context fetch (settle/dossier) some or all dead | Banner; Files counts, retraction pills may be incomplete — never the error screen |
 | Relay lacks `#i`/NIP-50 | Notice naming the relay + fallback scan used — *not* "no matches" |
 | Zero results (relays confirmed searchable) | "Nothing matched on your relays" + chips to broaden + relay-list hint |
 | Event fails signature/id check | Silently skipped + footer count "N invalid skipped" |
