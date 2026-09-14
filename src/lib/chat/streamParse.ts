@@ -15,15 +15,16 @@
  * 0003) happens elsewhere; this file only protects the live surface.
  */
 
-import { MARKER as COMPLETE_MARKER } from '$lib/ai/agents/chat';
+import { MARKER } from '$lib/ai/agents/chat';
 
 export type StreamSegment =
 	| { kind: 'prose'; text: string }
 	| { kind: 'pending'; n: number | null };
 
-/** COMPLETE_MARKER is imported from the agent (not re-declared) so the live
- * surface and the settle gate share one marker-grammar source of truth,
- * payload capture group included (standards review P2). */
+/** Same grammar as the agent's settle gate (one source of truth — standards
+ * review P2), but an INSTANCE per consumer: a shared module-level /g regex
+ * would leak lastIndex into every future exec()/test() caller. */
+const COMPLETE_MARKER = new RegExp(MARKER.source, MARKER.flags);
 
 /** A tail that could still grow into a marker: `[`, `[12`, `[1]`, `[1] `,
  * `[1] {`, `[1] {"eventId":"ev…` (partial JSON included). */
