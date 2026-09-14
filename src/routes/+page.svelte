@@ -213,6 +213,14 @@
 		if (items.length === 1) return items[0].message;
 		return `${items.length} relays report no or unverifiable search support — details in the trace`;
 	});
+	// §4 honesty lane (lens #68): a dead/truncated context fetch surfaces as
+	// one roll-up; verbatim per-leg facts live in the trace's ticks.
+	const traversalNote = $derived.by(() => {
+		const items = investigation.notices.filter((n) => n.kind === 'traversal');
+		if (items.length === 0) return '';
+		if (items.length === 1) return items[0].message;
+		return `${items.length} context-fetch warnings — details in the trace`;
+	});
 	// §4: no AI key set — everything still works; the hint belongs on the
 	// RESULTS surface too (the hero's NoKeyBanner is invisible post-submit).
 	const noKey = $derived(settings.apiKey === '' && investigation.result !== null);
@@ -335,6 +343,7 @@
 									{@render note(noKey, 'no-key', 'no AI key set — cards show raw events · set one in Settings (Ctrl+,)')}
 									{@render note(aiNote !== '', 'ai-note', aiNote)}
 									{@render note(degradedNote !== '', 'degraded', degradedNote)}
+									{@render note(traversalNote !== '', 'traversal', traversalNote)}
 									{#if investigation.result !== null}
 										<!-- header: cohort only (spec §3); centers on the same 760
 											rail as cards (scroller spans wider so its scrollbar

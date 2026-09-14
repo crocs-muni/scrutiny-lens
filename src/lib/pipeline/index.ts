@@ -30,7 +30,7 @@ import { getEvent, getEventsByTag } from '$lib/db';
 export type Phase = 'translate' | 'fetch' | 'done';
 
 export interface PipelineNotice {
-	kind: 'capability' | 'truncated' | 'invalid-skipped' | 'cache';
+	kind: 'capability' | 'truncated' | 'invalid-skipped' | 'cache' | 'traversal';
 	message: string;
 }
 

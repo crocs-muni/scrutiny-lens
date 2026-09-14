@@ -28,13 +28,20 @@ import {
   type SkeletonCard,
 } from "$lib/pipeline";
 import type { SearchRequest } from "$lib/ai/agents/query";
-import { fetchSubjectContext } from "$lib/pipeline/traversal";
-import { indexEvent } from "$lib/search";
 import {
   admitBatch,
   resolveGraph,
   type NostrEvent as FabricEvent,
 } from "$lib/fabric";
+import { indexEvent } from "$lib/search";
+import {
+  boundContextIds,
+  fetchSessionContext,
+  fetchSubjectContext,
+  fetchSubjectDeletions,
+  traversalNoticeText,
+  type SessionContextResult,
+} from "$lib/pipeline/traversal";
 import {
   assembleCards,
   computeFacets,
@@ -239,6 +246,13 @@ class Investigation {
           session.admitted,
         );
         this.facetGroups = computeFacets(session.admitted);
+        // §8.2 session-settle traversal (lens #68): fire the bindings/DQ-2
+        // legs over the final admitted set without blocking the fill. NO
+        // argument: this.result was just assigned, so reading it back hands
+        // admitContext the $state PROXY — passing the raw `session` local
+        // would fail its `this.result !== session` identity guard (Svelte 5
+        // proxies on assignment) and silently drop the whole settle pass.
+        void this.refreshSessionContext();
         if (
           provider !== undefined &&
           settings.model !== "" &&
@@ -282,6 +296,85 @@ class Investigation {
     this.controller?.abort();
   }
 
+  /** Traversal-failure visibility (lens #68, spec §4 honesty lane): the
+   * notice lands in the existing PipelineNotice surface — one roll-up per
+   * message, deduped so the trace's text-keyed ticks never collide. */
+  private noticeTraversalOnce(message: string): void {
+    if (this.notices.some((n) => n.kind === 'traversal' && n.message === message)) return;
+    this.notices.push({ kind: 'traversal', message });
+  }
+
+  /** Shared tail of every traversal leg: batch admission against the live
+   * session, append + cache write-through, honest failure notices. */
+  private async admitContext(
+    session: SearchSession,
+    fetch: (transport: Transport) => Promise<SessionContextResult>,
+  ): Promise<void> {
+    let transport: Transport | null = null;
+    try {
+      transport = createTransport({ urls: settings.relays });
+      const result = await fetch(transport);
+
+      // Session identity guard (lifecycle honesty): a late traversal must
+      // never mix into a newer run's admitted set.
+      if (this.result !== session) return;
+      const fresh = admitBatch(
+        session.admitted as unknown as FabricEvent[],
+        result.events as unknown as FabricEvent[],
+      );
+      for (const event of fresh) {
+        session.admitted.push(event);
+        // Cache write-through is deliberate (#68's repeat-query #28
+        // contract): the next search's cache-first read sees this context.
+        // Side effect, disclosed: later searches may now admit these
+        // patches/deletions/bindings at search time.
+        void indexEvent(event).catch(() => {});
+      }
+      const degraded = traversalNoticeText(result.rounds);
+      if (degraded !== undefined) this.noticeTraversalOnce(degraded);
+      if (result.capped > 0) {
+        this.noticeTraversalOnce(
+          `context fetch bounded — bindings for ${result.capped} more events not fetched`,
+        );
+      }
+    } catch (err) {
+      // Best-effort context — a traversal failure must not poison the run's
+      // painted state, but it IS reported (§4): the dossier reads emptier
+      // than the relays may hold.
+      if (this.result !== session) return;
+      const reason = err instanceof Error ? err.message : String(err);
+      this.noticeTraversalOnce(
+        `context fetch failed (${reason}) — Files counts and retraction pills may be incomplete`,
+      );
+    } finally {
+      await transport?.close();
+    }
+  }
+
+  /** §8.2 session-settle pass (lens #68): one batched traversal over the
+   * FINAL admitted set once the search lands — bindingsReferencing unioned
+   * per product/metadata id (Files rows / metadata deep-links), deletionsFor
+   * for every cached event (DQ-2 first sight), one bounded second hop for
+   * the bindings' missing endpoints. Fire-and-forget like the dossier legs:
+   * appends to session.admitted re-derive the dossier in place; facet
+   * groups/cards/graph deliberately do not re-run (§3: those are the
+   * search's shape). Settled too early to block the fill lane. */
+  async refreshSessionContext(): Promise<void> {
+    // Reads this.result (the $state proxy), never a caller's raw session
+    // object: admitContext's identity guard compares against the same
+    // field, and Svelte 5 proxies on assignment — a raw local would fail
+    // the check even for the CURRENT run.
+    const session = this.result;
+    if (session === null || session.admitted.length === 0) return;
+    await this.admitContext(session, (transport) =>
+      fetchSessionContext(
+        session.admitted as unknown as FabricEvent[],
+        settings.relays,
+        transport,
+      ),
+    );
+  }
+
   /** §8.2 dossier-context fetch (lens #68, tools #75): discovery filters can
    * never reach a chain's patches (no i tags, §8.1 step 4) or its deletions
    * (no #t, §3.2), so opening a dossier fires the traversal legs directly.
@@ -293,46 +386,27 @@ class Investigation {
    * canvas deliberately do not re-run (§3: those are the search's shape,
    * not one subject's context).
    *
-   * Failure policy: best-effort and silent today — a dead relay leaves the
-   * dossier exactly as honest as it was before the fetch, and making
-   * traversal failure/truncation VISIBLE (a §4-class surface) is deferred
-   * with the rest of #68's follow-ups (bindings legs, search-time and
-   * periodic DQ-2 polling — see pipeline/traversal.ts's own call-out). */
+   * DQ-2 periodic re-poll (owner plan on #68, 2026-09-14): the full
+   * patches/deletions traversal runs once per subject per session
+   * (contextFetched precedent); every LATER dossier open re-issues only the
+   * cheap deletion legs for the subject and its bound patches/bindings, so a
+   * mid-session retraction still lands as the drawer's retraction pill.
+   * Failures surface through the notices lane (admitContext). */
   async ensureSubjectContext(subjectId: string): Promise<void> {
     const session = this.result;
     if (session === null) return;
     if (!session.admitted.some((e) => e.id === subjectId)) return;
-    if (this.contextFetched.has(subjectId)) return;
-    this.contextFetched.add(subjectId);
-    let transport: Transport | null = null;
-    try {
-      transport = createTransport({ urls: settings.relays });
-      const fetched = await fetchSubjectContext(
-        subjectId,
-        settings.relays,
-        transport,
+    if (this.contextFetched.has(subjectId)) {
+      const contextIds = boundContextIds(session.admitted as unknown as FabricEvent[], subjectId);
+      await this.admitContext(session, (transport) =>
+        fetchSubjectDeletions(subjectId, contextIds, settings.relays, transport),
       );
-      // Session identity guard (lifecycle honesty): a late traversal must
-      // never mix into a newer run's admitted set.
-      if (this.result !== session) return;
-      const fresh = admitBatch(
-        session.admitted as unknown as FabricEvent[],
-        fetched as unknown as FabricEvent[],
-      );
-      for (const event of fresh) {
-        session.admitted.push(event);
-        // Cache write-through is deliberate (#68's repeat-query #28
-        // contract): the next search's cache-first read sees this context.
-        // Side effect, disclosed: later searches may now admit these
-        // patches/deletions at search time.
-        void indexEvent(event).catch(() => {});
-      }
-    } catch {
-      // Best-effort context — a traversal failure must not poison the
-      // run's painted state.
-    } finally {
-      await transport?.close();
+      return;
     }
+    this.contextFetched.add(subjectId);
+    await this.admitContext(session, (transport) =>
+      fetchSubjectContext(subjectId, settings.relays, transport),
+    );
   }
 
   /** Facet selection (spec §3: OR within a group, AND across groups).
