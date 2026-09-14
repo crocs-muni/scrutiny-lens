@@ -76,7 +76,16 @@ export interface SessionContextResult {
 	capped: number;
 }
 
-
+/** Union one round's events into the accumulator by id — the transport
+ * dedupes within a round; across rounds the caller must. */
+function mergeById(events: NostrEvent[], additions: NostrEvent[]): void {
+	const seen = new Set(events.map((event) => event.id));
+	for (const event of additions) {
+		if (seen.has(event.id)) continue;
+		seen.add(event.id);
+		events.push(event);
+	}
+}
 
 /** §8.2 traversal events for one subject, deduped by id. Admission stays
  * the caller's gate (the fabric seam owns protocol judgment). */
@@ -108,12 +117,7 @@ export async function fetchSubjectContext(
 	}));
 	const second = await transport.fetchRouted(roundTwo, () => {});
 	rounds.push({ label: 'traversal:round2', relays: second.relays });
-	const seen = new Set(events.map((event) => event.id));
-	for (const event of second.events) {
-		if (seen.has(event.id)) continue;
-		seen.add(event.id);
-		events.push(event);
-	}
+	mergeById(events, second.events);
 	return { events, rounds, capped: 0 };
 }
 
@@ -205,7 +209,7 @@ export async function fetchSessionContext(
 	// retrieved — polling a deletion for an event we do not hold judges
 	// nothing).
 	const pollIds = [...arrivalIds, ...taken, ...deliveredCounterparties];
-	if (taken.length === 0 && pollIds.length === 0) return { events, rounds, capped };
+	if (pollIds.length === 0) return { events, rounds, capped };
 
 	const roundTwo: FetchRoute[] = [];
 	if (taken.length > 0) {
@@ -228,12 +232,7 @@ export async function fetchSessionContext(
 
 	const second = await transport.fetchRouted(roundTwo, () => {});
 	rounds.push({ label: 'traversal:round2', relays: second.relays });
-	const seen = new Set(events.map((event) => event.id));
-	for (const event of second.events) {
-		if (seen.has(event.id)) continue;
-		seen.add(event.id);
-		events.push(event);
-	}
+	mergeById(events, second.events);
 	return { events, rounds, capped };
 }
 
@@ -246,11 +245,12 @@ export async function fetchSubjectDeletions(
 	urls: string[],
 	transport: Transport
 ): Promise<SessionContextResult> {
+	const label = 'traversal:deletions:repoll';
 	const ids = [subjectId, ...contextIds.filter((id) => id !== subjectId)];
 	const result = await transport.fetchRouted(
 		[
 			{
-				label: 'traversal:deletions:repoll',
+				label,
 				urls,
 				filters: ids.map((id) => deletionsFor(id) as Filter)
 			}
@@ -259,7 +259,7 @@ export async function fetchSubjectDeletions(
 	);
 	return {
 		events: result.events,
-		rounds: [{ label: 'traversal:deletions:repoll', relays: result.relays }],
+		rounds: [{ label, relays: result.relays }],
 		capped: 0
 	};
 }
@@ -274,18 +274,18 @@ export async function fetchSubjectDeletions(
 export function traversalNoticeText(rounds: TraversalRound[]): string | undefined {
 	// A relay that answered ok in round 1 but died in round 2 still left that
 	// round's data on the table — dead-in-ANY-round counts as skipped.
-	const deadByRelay = new Map<string, boolean>();
+	const dead = new Set<string>();
+	const covered = new Set<string>();
 	for (const round of rounds) {
 		for (const relay of round.relays) {
-			deadByRelay.set(relay.url, (deadByRelay.get(relay.url) ?? false) || relay.status !== 'ok');
+			covered.add(relay.url);
+			if (relay.status !== 'ok') dead.add(relay.url);
 		}
 	}
-	let dead = 0;
-	for (const isDead of deadByRelay.values()) if (isDead) dead += 1;
-	if (dead === 0) return undefined;
+	if (dead.size === 0) return undefined;
 	const stakes = 'Files counts and retraction pills may be incomplete';
-	if (dead === deadByRelay.size) {
+	if (dead.size === covered.size) {
 		return `context fetch failed — all relays unreachable — ${stakes}`;
 	}
-	return `context fetch skipped ${dead} of ${deadByRelay.size} relays — ${stakes}`;
+	return `context fetch skipped ${dead.size} of ${covered.size} relays — ${stakes}`;
 }
