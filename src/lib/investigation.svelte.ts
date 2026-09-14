@@ -134,9 +134,20 @@ class Investigation {
 
   /** The selected dossier subject (issue #29a, ADR 0001): store-level —
    * facet filters and view hops never clear it; it dies exactly where the
-   * investigation itself dies (start/stop/reset). No deselect gesture
-   * (ruling 10). */
+   * investigation itself dies (start/stop/reset). Deselect is canvas-only
+   * (#29b ruling 7 — see clearSelection). */
   selectedEventId = $state<string | null>(null);
+
+  /** The ego graph's fixed hub (issue #29b ruling 4): the FIRST subject
+   * opened this investigation. Later selections move the ring and the
+   * dossier, never the layout — a re-anchoring click would destroy the
+   * ring's spatial memory. Dies with the investigation like the selection. */
+  canvasRootId = $state<string | null>(null);
+
+  /** Expansion stack (issue #29b ruling 8): shadow hubs the user expanded,
+   * in order — the toolbar's undo chip pops it LIFO. Admitted-only: entries
+   * never imply a fetch. */
+  expandedHubs = $state<string[]>([]);
 
   /** Subjects whose §8.2 dossier context was fetched (or is in flight) —
    * one traversal per subject per session; dies with the session (start()
@@ -197,6 +208,8 @@ class Investigation {
     this.fillFailure = null;
     this.elapsedMs = null;
     this.selectedEventId = null;
+    this.canvasRootId = null;
+    this.expandedHubs = [];
     this.contextFetched = new Set();
     this.running = true;
     const startedAt = performance.now();
@@ -290,6 +303,32 @@ class Investigation {
     // Selection survives an abort (ruling 10): stop() freezes the run but
     // keeps what it painted, so the dossier's evidence is still intact.
     this.controller?.abort();
+  }
+
+  /** Dossier-open from any surface (card row, graph node, citation). The
+   * FIRST subject of an investigation also anchors the ego root (#29b
+   * ruling 4); later opens move ring + dossier only. */
+  selectSubject(id: string): void {
+    this.selectedEventId = id;
+    if (this.canvasRootId === null) this.canvasRootId = id;
+  }
+
+  /** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc clear the
+   * ring and return the drawer to its honest no-subject line. The ego root
+   * stays (ruling 4). The results cards' click-to-reaffirm (#29a ruling
+   * 10) is untouched — this path never runs there. */
+  clearSelection(): void {
+    this.selectedEventId = null;
+  }
+
+  /** Reveal a shadow hub's admitted neighbors (#29b ruling 8). */
+  expandHub(id: string): void {
+    if (!this.expandedHubs.includes(id)) this.expandedHubs.push(id);
+  }
+
+  /** Toolbar's undo chip — pops the LAST expansion, nothing else. */
+  undoExpandHub(): void {
+    this.expandedHubs.pop();
   }
 
   /** Traversal-failure visibility (lens #68, spec §4 honesty lane): the

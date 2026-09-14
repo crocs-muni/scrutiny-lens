@@ -27,6 +27,7 @@
 	} from '$lib/results';
 	import SidebarRecents from '$lib/components/ui/SidebarRecents.svelte';
 	import DetailDrawer from '$lib/components/shell/DetailDrawer.svelte';
+	import GraphCanvas from '$lib/components/graph/GraphCanvas.svelte';
 	import ChatColumn from '$lib/components/shell/ChatColumn.svelte';
 	import SettingsDialog from '$lib/components/shell/SettingsDialog.svelte';
 	import { chat } from '$lib/chat.svelte';
@@ -132,15 +133,35 @@
 		});
 	}
 
-	/** Card click / Files-row deep-link (BIBLE 678): select, open, land on
-	 * session. Clicking the selected card again re-affirms (ruling 10). */
+	/** Card click / graph node / Files-row deep-link (BIBLE 678): select,
+	 * open, land on session. The FIRST subject also anchors the ego root
+	 * (#29b ruling 4, inside selectSubject); clicking the selected card
+	 * again re-affirms (#29a ruling 10). */
 	function openDossier(id: string): void {
-		investigation.selectedEventId = id;
+		investigation.selectSubject(id);
 		shell.drawerOpen = true;
 		shell.view = 'session';
 		// §8.2 dossier context (#68/#75): patches and deletions are unreachable
 		// by the search's discovery filters, so the dossier fetches them on open.
 		void investigation.ensureSubjectContext(id);
+	}
+	/** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc. */
+	function clearSelection(): void {
+		investigation.clearSelection();
+	}
+	/** Esc deselect runs before the shell's Ctrl-map (ruling 7); the settings
+	 * modal's own dismissal is untouched (guarded). */
+	function onShellKeydown(event: KeyboardEvent): void {
+		if (
+			event.key === 'Escape' &&
+			shell.view === 'session' &&
+			!shell.settingsOpen &&
+			investigation.selectedEventId !== null
+		) {
+			clearSelection();
+			return;
+		}
+		handleShellKeydown(event);
 	}
 	const fetched = $derived(investigation.slices.reduce((sum, s) => sum + s.received, 0));
 	const truncated = $derived(investigation.notices.some((n) => n.kind === 'truncated'));
@@ -236,7 +257,7 @@
 	const dismiss = (key: string) => (dismissed = new Set([...dismissed, key]));
 </script>
 
-<svelte:window onkeydown={handleShellKeydown} />
+<svelte:window onkeydown={onShellKeydown} />
 
 <Tooltip.Provider delayDuration={350}>
 	<!-- inert while settings is open: keyboard focus stays inside the modal. -->
@@ -415,11 +436,22 @@
 						{/if}
 					{/key}
 				{:else}
-					<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
-						<span class="font-medium text-ink-2">{shell.session?.title}</span><br />
-						The graph canvas lands here with the product-graph step (spec §11 step 3); the
-						dossier lives in the drawer below.
-					</p>
+					<!-- Session surface (#29b): the ego canvas + drawer. The flow
+						remounts when the ROOT changes (ruling 4) so fitView frames
+						one fresh map per anchor; selection/expansion/show-deleted
+						are in-place updates. -->
+					<div class="flex min-h-0 w-full flex-1 flex-col">
+						{#key investigation.canvasRootId}
+							<GraphCanvas
+								events={investigation.result?.admitted ?? []}
+								cards={investigation.cards}
+								root={investigation.canvasRootId}
+								selectedEventId={investigation.selectedEventId}
+								onSelect={openDossier}
+								onDeselect={clearSelection}
+							/>
+						{/key}
+					</div>
 				{/if}
 			</div>
 
