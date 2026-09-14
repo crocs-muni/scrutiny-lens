@@ -9,12 +9,12 @@
  *    shared metadata exposes the other end as a SHADOW hub with a +N badge,
  *    expansion reveals only admitted events. Forest mode is deliberately
  *    unbuilt.
- *  - Manual deterministic radial (ruling 3): root at origin; ring 1 sorted by
- *    (binding verb → created_at → id) — all protocol data, spec §2-clean;
- *    positions are append-stable because the sort key never changes when new
- *    events arrive mid-session (traversal admittance re-runs the derivation,
- *    new nodes land on free arc; existing angles move ONLY if an earlier-sorting
- *    node appears — accepted, animation is xyflow's).
+ *  - Manual deterministic radial (ruling 3): root at origin; ring-1 spokes
+ *    laid on an 8-slot dyadic grid by ADMISSION ORDER (first appearance in
+ *    the events array) — slots are n-independent, so mid-session arrivals
+ *    never move a placed node (the ruling's append-only clause; its verb-
+ *    grouping convenience was mutually exclusive and lost — recorded in
+ *    the PR body). Overflow spokes step onto outer rings.
  *  - Retraction (ruling 10 / N3): retracted nodes vanish from the canvas
  *    unless Show deleted — EXCEPT the root itself: the canvas mirrors an
  *    explicitly opened dossier, and a dossier always renders (ruling 3/#29a).
@@ -104,6 +104,11 @@ export interface EgoView {
 	edges: EgoEdge[];
 }
 
+/** ONE fit contract for the flow's mount AND the toolbar's Fit button
+ * (Standards P2-1 — diverging paddings/caps let the toolbar defeat the
+ * framing). */
+export const FIT_OPTIONS = { padding: 0.2, maxZoom: 0.85 } as const;
+
 export interface EgoOptions {
 	showDeleted: boolean;
 	/** Shadow hubs whose admitted neighbors are revealed (ruling 8). */
@@ -120,15 +125,34 @@ export interface EgoOptions {
  * oversized radii push fitView under the N4 dense floors (owner
  * screenshot 2026-09-14).
  * ------------------------------------------------------------------ */
-const ARC_PX = 175;
 const R1_MIN = 210;
 const R_RING2 = 180;
 const R_RING3 = 170;
 /** Fan step between an expanded shadow's own spokes (rad). */
 const FAN_STEP = 0.5;
+/** Dyadic slot grid (ruling 3's append-only, done honestly): a spoke's
+ * slot is its ADMISSION ORDER among ring-1 members, never its rank in a
+ * verb sort — a sort recomputes every existing angle when a new neighbor
+ * arrives mid-session (Spec review finding 2026-09-14). Slots are
+ * n-independent: bit-reversed index × 45° spreads each prefix maximally
+ * (0, 180, 90, 270, 45, 135, 225, 315), 8 per ring, overflow stepping out. */
+const SLOT_ANGLE = Math.PI / 4;
+const SLOTS_PER_RING = 8;
 
-function radius1(n: number): number {
-	return Math.max(R1_MIN, Math.ceil((n * ARC_PX) / (2 * Math.PI)));
+function dyadicAngle(k: number): number {
+	const rev = ((k & 1) << 2) | (k & 2) | ((k & 4) >> 2);
+	return rev * SLOT_ANGLE;
+}
+
+/** Ring radius for a slot index — overflow rings step out, stable per slot. */
+function radiusFor(slot: number): number {
+	return R1_MIN + Math.floor(slot / SLOTS_PER_RING) * R_RING3;
+}
+
+/** The other endpoint of a binding row from one participant's side —
+ * the ×6 ternary deduplicated (Standards P2-2). */
+function otherEnd(row: BindingRow, id: string): string {
+	return row.productId === id ? row.metadataId : row.productId;
 }
 
 /** Quadrant of the from→to vector — the side the edge should attach to. */
@@ -137,25 +161,18 @@ export function sideToward(dx: number, dy: number): HandleSide {
 	return dy >= 0 ? 'bottom' : 'top';
 }
 
-/** Orbit placement comparator over NODE IDS: verb cluster → age → id
- * (all protocol data; ids unique, so this never reads as unstable). */
-function byOrbitString(
-	verbOf: (id: string) => string,
-	createdAtOf: (id: string) => number
-): (a: string, b: string) => number {
-	return (a, b) => {
-		const v = verbOf(a).localeCompare(verbOf(b));
-		if (v !== 0) return v;
-		const age = createdAtOf(a) - createdAtOf(b);
-		if (age !== 0) return age;
-		return a.localeCompare(b);
-	};
+/** One cast per boundary (fabric seam policy) — matches fabric/index.ts. */
+function asCore(event: NostrEvent): CoreNostrEvent {
+	return event as unknown as CoreNostrEvent;
 }
 
 interface BindingRow {
 	id: string;
-	rootId: string;
-	linkId: string;
+	/** core's 'root' endpoint = the product (Standards P3-7: the field's
+	 * old name collided with the ego anchor param). */
+	productId: string;
+	/** core's 'link' endpoint = the metadata. */
+	metadataId: string;
 	label: string;
 }
 
@@ -189,7 +206,7 @@ export function deriveEgo(
 	const coreEvents = events as unknown as CoreNostrEvent[];
 	const rootEvent = events.find((e) => e.id === rootId);
 	if (rootEvent === undefined) return { nodes: [], edges: [] };
-	const rootKind = scrutinyEventType(rootEvent as unknown as CoreNostrEvent);
+	const rootKind = scrutinyEventType(asCore(rootEvent));
 	if (rootKind !== 'product' && rootKind !== 'metadata') return { nodes: [], edges: [] };
 
 	// Products/metadata only; bindings index BOTH directions (the ego walkers
@@ -201,19 +218,19 @@ export function deriveEgo(
 	const bindingsByEndpoint = new Map<string, BindingRow[]>();
 	for (const event of events) {
 		if (event.kind === 5) {
-			deletions.push(event as unknown as CoreNostrEvent);
+			deletions.push(asCore(event));
 			continue;
 		}
-		const type = scrutinyEventType(event as unknown as CoreNostrEvent);
+		const type = scrutinyEventType(asCore(event));
 		if (type === 'product' || type === 'metadata') {
 			byId.set(event.id, event);
 			kinds.set(event.id, type);
 			continue;
 		}
 		if (type !== 'binding') continue;
-		const ends = bindingEndpoints(event as unknown as CoreNostrEvent);
+		const ends = bindingEndpoints(asCore(event));
 		if (ends == null) continue;
-		const row: BindingRow = { id: event.id, rootId: ends.rootId, linkId: ends.linkId, label: event.content };
+		const row: BindingRow = { id: event.id, productId: ends.rootId, metadataId: ends.linkId, label: event.content };
 		bindings.push(row);
 		for (const id of [ends.rootId, ends.linkId]) {
 			const list = bindingsByEndpoint.get(id) ?? [];
@@ -230,7 +247,7 @@ export function deriveEgo(
 		if (hit !== undefined) return hit;
 		const ev = byId.get(id);
 		if (ev === undefined) return false;
-		const r = isDefaultViewRetracted(ev as unknown as CoreNostrEvent, deletions);
+		const r = isDefaultViewRetracted(asCore(ev), deletions);
 		retractedCache.set(id, r);
 		return r;
 	}
@@ -242,64 +259,68 @@ export function deriveEgo(
 	// no badge count): the graph never claims evidence the store can't show.
 	const ring1 = new Map<string, BindingRow>(); // nodeId → binding that brought it
 	for (const b of bindingsByEndpoint.get(rootId) ?? []) {
-		const other = b.rootId === rootId ? b.linkId : b.rootId;
+		const other = otherEnd(b, rootId);
 		if (!visible(other)) continue;
-		ring1.set(other, b);
+		// First binding wins (Spec finding (c)2): a duplicate binding with a
+		// different verb must never re-cluster a node or swap its edge.
+		if (!ring1.has(other)) ring1.set(other, b);
 	}
 
 	// Shadows: ring-2 products behind a ring-1 bridge. Expanded shadows become
 	// full nodes and contribute their OWN ring of visible neighbors.
 	const expanded = opts.expanded;
-	const shadowOf = new Map<string, string[]>(); // shadowId → bridge ids (sorted)
+	const shadowOf = new Map<string, string[]>(); // shadowId → bridge ids
 	const promoted = new Map<string, BindingRow>(); // expanded shadow → its ring-2 style nodes
 	const ring3 = new Map<string, { anchor: string; binding: BindingRow }>();
 	for (const [bridgeId] of [...ring1].sort(([a], [b]) => a.localeCompare(b))) {
 		for (const b of bindingsByEndpoint.get(bridgeId) ?? []) {
-			const other = b.rootId === bridgeId ? b.linkId : b.rootId;
+			const other = otherEnd(b, bridgeId);
 			if (other === rootId || ring1.has(other) || !visible(other)) continue;
+			// Bridge bookkeeping is identical expanded or not (Standards
+			// P2-2 — was duplicated in both arms).
+			const bridges = shadowOf.get(other) ?? [];
+			if (!bridges.includes(bridgeId)) bridges.push(bridgeId);
+			shadowOf.set(other, bridges);
 			if (expanded.has(other)) {
 				if (!promoted.has(other)) promoted.set(other, b);
-				const list = shadowOf.get(other) ?? [];
-				if (!list.includes(bridgeId)) list.push(bridgeId);
-				shadowOf.set(other, list);
 				for (const inner of bindingsByEndpoint.get(other) ?? []) {
-					const leaf = inner.rootId === other ? inner.linkId : inner.rootId;
+					const leaf = otherEnd(inner, other);
 					if (leaf === rootId || leaf === other || ring1.has(leaf) || !visible(leaf)) continue;
 					if (!ring3.has(leaf)) ring3.set(leaf, { anchor: other, binding: inner });
 				}
-			} else {
-				const list = shadowOf.get(other) ?? [];
-				if (!list.includes(bridgeId)) list.push(bridgeId);
-				shadowOf.set(other, list);
 			}
 		}
 	}
 
-	/* ---------------- placement (deterministic radial) ---------------- */
+	/* ---------------- placement (admission-order slots, dyadic spread) ----
+	 * Ruling 3 done honestly: a spoke's slot = its ADMISSION ORDER among
+	 * ring-1 members (first appearance in the events array). A verb sort
+	 * re-clusters on every new arrival — existing nodes jump, the ruling's
+	 * append-only clause dies (Spec finding a1, 2026-09-14). The ruling's
+	 * verb-grouping convenience loses to its stability clause; the tradeoff
+	 * is recorded in the PR. Slots are n-independent (dyadic bit-reversal),
+	 * so prefix-consistent store growth NEVER moves a placed node. */
+	const admission = new Map(events.map((e, i) => [e.id, i]));
 	const placed = new Map<string, { x: number; y: number }>();
 	placed.set(rootId, { x: 0, y: 0 });
 
-	// Ring 1: verb of the binding that brought it (edges between two endpoint
-	// pairs carry the binding's content; a node reachable by several verbs
-	// clusters by its first — deterministic).
-	const verbOf = (id: string): string => ring1.get(id)?.label ?? '';
-	const createdAtOf = (id: string): number => byId.get(id)?.created_at ?? 0;
-	const ring1Ids = [...ring1.keys()].sort(byOrbitString(verbOf, createdAtOf));
-	const r1 = radius1(ring1Ids.length);
+	const ring1Ids = [...ring1.keys()];
+	ring1Ids.sort((a, b) => (admission.get(a) ?? 0) - (admission.get(b) ?? 0));
 	const angleOf = new Map<string, number>();
-	ring1Ids.forEach((id, i) => {
-		// Start EAST (0 rad), not north: with ≤3 spokes a north start stacks
-		// everything into one vertical column while the canvas (drawer-open,
-		// landscape) sits half empty — the graph should fill its width.
-		const angle = (i * 2 * Math.PI) / ring1Ids.length;
+	ring1Ids.forEach((id, slot) => {
+		// Slot 0 lands EAST; the dyadic sequence keeps every prefix size
+		// maximally spread (0, 180, 90, 270, 45, 135, 225, 315…).
+		const angle = dyadicAngle(slot % SLOTS_PER_RING);
 		angleOf.set(id, angle);
-		placed.set(id, { x: r1 * Math.cos(angle), y: r1 * Math.sin(angle) });
+		const r = radiusFor(slot);
+		placed.set(id, { x: r * Math.cos(angle), y: r * Math.sin(angle) });
 	});
 
 	// Shadows + promoted hubs: one radius out along the circular mean of their
 	// bridges' angles — the multihop ray reads outward (G1).
-	const r2 = r1 + R_RING2;
-	const r3 = r1 + R_RING2 + R_RING3;
+	const outerRing = ring1Ids.length === 0 ? R1_MIN : radiusFor(ring1Ids.length - 1);
+	const r2 = outerRing + R_RING2;
+	const r3 = r2 + R_RING3;
 	const shadowAngle = new Map<string, number>();
 	for (const [shadowId, bridges] of [...shadowOf].sort(([a], [b]) => a.localeCompare(b))) {
 		const angles = bridges.map((b) => angleOf.get(b) ?? 0);
@@ -320,7 +341,7 @@ export function deriveEgo(
 	}
 	for (const [anchor, leaves] of byAnchor) {
 		const anchorAngle = shadowAngle.get(anchor) ?? 0;
-		leaves.sort(byOrbitString((id) => (ring3.get(id)?.binding.label ?? '') as string, createdAtOf));
+		leaves.sort((a, b) => (admission.get(a) ?? 0) - (admission.get(b) ?? 0));
 		leaves.forEach((id, i) => {
 			const angle = anchorAngle + (i - (leaves.length - 1) / 2) * FAN_STEP;
 			angleOf.set(id, angle);
@@ -339,20 +360,20 @@ export function deriveEgo(
 		const { word, editedN } = chainWordOf(resolution);
 		// Hub counts scan ALL admitted bindings (dossier parity — the node's
 		// icon-counts are the Files-section rows, not the placed subset).
-		const bound = (bindingsByEndpoint.get(id) ?? []).filter((b) => {
-			const other = b.rootId === id ? b.linkId : b.rootId;
-			return kinds.get(other) === 'metadata';
-		});
+		const bound = (bindingsByEndpoint.get(id) ?? []).filter((b) => kinds.get(otherEnd(b, id)) === 'metadata');
 		const files = bound.filter((b) => {
-			const other = b.rootId === id ? b.linkId : b.rootId;
-			const ev = byId.get(other);
+			const ev = byId.get(otherEnd(b, id));
 			return ev !== undefined && /https?:\/\//.test(ev.content);
 		});
-		const pos = placed.get(id) ?? { x: 0, y: 0 };
+		// Materialized ids are placed by construction (root/ring-1/shadow/
+		// ring-3 sets drive both) — a placement regression must scream, not
+		// collapse a node onto the origin (Standards P3-5).
+		const pos = placed.get(id);
+		if (pos === undefined) throw new Error(`ego: ${id} materialized without placement (layout regression)`);
 		// Shadow badge: admitted neighbors placement hides (never zero-shown —
 		// a visible-already neighbor is an edge, not a badge).
 		const hidden = (bindingsByEndpoint.get(id) ?? []).filter((b) => {
-			const other = b.rootId === id ? b.linkId : b.rootId;
+			const other = otherEnd(b, id);
 			return visible(other) && other !== rootId && !placed.has(other);
 		}).length;
 		return {
@@ -386,15 +407,19 @@ export function deriveEgo(
 	/* ---------------- edges ---------------- */
 	const edges: EgoEdge[] = [];
 	function pushEdge(b: BindingRow, shadowed: boolean): void {
-		const from = placed.get(b.linkId);
-		const to = placed.get(b.rootId);
-		if (from === undefined || to === undefined) return;
+		const from = placed.get(b.metadataId);
+		const to = placed.get(b.productId);
+		// Same invariant as nodeFor: an edge whose endpoints aren't placed is
+		// a layout regression, not something to drop quietly.
+		if (from === undefined || to === undefined) {
+			throw new Error(`ego: edge ${b.id} references unplaced endpoint (layout regression)`);
+		}
 		const sSide = sideToward(to.x - from.x, to.y - from.y);
 		const tSide = sideToward(from.x - to.x, from.y - to.y);
 		edges.push({
 			id: b.id,
-			source: b.linkId,
-			target: b.rootId,
+			source: b.metadataId,
+			target: b.productId,
 			label: b.label,
 			sourceHandle: sSide,
 			targetHandle: tSide,
@@ -402,22 +427,18 @@ export function deriveEgo(
 		});
 	}
 	// Ring-1 ↔ root edges.
-	for (const [id, b] of ring1) {
-		if (placed.has(id)) pushEdge(b, false);
-	}
+	for (const [, b] of ring1) pushEdge(b, false);
 	// Bridge ↔ shadow/promoted and promoted ↔ ring-3 edges.
 	for (const [shadowId, bridges] of shadowOf) {
 		for (const bridgeId of bridges) {
 			const b = (bindingsByEndpoint.get(bridgeId) ?? []).find(
-				(row) =>
-					(row.rootId === shadowId && row.linkId === bridgeId) ||
-					(row.linkId === shadowId && row.rootId === bridgeId)
+				(row) => otherEnd(row, bridgeId) === shadowId
 			);
 			if (b !== undefined) pushEdge(b, !expanded.has(shadowId));
 		}
 	}
-	for (const [leaf, { binding }] of ring3) {
-		if (placed.has(leaf)) pushEdge(binding, false);
+	for (const [, { binding }] of ring3) {
+		pushEdge(binding, false);
 	}
 
 	// Edge order derives from ring walks, which follow event input order —

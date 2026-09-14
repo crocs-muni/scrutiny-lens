@@ -14,6 +14,7 @@
 	} from '@tabler/icons-svelte';
 	import { investigation } from '$lib/investigation.svelte';
 	import { shell } from '$lib/shell.svelte';
+	import { FIT_OPTIONS } from '$lib/graph/ego';
 
 	const { zoomIn, zoomOut, fitView } = useSvelteFlow();
 	const btn =
@@ -37,7 +38,7 @@
 		class={btn}
 		title="Fit to view"
 		aria-label="Fit to view"
-		onclick={() => fitView({ padding: 0.25 })}><IconMaximize size={14} /></button
+		onclick={() => fitView(FIT_OPTIONS)}><IconMaximize size={14} /></button
 	>
 	{#if investigation.expandedHubs.length > 0}
 		<button

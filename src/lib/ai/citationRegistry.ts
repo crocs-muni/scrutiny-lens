@@ -19,6 +19,11 @@
 import { extractedGate } from './verifier';
 import type { NostrEvent } from '../fabric';
 
+/** Palette slots (citations.css --cite-0..5) — the pairing hue cycles over
+ * N modulo this. Single source: chat.ts computes colorIndex from it, the
+ * canvas ring derives slot the same way (#29b). */
+export const CITATION_SLOTS = 6;
+
 /** Canonical Citation (docs/types.md §Citation), plus the resolver's matched span. */
 export interface Citation {
 	/** Stable citation number (per-session). */

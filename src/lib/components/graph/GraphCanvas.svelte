@@ -34,10 +34,11 @@
 	import '../chat/citations.css';
 	import GraphNode, { type GraphNodeData } from './GraphNode.svelte';
 	import CanvasToolbar from './CanvasToolbar.svelte';
-	import { deriveEgo } from '$lib/graph/ego';
+	import { deriveEgo, FIT_OPTIONS } from '$lib/graph/ego';
 	import { investigation } from '$lib/investigation.svelte';
 	import { shell } from '$lib/shell.svelte';
 	import { chat } from '$lib/chat.svelte';
+	import { CITATION_SLOTS } from '$lib/ai/citationRegistry';
 	import { spotlight } from '../chat/spotlight.svelte';
 	import type { NostrEvent } from '$lib/fabric';
 	import type { ProductCard } from '$lib/pipeline/cards';
@@ -79,7 +80,7 @@
 		const lit = new Set(spotlight.active);
 		nodes = ego.nodes.map((n) => {
 			const citeN = chat.registry.numberFor(n.id) ?? null;
-			const citationIndex = citeN === null ? null : (citeN - 1) % 6;
+			const citationIndex = citeN === null ? null : (citeN - 1) % CITATION_SLOTS;
 			return {
 				id: n.id,
 				type: 'scrutiny',
@@ -141,7 +142,7 @@
 					bind:edges
 					{nodeTypes}
 					fitView
-					fitViewOptions={{ padding: 0.2, maxZoom: 0.85 }}
+					fitViewOptions={FIT_OPTIONS}
 					minZoom={0.25}
 					maxZoom={1.6}
 					nodesDraggable={false}

@@ -68,15 +68,17 @@
 	const mapping = $derived(iconForNode(data.kind, data.event));
 	const IconComponent = $derived(mapping.icon);
 
-	/** Ring stack: citation tint outside, accent inside (both optional), then
-	 * the neutral card shadow last so it always grounds the box. */
+	/** Ring stack: box-shadow paints FIRST-listed TOPMOST — accent leads
+	 * (selection must survive citation-lit, Spec finding a2), the cite hue
+	 * trails at 6px so it shows only as the outer band; the tint halo is for
+	 * the unselected lit case (accent covers it otherwise). */
 	const ringStyle = $derived.by(() => {
 		const layers: string[] = [];
-		if (data.citationLit && data.citationIndex !== null) {
-			layers.push(`0 0 0 6px var(--cite-${data.citationIndex})`);
-			layers.push(`0 0 0 4px var(--cite-${data.citationIndex}-tint)`);
-		}
 		if (data.selected) layers.push('0 0 0 4px var(--accent-tint)');
+		if (data.citationLit && data.citationIndex !== null) {
+			if (!data.selected) layers.push(`0 0 0 4px var(--cite-${data.citationIndex}-tint)`);
+			layers.push(`0 0 0 6px var(--cite-${data.citationIndex})`);
+		}
 		layers.push('0 1px 2px rgba(15, 23, 42, 0.05)');
 		return layers.join(', ');
 	});

@@ -88,23 +88,38 @@ function baseFixture() {
 }
 
 describe('deriveEgo — placement', () => {
-	it('centers the root; spokes orbit on verb→time→id order at deterministic positions', () => {
+	it('centers the root; spokes take dyadic slots by ADMISSION ORDER (ruling 3 append-only)', () => {
 		const f = baseFixture();
 		const events = [f.root, f.m1, f.m3, f.p2, f.m2, f.b1, f.b3, f.b2, f.b4];
 		const opts = { showDeleted: false, expanded: NO_EXPAND, cards: [] };
 		const a = deriveEgo(events, 'root', opts);
-		const b = deriveEgo([...events].reverse(), 'root', opts);
-		// Input order must not influence the view (determinism).
-		expect(a).toEqual(b);
 
 		const root = a.nodes.find((n) => n.id === 'root');
 		expect(root).toMatchObject({ role: 'root', kind: 'product', x: 0, y: 0 });
-		// verbs sort 'affected by' before 'documents' → m1 takes index 0
-		// (start EAST so the spread fills the wide canvas).
+		// m1 admitted before m3 → slot 0 (EAST), slot 1 (WEST).
 		const m1 = a.nodes.find((n) => n.id === 'm1');
 		const m3 = a.nodes.find((n) => n.id === 'm3');
 		expect(m1?.x).toBeCloseTo(210, 5);
 		expect(m1?.y).toBeCloseTo(0, 5);
+		expect(m3?.x).toBeCloseTo(-210, 5);
+		expect(m3?.y).toBeCloseTo(0, 5);
+	});
+
+	it('prefix growth never moves a placed node — the append-only contract', () => {
+		const f = baseFixture();
+		const before = [f.root, f.m1, f.b1];
+		const after = [f.root, f.m1, f.b1, f.m3, f.b3];
+		const opts = { showDeleted: false, expanded: NO_EXPAND, cards: [] };
+		const young = deriveEgo(before, 'root', opts);
+		const grown = deriveEgo(after, 'root', opts);
+		for (const shared of young.nodes) {
+			const same = grown.nodes.find((n) => n.id === shared.id);
+			expect(same, `${shared.id} moved when the store grew`).toMatchObject({ x: shared.x, y: shared.y });
+		}
+		// …and identical input is fully deterministic (pure module).
+		expect(deriveEgo(after, 'root', opts)).toEqual(grown);
+		// Slot 1's dyadic angle is π (west) — the sequence bit-reverses.
+		const m3 = grown.nodes.find((n) => n.id === 'm3');
 		expect(m3?.x).toBeCloseTo(-210, 5);
 		expect(m3?.y).toBeCloseTo(0, 5);
 	});
