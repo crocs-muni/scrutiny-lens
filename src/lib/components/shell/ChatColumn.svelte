@@ -139,7 +139,21 @@
 			{/if}
 
 			{#if chat.error !== null}
+				<!-- ruling 6: the failed turn's question and partial prose stay
+					on screen; only the error itself is a bubble. -->
+				<div class="user-bubble">{chat.error.question}</div>
 				<div class="error-bubble">
+					{#if chat.error.partial !== undefined}
+						<!-- ruling 6: the stream's partial prose stays on screen —
+							plain text with markers suppressed, never styled as trust
+							(verification never ran on it). -->
+						<p class="error-partial">
+							{parseChatStream(chat.error.partial, () => null)
+								.filter((s) => s.kind === 'prose')
+								.map((s) => s.text)
+								.join('')}
+						</p>
+					{/if}
 					<p class="error-line">Answer failed: {chat.error.message}</p>
 					<button class="error-retry" onclick={() => onSend(chat.error!.question)}>retry</button>
 				</div>
@@ -268,6 +282,13 @@
 		color: var(--ink);
 		margin: 0;
 		overflow-wrap: anywhere;
+	}
+	.error-partial {
+		font-size: 12px;
+		color: var(--ink-3);
+		margin: 0;
+		overflow-wrap: anywhere;
+		white-space: pre-wrap;
 	}
 	.error-retry {
 		align-self: flex-start;

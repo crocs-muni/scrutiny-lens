@@ -21,6 +21,7 @@ import {
 	loadSettings,
 	putChatMessage,
 	putChatPins,
+	putChatTurn,
 	putSession,
 	saveInterpretation,
 	saveSettings,
@@ -232,6 +233,19 @@ describe('chat persistence (issue #30, v5)', () => {
 		expect(await getChatPins('s1')).toBeNull();
 		expect((await dumpAllForTests()).chatMessages).toEqual([]);
 		expect((await dumpAllForTests()).chatPins).toEqual([]);
+	});
+
+	it('putChatTurn lands question, answer and pins atomically (ADR 0003)', async () => {
+		await putChatTurn({
+			sessionId: 's1',
+			messages: [
+				msg({ id: 'u1', role: 'user', createdAt: 100, content: 'q' }),
+				msg({ id: 'a1', role: 'assistant', createdAt: 101, content: 'a [1]' })
+			],
+			pins: ['ev1', 'ev2']
+		});
+		expect((await listChatMessages('s1')).map((m) => m.id)).toEqual(['u1', 'a1']);
+		expect((await getChatPins('s1'))?.pins).toEqual(['ev1', 'ev2']);
 	});
 });
 

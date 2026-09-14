@@ -140,6 +140,20 @@ describe('chat store — honest failures', () => {
 		await expect(listChatMessages('s1')).resolves.toEqual([]);
 	});
 
+	it('provider failure mid-stream keeps the partial prose (ruling 6) but persists nothing', async () => {
+		await chat.send('q', ctx({
+			streamLLM: async function* () {
+				yield 'The answer was forming [1]{"eventId":"e';
+				throw new Error('HTTP 502');
+			}
+		}));
+		// The stream's partial prose survives on screen, raw-marker tail
+		// included — the UI suppresses markers when rendering it; the trust
+		// gates (pill/underline) never touch unverified prose. Nothing persists.
+		expect(chat.error?.partial).toBe('The answer was forming [1]{"eventId":"e');
+		await expect(listChatMessages('s1')).resolves.toEqual([]);
+	});
+
 	it('abort persists nothing: no question, no partial answer', async () => {
 		let release: (() => void) | undefined;
 		const gated = new Promise<void>((res) => (release = res));

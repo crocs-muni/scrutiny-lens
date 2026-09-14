@@ -366,6 +366,28 @@ export async function putChatMessage(msg: PersistedChatMessage): Promise<void> {
 	}, undefined);
 }
 
+/** One settled chat turn: question + answer + the citation pin order, in a
+ * single transaction (ADR 0003's record semantics). Independent puts left a
+ * quota/crash window where a question could persist without its answer (or
+ * numbering without pins — silently breaking per-conversation stability on
+ * reload). The transcript never holds a partial turn. */
+export async function putChatTurn(turn: {
+	sessionId: string;
+	messages: PersistedChatMessage[];
+	pins: string[];
+}): Promise<void> {
+	await attempt(async (d) => {
+		const tx = d.transaction(['chatMessages', 'chatPins'], 'readwrite');
+		for (const msg of turn.messages) {
+			await tx.objectStore('chatMessages').put(normalize(msg));
+		}
+		await tx.objectStore('chatPins').put(
+			normalize({ sessionId: turn.sessionId, pins: turn.pins })
+		);
+		await tx.done;
+	}, undefined);
+}
+
 /** A session's chat, OLDEST first. The sessionId index SCOPES the walk; it
  * does not order it (IDB returns same-key rows in primary-key order), so
  * chronological order is the JS sort, not the cursor's. */

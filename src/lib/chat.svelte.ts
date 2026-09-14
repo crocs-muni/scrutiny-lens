@@ -24,8 +24,7 @@ import type { ProviderOverrideInput } from '$lib/ai/provider';
 import {
 	getChatPins,
 	listChatMessages,
-	putChatMessage,
-	putChatPins,
+	putChatTurn,
 	type PersistedChatCitation,
 	type PersistedChatMessage
 } from '$lib/db';
@@ -41,10 +40,14 @@ interface LiveTurn {
 	raw: string;
 }
 
-/** A settled transport failure (ADR 0003: never persisted). */
+/** A settled transport failure (ADR 0003: never persisted). `partial` is
+ * the raw streamed-so-far text — ruling 6: partial prose stays on screen
+ * after a provider failure, marker-suppressed and unstyled (no shimmer, no
+ * pill: verification never ran, so nothing may hint at trust). */
 export interface ChatError {
 	question: string;
 	message: string;
+	partial?: string;
 }
 
 export interface SendContext {
@@ -212,7 +215,11 @@ class Chat {
 					continue;
 				}
 				if (f.type === 'error') {
-					this.error = { question: trimmed, message: String(f.message) };
+					this.error = {
+						question: trimmed,
+						message: String(f.message),
+						...(live.raw !== '' ? { partial: live.raw } : {})
+					};
 					continue;
 				}
 				// final — settle, scrub, persist (user + answer together so a
@@ -256,22 +263,28 @@ class Chat {
 				}
 				this.messages = [...this.messages, userMessage, assistant];
 				this.unseen = true;
-				// Settle must MEAN durable (ADR 0003's record semantics): a
-				// hydrate racing an in-flight put would otherwise read a
-				// transcript missing the turn we just rendered. attempt()
-				// still degrades a hard IDB failure to memory-only.
-				await Promise.all([
-					putChatMessage(userMessage),
-					putChatMessage(assistant),
-					putChatPins({ sessionId, pins: this.pins() })
-				]);
+				// Settle must MEAN durable AND atomic (ADR 0003's record
+				// semantics): question, answer and pins land in one
+				// transaction — a quota/crash between separate puts would
+				// leave a transcript with an orphaned question or pins that
+				// renumber the past. attempt() still degrades a hard IDB
+				// failure to memory-only.
+				await putChatTurn({
+					sessionId,
+					messages: [userMessage, assistant],
+					pins: this.pins()
+				});
 			}
 		} catch (err) {
 			if (controller.signal.aborted || (err as { name?: string } | null)?.name === 'AbortError') {
 				// Intentional disconnect — the live turn dies quietly (ADR 0003:
 				// aborted turns persist nothing).
 			} else {
-				this.error = { question: trimmed, message: String((err as Error)?.message ?? err) };
+				this.error = {
+					question: trimmed,
+					message: String((err as Error)?.message ?? err),
+					...(live.raw !== '' ? { partial: live.raw } : {})
+				};
 			}
 		} finally {
 			if (this.abortCtl === controller) this.abortCtl = undefined;
