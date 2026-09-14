@@ -114,15 +114,18 @@ export interface EgoOptions {
 
 /* ------------------------------------------------------------------ *
  * Layout constants — the radial grammar (ruling 3).
- * Ring 1 needs ≥280px arc per spoke (hub width 250 + air); ring radius
- * grows with n instead of crowding.
+ * Ring 1 needs enough arc per spoke that cards don't touch (hub width
+ * 250 + air); ring radius grows with n instead of crowding. Sized so a
+ * 1-hub + ≤6-spoke ego fits a drawer-open canvas near tier-full zoom:
+ * oversized radii push fitView under the N4 dense floors (owner
+ * screenshot 2026-09-14).
  * ------------------------------------------------------------------ */
-const ARC_PX = 280;
-const R1_MIN = 300;
-const R_RING2 = 260;
-const R_RING3 = 230;
+const ARC_PX = 175;
+const R1_MIN = 210;
+const R_RING2 = 180;
+const R_RING3 = 170;
 /** Fan step between an expanded shadow's own spokes (rad). */
-const FAN_STEP = 0.55;
+const FAN_STEP = 0.5;
 
 function radius1(n: number): number {
 	return Math.max(R1_MIN, Math.ceil((n * ARC_PX) / (2 * Math.PI)));
@@ -285,7 +288,10 @@ export function deriveEgo(
 	const r1 = radius1(ring1Ids.length);
 	const angleOf = new Map<string, number>();
 	ring1Ids.forEach((id, i) => {
-		const angle = -Math.PI / 2 + (i * 2 * Math.PI) / ring1Ids.length;
+		// Start EAST (0 rad), not north: with ≤3 spokes a north start stacks
+		// everything into one vertical column while the canvas (drawer-open,
+		// landscape) sits half empty — the graph should fill its width.
+		const angle = (i * 2 * Math.PI) / ring1Ids.length;
 		angleOf.set(id, angle);
 		placed.set(id, { x: r1 * Math.cos(angle), y: r1 * Math.sin(angle) });
 	});

@@ -99,13 +99,14 @@ describe('deriveEgo — placement', () => {
 
 		const root = a.nodes.find((n) => n.id === 'root');
 		expect(root).toMatchObject({ role: 'root', kind: 'product', x: 0, y: 0 });
-		// verbs sort 'affected by' before 'documents' → m1 takes index 0 (−π/2).
+		// verbs sort 'affected by' before 'documents' → m1 takes index 0
+		// (start EAST so the spread fills the wide canvas).
 		const m1 = a.nodes.find((n) => n.id === 'm1');
 		const m3 = a.nodes.find((n) => n.id === 'm3');
-		expect(m1?.x).toBeCloseTo(0, 5);
-		expect(m1?.y).toBeCloseTo(-300, 5);
-		expect(m3?.x).toBeCloseTo(0, 5);
-		expect(m3?.y).toBeCloseTo(300, 5);
+		expect(m1?.x).toBeCloseTo(210, 5);
+		expect(m1?.y).toBeCloseTo(0, 5);
+		expect(m3?.x).toBeCloseTo(-210, 5);
+		expect(m3?.y).toBeCloseTo(0, 5);
 	});
 
 	it('routes edges Metadata → Product with the verb label and facing handles', () => {
@@ -114,9 +115,9 @@ describe('deriveEgo — placement', () => {
 		expect(view.edges).toHaveLength(1);
 		const edge = view.edges[0];
 		expect(edge).toMatchObject({ source: 'm1', target: 'root', label: 'affected by', shadowed: false });
-		// m1 sits above the root → the edge leaves m1's bottom, enters root's top.
-		expect(edge.sourceHandle).toBe('bottom');
-		expect(edge.targetHandle).toBe('top');
+		// m1 sits east of the root → the edge leaves m1's left, enters root's right.
+		expect(edge.sourceHandle).toBe('left');
+		expect(edge.targetHandle).toBe('right');
 		expect(sideToward(0, 5)).toBe('bottom');
 		expect(sideToward(0, -5)).toBe('top');
 		expect(sideToward(9, 1)).toBe('right');
@@ -162,9 +163,9 @@ describe('deriveEgo — shadows and expansion (ruling 8)', () => {
 		const m2 = view.nodes.find((n) => n.id === 'm2');
 		expect(m2).toBeDefined();
 		expect(m2?.role).toBe('spoke');
-		// Fan placement continues outward along the bridge ray (−π/2 here).
-		expect(m2!.x).toBeCloseTo(0, 5);
-		expect(m2!.y).toBeCloseTo(-(300 + 260 + 230), 5);
+		// Fan placement continues outward along the bridge ray (east here).
+		expect(m2!.x).toBeCloseTo(210 + 180 + 170, 5);
+		expect(m2!.y).toBeCloseTo(0, 5);
 		const leaf = view.edges.find((e) => e.id === 'b4');
 		expect(leaf).toMatchObject({ source: 'm2', target: 'p2', shadowed: false });
 	});

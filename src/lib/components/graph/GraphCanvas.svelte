@@ -113,10 +113,10 @@
 			style: e.shadowed
 				? 'stroke: var(--orange); stroke-dasharray: 4 5; stroke-width: 1.8;'
 				: 'stroke: var(--line-strong); stroke-width: 1.8;',
-			labelStyle: `font-family: var(--font-mono-face); font-size: 10px; fill: ${e.shadowed ? 'var(--orange)' : 'var(--ink-2)'};`,
-			labelBgStyle: 'fill: var(--surface); fill-opacity: 0.9;',
-			labelBgPadding: [3, 2] as [number, number],
-			labelBgBorderRadius: 4
+			// Halo, not a chip: a fill-rect labelBgStyle reads as an unthemed
+			// white bar (owner report 2026-09-14); paint-order stroke keeps
+			// the verb legible on the dots at every zoom.
+			labelStyle: `font-family: var(--font-mono-face); font-size: 10px; fill: ${e.shadowed ? 'var(--orange)' : 'var(--ink-2)'}; paint-order: stroke; stroke: var(--canvas); stroke-width: 4px;`
 		}));
 	});
 </script>
@@ -141,7 +141,7 @@
 					bind:edges
 					{nodeTypes}
 					fitView
-					fitViewOptions={{ padding: 0.25 }}
+					fitViewOptions={{ padding: 0.2, maxZoom: 0.85 }}
 					minZoom={0.25}
 					maxZoom={1.6}
 					nodesDraggable={false}
