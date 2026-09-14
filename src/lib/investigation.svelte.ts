@@ -246,12 +246,8 @@ class Investigation {
           session.admitted,
         );
         this.facetGroups = computeFacets(session.admitted);
-        // §8.2 session-settle traversal (lens #68): fire the bindings/DQ-2
-        // legs over the final admitted set without blocking the fill. NO
-        // argument: this.result was just assigned, so reading it back hands
-        // admitContext the $state PROXY — passing the raw `session` local
-        // would fail its `this.result !== session` identity guard (Svelte 5
-        // proxies on assignment) and silently drop the whole settle pass.
+        // §8.2 settle traversal (lens #68), fire-and-forget. Parameterless
+        // on purpose — refreshSessionContext documents the $state proxy trap.
         void this.refreshSessionContext();
         if (
           provider !== undefined &&
