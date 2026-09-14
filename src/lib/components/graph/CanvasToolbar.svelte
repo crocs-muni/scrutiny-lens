@@ -25,17 +25,19 @@
 	role="toolbar"
 	aria-label="Graph toolbar"
 >
-	<button class={btn} title="Zoom in" aria-label="Zoom in" onclick={() => zoomIn({ duration: 120 })}
+	<!-- bare calls: scaleBy's transition path (options.duration) did nothing
+	 *	 in 1.6.5 (browser-verified); the Controls plugin calls these bare too. -->
+	<button class={btn} title="Zoom in" aria-label="Zoom in" onclick={() => zoomIn()}
 		><IconZoomIn size={14} /></button
 	>
-	<button class={btn} title="Zoom out" aria-label="Zoom out" onclick={() => zoomOut({ duration: 120 })}
+	<button class={btn} title="Zoom out" aria-label="Zoom out" onclick={() => zoomOut()}
 		><IconZoomOut size={14} /></button
 	>
 	<button
 		class={btn}
 		title="Fit to view"
 		aria-label="Fit to view"
-		onclick={() => fitView({ padding: 0.25, duration: 150 })}><IconMaximize size={14} /></button
+		onclick={() => fitView({ padding: 0.25 })}><IconMaximize size={14} /></button
 	>
 	{#if investigation.expandedHubs.length > 0}
 		<button

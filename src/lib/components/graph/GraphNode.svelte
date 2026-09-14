@@ -191,7 +191,9 @@
 		<div
 			class="mt-2 flex items-center gap-2.5 border-t border-line/60 pt-1.5 font-mono text-[10.5px] text-ink-2"
 		>
-			<span class="flex items-center gap-1"><IconClock size={11} stroke-width={2} />{formatRel(data.createdAt)}</span
+			<!-- event created_at is SECONDS; formatRel speaks ms (drawer/card
+				convention, same conversion). -->
+			<span class="flex items-center gap-1"><IconClock size={11} stroke-width={2} />{formatRel(data.createdAt * 1000)}</span
 			>
 			{#each footerBits as bit (bit.text)}
 				<span class={bit.warn ? 'font-medium text-[var(--orange)]' : ''}>{bit.text}</span>
