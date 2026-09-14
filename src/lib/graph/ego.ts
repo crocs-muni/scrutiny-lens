@@ -359,8 +359,11 @@ export function deriveEgo(
 		const resolution = resolve(id, coreEvents);
 		const { word, editedN } = chainWordOf(resolution);
 		// Hub counts scan ALL admitted bindings (dossier parity — the node's
-		// icon-counts are the Files-section rows, not the placed subset).
-		const bound = (bindingsByEndpoint.get(id) ?? []).filter((b) => kinds.get(otherEnd(b, id)) === 'metadata');
+		// icon-counts are the Files-section rows, not the placed subset). No
+		// counterparty-kind filter: bindings link product↔metadata by
+		// protocol, so for a metadata ego root the counted rows are its bound
+		// products — the same rows its dossier Files section renders.
+		const bound = bindingsByEndpoint.get(id) ?? [];
 		const files = bound.filter((b) => {
 			const ev = byId.get(otherEnd(b, id));
 			return ev !== undefined && /https?:\/\//.test(ev.content);

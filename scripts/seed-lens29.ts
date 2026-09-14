@@ -165,8 +165,20 @@ try {
 	const acked = results.filter((r) => r.status === 'fulfilled').length;
 	console.log(`acknowledged ${acked}/${events.length}`);
 
+	// The fixture has exactly 7 i-tagged events (products ×4, metadata ×3);
+	// bindings/patches/deletions carry no i tags by design (§8.1 — traversal
+	// fetches them). Anything else means a polluted store — a timed-out
+	// publish CAN be a stored one; reset the container and reseed ONCE.
+	await new Promise((r) => setTimeout(r, 1500)); // let the store flush
+	const EXPECTED = 7;
 	const back = await pool.querySync([RELAY], { kinds: [1], '#i': [TAG] });
-	console.log(`relay now serves ${back.length} kind-1 events for i=${TAG}`);
+	console.log(`relay now serves ${back.length}/${EXPECTED} kind-1 events for i=${TAG}`);
+	if (back.length !== EXPECTED) {
+		console.error(
+			'✗ polluted or partial store — docker rm -f lens-relay, fresh run, ONE seed pass'
+		);
+		process.exit(1);
+	}
 	console.log(`root hub: ${pA.id}`);
 	console.log(`search ${TAG} in the app → click the Infineon card`);
 } finally {

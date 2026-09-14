@@ -85,12 +85,13 @@
 
 	const expandable = $derived(data.role === 'shadow' && data.badge !== null);
 
-	/** Time footer pieces (mono, machine-made — §9 writing rule). */
+	/** Time footer pieces (mono, machine-made — §9 writing rule). Hues are
+	 * boarded: the retracted word is N3's RED, chain words stay amber. */
 	const footerBits = $derived.by(() => {
-		const bits: { text: string; warn: boolean }[] = [];
-		if (data.retracted) bits.push({ text: 'retracted', warn: true });
-		if (data.editedN > 0) bits.push({ text: `edited ×${data.editedN}`, warn: false });
-		if (data.chainWord !== null) bits.push({ text: data.chainWord, warn: true });
+		const bits: { text: string; tone: 'red' | 'amber' | null }[] = [];
+		if (data.retracted) bits.push({ text: 'retracted', tone: 'red' });
+		if (data.editedN > 0) bits.push({ text: `edited ×${data.editedN}`, tone: null });
+		if (data.chainWord !== null) bits.push({ text: data.chainWord, tone: 'amber' });
 		return bits;
 	});
 
@@ -198,7 +199,13 @@
 			<span class="flex items-center gap-1"><IconClock size={11} stroke-width={2} />{formatRel(data.createdAt * 1000)}</span
 			>
 			{#each footerBits as bit (bit.text)}
-				<span class={bit.warn ? 'font-medium text-[var(--orange)]' : ''}>{bit.text}</span>
+				<span
+					class={bit.tone === 'amber'
+						? 'font-medium text-[var(--orange)]'
+						: bit.tone === 'red'
+							? 'font-medium text-[var(--red)]'
+							: ''}>{bit.text}</span
+				>
 			{/each}
 			{#if data.kind === 'product'}
 				<span class="ml-auto flex items-center gap-1" title="bound metadata"

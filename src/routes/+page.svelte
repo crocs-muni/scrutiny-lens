@@ -90,6 +90,15 @@
 			: !viewEvents.some((e) => e.id === id);
 	});
 
+	// Session-surface honesty gate (#29b): the canvas AND the drawer derive
+	// from the LIVE investigation store. Reopening an older session while a
+	// run lives in memory must not paint that other run's evidence under
+	// this session's title — the same identity rule the chat's grounding
+	// gate holds (ADR 0002); older sessions replay in a future slice.
+	const sessionOwnsRun = $derived(
+		investigation.sessionId === shell.session?.id && investigation.result !== null
+	);
+
 	// — Chat lifecycle (issue #30) —
 	// Session-following hydration; both directions route through the store so
 	// an in-flight stream is guaranteed aborted (spec §8 "abort on
@@ -436,26 +445,32 @@
 						{/if}
 					{/key}
 				{:else}
-					<!-- Session surface (#29b): the ego canvas + drawer. The flow
-						remounts when the ROOT changes (ruling 4) so fitView frames
-						one fresh map per anchor; selection/expansion/show-deleted
-						are in-place updates. -->
-					<div class="flex min-h-0 w-full flex-1 flex-col">
-						{#key investigation.canvasRootId}
-							<GraphCanvas
-								events={investigation.result?.admitted ?? []}
-								cards={investigation.cards}
-								root={investigation.canvasRootId}
-								selectedEventId={investigation.selectedEventId}
-								onSelect={openDossier}
-								onDeselect={clearSelection}
-							/>
-						{/key}
-					</div>
+					<!-- Session surface (#29b): the ego canvas + drawer, gated on
+						session identity — a foreign live run's evidence never paints
+						under this session's title. -->
+					{#if sessionOwnsRun}
+						<div class="flex min-h-0 w-full flex-1 flex-col">
+							{#key investigation.canvasRootId}
+								<GraphCanvas
+									events={investigation.result?.admitted ?? []}
+									cards={investigation.cards}
+									root={investigation.canvasRootId}
+									selectedEventId={investigation.selectedEventId}
+									onSelect={openDossier}
+									onDeselect={clearSelection}
+								/>
+							{/key}
+						</div>
+					{:else}
+						<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
+							This session's evidence isn't in memory — older sessions aren't replayable
+							yet. Run a new search to bring it back.
+						</p>
+					{/if}
 				{/if}
 			</div>
 
-			{#if shell.view === 'session'}
+			{#if shell.view === 'session' && sessionOwnsRun}
 				<DetailDrawer
 					open={shell.drawerOpen}
 					height={Math.min(shell.drawerHeight, drawerMax)}

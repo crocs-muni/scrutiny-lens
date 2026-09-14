@@ -191,8 +191,10 @@ describe('deriveEgo — shadows and expansion (ruling 8)', () => {
 		const view = deriveEgo([f.root, f.m1, f.b1, ghost], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
 		expect(view.nodes.map((n) => n.id)).toEqual(['root', 'm1']);
 		expect(view.edges).toHaveLength(1);
-		// Hub counts are dossier-parity: admitted bindings only, ghost excluded.
-		expect(view.nodes[0]).toMatchObject({ boundMetadata: 1 });
+		// Hub counts are dossier-parity (dossier.ts fileRows): "bindings
+		// referencing this event" — the ghost row counts there (it renders as
+		// a bare mono id), so it counts here too.
+		expect(view.nodes[0]).toMatchObject({ boundMetadata: 2 });
 	});
 });
 
@@ -308,5 +310,19 @@ describe('deriveEgo — node voice', () => {
 		expect(view.nodes.find((n) => n.id === 'root')).toMatchObject({ boundMetadata: 2, files: 1 });
 		// p2 binds m1 (URL-bearing) and m2: dossier-parity files count is 1.
 		expect(view.nodes.find((n) => n.id === 'p2')).toMatchObject({ boundMetadata: 2, files: 1 });
+	});
+
+	it('a metadata ego root counts its bound PRODUCTS (dossier Files parity)', () => {
+		const f = baseFixture();
+		// m1 as the hub: counterparties are root and p2 — both counted, no
+		// metadata-kind self-filter (a metadata root's dossier Files shows
+		// exactly these rows).
+		const view = deriveEgo([f.root, f.m1, f.p2, f.b1, f.b2], 'm1', {
+			showDeleted: false,
+			expanded: NO_EXPAND,
+			cards: []
+		});
+		const hub = view.nodes.find((n) => n.id === 'm1');
+		expect(hub).toMatchObject({ boundMetadata: 2, kind: 'metadata', role: 'root' });
 	});
 });
