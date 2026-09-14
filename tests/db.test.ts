@@ -9,17 +9,23 @@ import {
 	clearAllLocalData,
 	deleteSession,
 	dumpAllForTests,
+	getChatPins,
 	getEventsByTag,
 	getInterpretation,
 	initPersistence,
 	isPersistent,
+	listChatMessages,
 	listEvents,
 	listSessions,
 	loadDeadLetters,
 	loadSettings,
+	putChatMessage,
+	putChatPins,
+	putChatTurn,
 	putSession,
 	saveInterpretation,
 	saveSettings,
+	type PersistedChatMessage,
 	type PersistedSettings
 } from '$lib/db';
 import { clearDeadLetters, deadLetters, hydrateDeadLetters, writeDeadLetter } from '$lib/ai/deadLetter';
@@ -134,6 +140,112 @@ describe('sessions store', () => {
 		await putSession({ id: 's1', title: 'one', createdAt: 100, unseen: true });
 		await putSession({ id: 's1', title: 'one', createdAt: 100 });
 		expect(await listSessions()).toEqual([{ id: 's1', title: 'one', createdAt: 100 }]);
+	});
+});
+
+describe('chat persistence (issue #30, v5)', () => {
+	/** Settled frames only — 'error' is transient transport state and never
+	 * persists (ADR 0003: pending/aborted persist nothing). */
+	const msg = (m: Partial<PersistedChatMessage> & { id: string }): PersistedChatMessage => ({
+		sessionId: 's1',
+		role: 'assistant',
+		content: 'answer',
+		kind: 'answer',
+		createdAt: 0,
+		...m
+	});
+
+	it('round-trips messages per session, oldest first', async () => {
+		await putChatMessage(msg({ id: 'm1', createdAt: 300, content: 'third' }));
+		await putChatMessage(msg({ id: 'm2', createdAt: 100, content: 'first' }));
+		await putChatMessage(msg({ id: 'm3', createdAt: 200, content: 'second' }));
+		const rows = await listChatMessages('s1');
+		expect(rows.map((m) => m.id)).toEqual(['m2', 'm3', 'm1']);
+		expect(rows.map((m) => m.content)).toEqual(['first', 'second', 'third']);
+	});
+
+	it('isolates messages across sessions', async () => {
+		await putChatMessage(msg({ id: 'a1', sessionId: 'sa', content: 'A' }));
+		await putChatMessage(msg({ id: 'b1', sessionId: 'sb', content: 'B' }));
+		expect((await listChatMessages('sa')).map((m) => m.id)).toEqual(['a1']);
+		expect((await listChatMessages('sb')).map((m) => m.id)).toEqual(['b1']);
+		expect(await listChatMessages('sc')).toEqual([]);
+	});
+
+	it('persists the full citation shape — pinned number, quote, color pairing (ADR 0003)', async () => {
+		const m = msg({
+			id: 'c1',
+			content: 'See [2] for that.',
+			citations: [
+				{
+					n: 2,
+					eventId: 'evt2',
+					quote: 'the quote',
+					span: '1:0-1:10',
+					nodeTitle: 'Node',
+					colorIndex: 3
+				}
+			],
+			claimsSummary: { total: 1, verbatim: 1, partial: 0, extrapolatory: 0 }
+		});
+		await putChatMessage(m);
+		_closeForTests(); // simulated reload: read back from IDB, not module state
+		await initPersistence();
+		expect(await listChatMessages('s1')).toEqual([m]);
+	});
+
+	it('round-trips the citation-number registry (ADR 0003: pins survive reload)', async () => {
+		await putChatPins({ sessionId: 's1', pins: ['evt2', 'evt1'] });
+		_closeForTests();
+		await initPersistence();
+		expect(await getChatPins('s1')).toEqual({ sessionId: 's1', pins: ['evt2', 'evt1'] });
+		expect(await getChatPins('nope')).toBeNull();
+	});
+
+	it('cascade-deletes messages and pins with the session (and still removes the row)', async () => {
+		await putSession({ id: 's1', title: 'one', createdAt: 100 });
+		await putChatMessage(msg({ id: 'm1', createdAt: 100 }));
+		await putChatPins({ sessionId: 's1', pins: ['evt1'] });
+		await deleteSession('s1');
+		expect(await listSessions()).toEqual([]);
+		expect(await listChatMessages('s1')).toEqual([]);
+		expect(await getChatPins('s1')).toBeNull();
+	});
+
+	it('on delete, leaves OTHER sessions’ messages and pins untouched', async () => {
+		await putSession({ id: 'sa', title: 'a', createdAt: 100 });
+		await putSession({ id: 'sb', title: 'b', createdAt: 200 });
+		await putChatMessage(msg({ id: 'a1', sessionId: 'sa' }));
+		await putChatMessage(msg({ id: 'b1', sessionId: 'sb' }));
+		await putChatPins({ sessionId: 'sb', pins: ['evt1'] });
+		await deleteSession('sa');
+		expect((await listChatMessages('sb')).map((m) => m.id)).toEqual(['b1']);
+		expect(await getChatPins('sb')).toEqual({ sessionId: 'sb', pins: ['evt1'] });
+		expect((await listSessions()).map((s) => s.id)).toEqual(['sb']);
+	});
+
+	it('clearAllLocalData wipes the chat stores too (store list comes from the live schema)', async () => {
+		await putSession({ id: 's1', title: 'one', createdAt: 100 });
+		await putChatMessage(msg({ id: 'm1' }));
+		await putChatPins({ sessionId: 's1', pins: ['evt1'] });
+		await clearAllLocalData();
+		expect(await listChatMessages('s1')).toEqual([]);
+		expect(await getChatPins('s1')).toBeNull();
+		expect((await dumpAllForTests()).chatMessages).toEqual([]);
+		expect((await dumpAllForTests()).chatPins).toEqual([]);
+	});
+
+	it('putChatTurn lands question, answer and pins atomically (ADR 0003)', async () => {
+		await putChatTurn({
+			sessionId: 's1',
+			messages: [
+				msg({ id: 'u1', role: 'user', createdAt: 100, content: 'q' }),
+				msg({ id: 'a1', role: 'assistant', createdAt: 101, content: 'a [1]' })
+			],
+			pins: ['ev1', 'ev2']
+		});
+		expect((await listChatMessages('s1')).map((m) => m.id)).toEqual(['u1', 'a1']);
+		expect((await getChatPins('s1'))?.pins).toEqual(['ev1', 'ev2']);
 	});
 });
 

@@ -1,0 +1,38 @@
+/* Citation pairing palette (issue #30, ruling 4) — six hues, one per
+ * colorIndex ((n-1) % 6). App-owned: tokens.css is vendored canon and must
+ * stay identical, so chat carries its own tokens. Every surface of citation
+ * N pairs on these: claim underline, pill, source chip, spotlight fill —
+ * later the canvas ring (#29b).
+ *
+ * Hue choices deliberately avoid the semantic ramps (red/orange = retracted
+ * & warning, green = success): pairing is identity, not judgement. */
+
+:root {
+	--cite-0: oklch(0.556 0.187 255);
+	--cite-0-tint: oklch(0.955 0.022 255);
+	--cite-1: oklch(0.53 0.16 295);
+	--cite-1-tint: oklch(0.955 0.024 295);
+	--cite-2: oklch(0.545 0.13 195);
+	--cite-2-tint: oklch(0.955 0.02 195);
+	--cite-3: oklch(0.565 0.15 152);
+	--cite-3-tint: oklch(0.955 0.022 152);
+	--cite-4: oklch(0.53 0.17 340);
+	--cite-4-tint: oklch(0.955 0.024 340);
+	--cite-5: oklch(0.545 0.14 90);
+	--cite-5-tint: oklch(0.955 0.022 90);
+}
+
+.dark {
+	--cite-0: oklch(0.788 0.113 250);
+	--cite-0-tint: oklch(0.788 0.113 250 / 0.16);
+	--cite-1: oklch(0.8 0.12 295);
+	--cite-1-tint: oklch(0.8 0.12 295 / 0.16);
+	--cite-2: oklch(0.8 0.105 195);
+	--cite-2-tint: oklch(0.8 0.105 195 / 0.16);
+	--cite-3: oklch(0.8 0.125 152);
+	--cite-3-tint: oklch(0.8 0.125 152 / 0.16);
+	--cite-4: oklch(0.8 0.13 340);
+	--cite-4-tint: oklch(0.8 0.13 340 / 0.16);
+	--cite-5: oklch(0.82 0.13 90);
+	--cite-5-tint: oklch(0.82 0.13 90 / 0.16);
+}

@@ -28,8 +28,11 @@
 	import DetailDrawer from '$lib/components/shell/DetailDrawer.svelte';
 	import ChatColumn from '$lib/components/shell/ChatColumn.svelte';
 	import SettingsDialog from '$lib/components/shell/SettingsDialog.svelte';
+	import { chat } from '$lib/chat.svelte';
+	import type { ProviderOverrideInput } from '$lib/ai/provider';
 
 	let centerHeight = $state(0);
+
 	// The drawer may grow until the canvas keeps a usable strip.
 	const drawerMax = $derived(Math.max(240, centerHeight - 120));
 
@@ -84,6 +87,49 @@
 			? !viewCards.some((c) => c.id === id)
 			: !viewEvents.some((e) => e.id === id);
 	});
+
+	// — Chat lifecycle (issue #30) —
+	// Session-following hydration; both directions route through the store so
+	// an in-flight stream is guaranteed aborted (spec §8 "abort on
+	// navigation away"): a session switch aborts inside hydrate(), closing
+	// the session (or going home) aborts inside reset().
+	$effect(() => {
+		const id = shell.session?.id;
+		if (id !== undefined) void chat.hydrate(id);
+		else chat.reset();
+	});
+	// The unread dot clears when the column is actually visible.
+	$effect(() => {
+		if (shell.chatOpen) chat.unseen = false;
+	});
+	// Asking needs THE OPEN SESSION's admitted set in memory (ADR 0002
+	// grounding set) — sessionIdentity matters: an old session reopened while
+	// a different run is live must never cite that run's events.
+	const chatGrounded = $derived(
+		investigation.sessionId === shell.session?.id &&
+			(investigation.result?.admitted.length ?? 0) > 0
+	);
+	/** BYOK (spec §6): memory-only key, passed straight through. */
+	const chatProvider = $derived.by((): ProviderOverrideInput | undefined =>
+		settings.apiKey === ''
+			? undefined
+			: {
+					baseUrl: settings.endpoint,
+					model: settings.model,
+					apiKey: settings.apiKey
+				}
+	);
+	function askChat(question: string): void {
+		// Same identity gate as chatGrounded — the composer disables first,
+		// but the send closure must not trust the UI.
+		const events =
+			investigation.sessionId === shell.session?.id ? (investigation.result?.admitted ?? []) : [];
+		void chat.send(question, {
+			events,
+			rootSummary: shell.session?.title ?? '',
+			provider: chatProvider
+		});
+	}
 
 	/** Card click / Files-row deep-link (BIBLE 678): select, open, land on
 	 * session. Clicking the selected card again re-affirms (ruling 10). */
@@ -384,7 +430,14 @@
 		</div>
 
 		{#if shell.view === 'session'}
-			<ChatColumn collapsed={!shell.chatOpen} onToggle={() => shell.toggleChat()} />
+			<ChatColumn
+				collapsed={!shell.chatOpen}
+				onToggle={() => shell.toggleChat()}
+				unread={chat.unseen}
+				grounded={chatGrounded}
+				onSend={askChat}
+				onOpenDossier={openDossier}
+			/>
 		{/if}
 	</div>
 
