@@ -51,7 +51,7 @@
 	<Popover.Trigger
 		class="cite-pill {spotlight.lit([citation.n]) ? 'spotlit' : ''}"
 		style="--cite: var(--cite-{citation.colorIndex}); --cite-tint: var(--cite-{citation.colorIndex}-tint);"
-		aria-label="Citation {citation.n}: {citation.nodeTitle ?? 'source event'}"
+		aria-label="Citation {citation.n}: {citation.nodeTitle ?? 'cited event'}"
 		onmouseenter={() => {
 			pillHover = true;
 			spotlight.hover([citation.n]);
@@ -76,7 +76,7 @@
 			>
 				<div class="cite-card-head">
 					<span class="cite-card-num">{citation.n}</span>
-					<span class="cite-card-title">{citation.nodeTitle ?? 'Source event'}</span>
+					<span class="cite-card-title">{citation.nodeTitle ?? 'Cited event'}</span>
 				</div>
 				<blockquote class="cite-quote">“{quote}”</blockquote>
 				<div class="cite-card-actions">

@@ -44,8 +44,9 @@ export function scrubAnswer<T extends ScrubCitation>(
 	const failed = new Set(citations.filter((c) => !c.verified).map((c) => c.n));
 	// Only markers PROVEN failed vanish — with one adjacent space so no
 	// orphan whitespace remains. Everything else (verified citations, bare
-	// [N] with no citation record) is literal text.
-	const text = content.replace(/ ?\[(\d+)\]/g, (raw, nRaw: string) =>
+	// [N] with no citation record) is literal text. Regex derived from
+	// CANON_MARKER so the token grammar lives in exactly one place.
+	const text = content.replace(new RegExp(` ?${CANON_MARKER.source}`, 'g'), (raw, nRaw: string) =>
 		failed.has(Number(nRaw)) ? '' : raw
 	);
 	return { content: text, citations: citations.filter((c) => c.verified) };

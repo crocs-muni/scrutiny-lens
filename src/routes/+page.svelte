@@ -95,7 +95,7 @@
 	// the session (or going home) aborts inside reset().
 	$effect(() => {
 		const id = shell.session?.id;
-		if (id !== undefined && id !== null) void chat.hydrate(id);
+		if (id !== undefined) void chat.hydrate(id);
 		else chat.reset();
 	});
 	// The unread dot clears when the column is actually visible.

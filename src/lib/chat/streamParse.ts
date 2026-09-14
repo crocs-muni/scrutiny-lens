@@ -15,13 +15,15 @@
  * 0003) happens elsewhere; this file only protects the live surface.
  */
 
+import { MARKER as COMPLETE_MARKER } from '$lib/ai/agents/chat';
+
 export type StreamSegment =
 	| { kind: 'prose'; text: string }
 	| { kind: 'pending'; n: number | null };
 
-/** Syntactically COMPLETE marker — brace content must be one flat object
- * (no nested braces), exactly the agent's MARKER grammar. */
-const COMPLETE_MARKER = /\[(\d+)\]\s*\{([^{}]*)\}/g;
+/** COMPLETE_MARKER is imported from the agent (not re-declared) so the live
+ * surface and the settle gate share one marker-grammar source of truth,
+ * payload capture group included (standards review P2). */
 
 /** A tail that could still grow into a marker: `[`, `[12`, `[1]`, `[1] `,
  * `[1] {`, `[1] {"eventId":"ev…` (partial JSON included). */

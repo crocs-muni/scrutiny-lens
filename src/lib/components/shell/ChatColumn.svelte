@@ -230,6 +230,10 @@
 		font-size: 13px;
 		color: var(--ink-2);
 		overflow-wrap: anywhere;
+		/* marked-inline keeps raw newlines in the text; pre-wrap keeps the
+		 * model's paragraph breaks visible instead of collapsing them into
+		 * one run-on line. */
+		white-space: pre-wrap;
 	}
 
 	.ungrounded {

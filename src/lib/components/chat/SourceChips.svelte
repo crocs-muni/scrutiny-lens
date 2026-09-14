@@ -24,7 +24,7 @@
 </script>
 
 {#if unique.length > 0}
-	<div class="chips" aria-label="Sources">
+	<div class="chips" aria-label="Citations">
 		{#each unique as citation (citation.n)}
 			<button
 				class="chip"
@@ -33,10 +33,10 @@
 				onmouseenter={() => spotlight.hover([citation.n])}
 				onmouseleave={() => spotlight.hover(null)}
 				onclick={() => onOpenDossier(citation.eventId)}
-				aria-label="Source {citation.n}: {citation.nodeTitle ?? 'open dossier'}"
+				aria-label="Citation {citation.n}: {citation.nodeTitle ?? 'open dossier'}"
 			>
 				<span class="chip-n">{citation.n}</span>
-				<span class="chip-title">{citation.nodeTitle ?? 'Source'}</span>
+				<span class="chip-title">{citation.nodeTitle ?? 'Cited event'}</span>
 			</button>
 		{/each}
 	</div>

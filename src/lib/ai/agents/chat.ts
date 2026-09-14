@@ -100,8 +100,12 @@ function frame(payload: unknown): Uint8Array {
  * Marker protocol
  * ------------------------------------------------------------------ */
 
-/** `[N]{"eventId":"…","quote":"…"}` — one JSON object, no nested braces. */
-const MARKER = /\[(\d+)\]\s*\{([^{}]*)\}/g;
+/** `[N]{"eventId":"…","quote":"…"}` — one JSON object, no nested braces.
+ * Single owner of the raw marker grammar: the live stream parser
+ * ($lib/chat/streamParse) re-exports and matches against THIS so the
+ * pending-shimmer surface and the settle gate can never silently diverge
+ * (standards review P2). */
+export const MARKER = /\[(\d+)\]\s*\{([^{}]*)\}/g;
 
 const markerPayloadSchema = z.object({
 	eventId: z.string().min(1),
