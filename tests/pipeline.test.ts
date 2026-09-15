@@ -218,6 +218,29 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 		)).toBe(true);
 	});
 
+	it('the degrade notice names the reason, never the key (§2 honesty, ADR-018)', async () => {
+		const transport = new FakeTransport({ 'wss://a': { events: [] } });
+		const secret = 'sk-never-surface-this-998';
+		// config-shape failure: empty model string fails override validation
+		// BEFORE any network — the notice must still carry the zod issue
+		// (proves the honest-reason lane exists and stays key-free).
+		const session = await runSearch({
+			question: 'ROCA chips',
+			relays: ['wss://a'],
+			provider: { ...PROVIDER, apiKey: secret, model: '  ' },
+			callLLM: llmPlan('[]'),
+			transport,
+			admit: () => ({ ok: true })
+		});
+		const notice = session.notices.find(
+			(n) => n.kind === 'capability' && n.message.includes('AI translate degraded')
+		);
+		expect(notice?.message).toContain('invalid_request');
+		expect(notice?.message).toContain('model');
+		expect(notice?.message).not.toContain(secret);
+		expect(notice?.message.length).toBeLessThanOrEqual(250);
+	});
+
 	it('the fallback notice reaches subscribers exactly once (incremental emit + final flush dedupe)', async () => {
 		// §4: the translate fallback is emitted as it's produced so the live
 		// trace shows it early. The final flush must not re-ship it — a
