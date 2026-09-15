@@ -200,7 +200,7 @@ export interface FillCardsOptions {
    * transport; schema_failure → the endpoint answered but output didn't
    * conform). Lets the UI state the truth instead of guessing from
    * interpreted===0 (spec §2 never-lie on the AI lane). */
-  onFailure?: (kind: AIKind) => void;
+  onFailure?: (kind: AIKind, message?: string) => void;
 }
 
 import { clip } from '$lib/text';
@@ -304,8 +304,9 @@ export async function fillCards(
   } else {
     // Never-lie: surface WHY the fill failed so the banner distinguishes a
     // dead endpoint (unreachable/timeout) from one that answered but whose
-    // output didn't conform (schema_failure).
-    opts.onFailure?.(result.kind);
+    // output didn't conform (schema_failure). The message rides along so
+    // the surface can name the concrete reason, not just the class.
+    opts.onFailure?.(result.kind, result.message);
   }
 
   return cards.map((card, i) => {

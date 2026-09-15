@@ -120,6 +120,11 @@ class Investigation {
    * results banner say why cards aren't interpreted — a dead endpoint vs one
    * that answered but whose output didn't conform (spec §2 never-lie). */
   fillFailure = $state<AIKind | null>(null);
+  /** Concrete reason for the fill-lane failure (provider-validation issues,
+   * error text): clipped at set-time, never the key (ADR-018 lane at
+   * provider.ts). The banner appends this so a bare kind can't hide the
+   * cause (PR #50's incident: "(unreachable)" told you nothing). */
+  fillErrorMessage = $state<string | null>(null);
   result = $state<SearchSession | null>(null);
   /** Settled failure (never a deliberate abort); the §4 error surfaces
    * (#38) render from this. */
@@ -209,6 +214,7 @@ class Investigation {
     this.pending = new Set();
     this.fillStats = { interpreted: 0, total: 0 };
     this.fillFailure = null;
+    this.fillErrorMessage = null;
     this.elapsedMs = null;
     this.selectedEventId = null;
     this.graphSubjectId = null;
@@ -718,13 +724,9 @@ clearFacets(): void {
             // rate_limited (it answered 429, asking us to slow down) both
             // prove the endpoint was REACHABLE — sticky, so a later
             // transport failure on another lane can't overwrite that truth
-            // (spec §2 never-lie).
-            onFailure: (kind) => {
-              this.fillFailure =
-                this.fillFailure === "schema_failure" ||
-                this.fillFailure === "rate_limited"
-                  ? this.fillFailure
-                  : kind;
+            // (spec §2 never-lie). recordFillFailure pins the pairing.
+            onFailure: (kind, message) => {
+              recordFillFailure(this, kind, message);
             },
           });
         } catch {
@@ -800,6 +802,7 @@ export function resetInvestigation(): void {
   investigation.pending = new Set();
   investigation.fillStats = { interpreted: 0, total: 0 };
   investigation.fillFailure = null;
+  investigation.fillErrorMessage = null;
   investigation.selectedEventId = null;
   investigation.contextFetched = new Set();
   investigation._resetNodeFill();
@@ -817,17 +820,36 @@ export function resetInvestigation(): void {
  * owner's incident the endpoint WAS reachable), and a browser block must not
  * claim the AI is down.
  */
+/** Fill-failure recording rule, exported for the ordering pin: schema_failure
+ * and rate_limited are sticky — a later transport error can't overwrite "the
+ * AI was reachable" (spec §2 never-lie). The message obeys the same priority:
+ * only the WINNING kind may pair its reason, else the banner could show an
+ * unreachable-flavored message under a schema_failure/rate_limited kind. */
+export function recordFillFailure(
+  target: Pick<Investigation, "fillFailure" | "fillErrorMessage">,
+  kind: AIKind,
+  message?: string,
+): void {
+  if (target.fillFailure === "schema_failure" || target.fillFailure === "rate_limited") return;
+  target.fillFailure = kind;
+  if (typeof message === "string") {
+    target.fillErrorMessage = message.length > 140 ? message.slice(0, 139) + "…" : message;
+  }
+}
+
 export function fillNote(
   interpreted: number,
   total: number,
   failure: AIKind | null,
+  message: string | null = null,
 ): string {
   if (total <= 0 || interpreted >= total) return "";
   if (interpreted > 0) {
     return `AI slow — ${interpreted} of ${total} cards interpreted · uninterpreted cards show the raw events`;
   }
+  const reason = message === null || message === "" ? "" : ` (${message})`;
   if (failure === "schema_failure") {
-    return "AI output didn't conform — cards show the raw events";
+    return `AI output didn't conform${reason} — cards show the raw events`;
   }
   if (failure === "rate_limited") {
     return "AI endpoint rate limited — cards show the raw events";
@@ -835,5 +857,5 @@ export function fillNote(
   if (failure === "browser_blocked") {
     return "AI endpoint blocked by the browser (CORS or mixed content) — cards show the raw events";
   }
-  return "AI unreachable — cards show the raw events";
+  return `AI unreachable${reason} — cards show the raw events`;
 }

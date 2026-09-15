@@ -214,7 +214,8 @@
 			? fillNote(
 					investigation.fillStats.interpreted,
 					investigation.fillStats.total,
-					investigation.fillFailure
+					investigation.fillFailure,
+					investigation.fillErrorMessage
 				)
 			: ''
 	);
