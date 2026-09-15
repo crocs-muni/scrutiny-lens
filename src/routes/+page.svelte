@@ -27,6 +27,7 @@
 	} from '$lib/results';
 	import SidebarRecents from '$lib/components/ui/SidebarRecents.svelte';
 	import DetailDrawer from '$lib/components/shell/DetailDrawer.svelte';
+	import GraphCanvas from '$lib/components/graph/GraphCanvas.svelte';
 	import ChatColumn from '$lib/components/shell/ChatColumn.svelte';
 	import SettingsDialog from '$lib/components/shell/SettingsDialog.svelte';
 	import { chat } from '$lib/chat.svelte';
@@ -89,6 +90,15 @@
 			: !viewEvents.some((e) => e.id === id);
 	});
 
+	// Session-surface honesty gate (#29b): the canvas AND the drawer derive
+	// from the LIVE investigation store. Reopening an older session while a
+	// run lives in memory must not paint that other run's evidence under
+	// this session's title — the same identity rule the chat's grounding
+	// gate holds (ADR 0002); older sessions replay in a future slice.
+	const sessionOwnsRun = $derived(
+		investigation.sessionId === shell.session?.id && investigation.result !== null
+	);
+
 	// — Chat lifecycle (issue #30) —
 	// Session-following hydration; both directions route through the store so
 	// an in-flight stream is guaranteed aborted (spec §8 "abort on
@@ -132,15 +142,35 @@
 		});
 	}
 
-	/** Card click / Files-row deep-link (BIBLE 678): select, open, land on
-	 * session. Clicking the selected card again re-affirms (ruling 10). */
+	/** Card click / graph node / Files-row deep-link (BIBLE 678): select,
+	 * open, land on session. The FIRST subject also anchors the graph
+	 * subject (#29b ruling 4, inside selectSubject); clicking the selected
+	 * card again re-affirms (#29a ruling 10). */
 	function openDossier(id: string): void {
-		investigation.selectedEventId = id;
+		investigation.selectSubject(id);
 		shell.drawerOpen = true;
 		shell.view = 'session';
 		// §8.2 dossier context (#68/#75): patches and deletions are unreachable
 		// by the search's discovery filters, so the dossier fetches them on open.
 		void investigation.ensureSubjectContext(id);
+	}
+	/** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc. */
+	function clearSelection(): void {
+		investigation.clearSelection();
+	}
+	/** Esc deselect runs before the shell's Ctrl-map (ruling 7); the settings
+	 * modal's own dismissal is untouched (guarded). */
+	function onShellKeydown(event: KeyboardEvent): void {
+		if (
+			event.key === 'Escape' &&
+			shell.view === 'session' &&
+			!shell.settingsOpen &&
+			investigation.selectedEventId !== null
+		) {
+			clearSelection();
+			return;
+		}
+		handleShellKeydown(event);
 	}
 	const fetched = $derived(investigation.slices.reduce((sum, s) => sum + s.received, 0));
 	const truncated = $derived(investigation.notices.some((n) => n.kind === 'truncated'));
@@ -236,7 +266,7 @@
 	const dismiss = (key: string) => (dismissed = new Set([...dismissed, key]));
 </script>
 
-<svelte:window onkeydown={handleShellKeydown} />
+<svelte:window onkeydown={onShellKeydown} />
 
 <Tooltip.Provider delayDuration={350}>
 	<!-- inert while settings is open: keyboard focus stays inside the modal. -->
@@ -415,15 +445,32 @@
 						{/if}
 					{/key}
 				{:else}
-					<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
-						<span class="font-medium text-ink-2">{shell.session?.title}</span><br />
-						The graph canvas lands here with the product-graph step (spec §11 step 3); the
-						dossier lives in the drawer below.
-					</p>
+					<!-- Session surface (#29b): the subject-graph canvas + drawer, gated on
+						session identity — a foreign live run's evidence never paints
+						under this session's title. -->
+					{#if sessionOwnsRun}
+						<div class="flex min-h-0 w-full flex-1 flex-col">
+							{#key investigation.graphSubjectId}
+								<GraphCanvas
+									events={investigation.result?.admitted ?? []}
+									cards={investigation.cards}
+									root={investigation.graphSubjectId}
+									selectedEventId={investigation.selectedEventId}
+									onSelect={openDossier}
+									onDeselect={clearSelection}
+								/>
+							{/key}
+						</div>
+					{:else}
+						<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
+							This session's evidence isn't in memory — older sessions aren't replayable
+							yet. Run a new search to bring it back.
+						</p>
+					{/if}
 				{/if}
 			</div>
 
-			{#if shell.view === 'session'}
+			{#if shell.view === 'session' && sessionOwnsRun}
 				<DetailDrawer
 					open={shell.drawerOpen}
 					height={Math.min(shell.drawerHeight, drawerMax)}

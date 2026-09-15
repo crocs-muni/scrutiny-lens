@@ -37,6 +37,10 @@ class ShellState {
 	 * unmounts on every session→results→session hop — component-local state
 	 * would reset to Summary on every card-click swap. */
 	drawerSection = $state<DrawerSection>('summary');
+	/** N3 / CONTEXT "Show deleted": retracted nodes render on the canvas
+	 * only while this is on. User-owned chrome class (same reasoning as
+	 * drawerSection); the dossier is NEVER gated by it (#29a ruling 3). */
+	showDeleted = $state(false);
 
 	toggleRail() {
 		this.railOpen = !this.railOpen;
@@ -116,6 +120,7 @@ export function resetShell() {
 	shell.drawerOpen = true;
 	shell.drawerHeight = 320;
 	shell.drawerSection = 'summary';
+	shell.showDeleted = false;
 }
 
 /** Keyboard map (spec §9): Ctrl+\ rail · Ctrl+. chat · Ctrl+; drawer · Ctrl+, settings

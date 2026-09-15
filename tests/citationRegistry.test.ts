@@ -29,6 +29,15 @@ describe('createCitationRegistry numbering', () => {
 		expect(reg.eventIdFor(3)).toBe('ev-gamma');
 		expect(reg.eventIdFor(99)).toBeUndefined();
 	});
+
+	it('numberFor round-trips the pin (the canvas ring lookup, #29b)', () => {
+		const reg = createCitationRegistry();
+		reg.next('ev-alpha');
+		reg.next('ev-beta');
+		expect(reg.numberFor('ev-beta')).toBe(2);
+		expect(reg.numberFor('ev-alpha')).toBe(1);
+		expect(reg.numberFor('never-pinned')).toBeUndefined();
+	});
 });
 
 describe('createCitationRegistry resolve', () => {

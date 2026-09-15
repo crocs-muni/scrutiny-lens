@@ -120,6 +120,12 @@ function pluralize(n: number, word: string): string {
 	return n === 1 ? `1 ${word}` : `${n} ${word}s`;
 }
 
+/** The verb-chip / edge-label clip width: corpus bindings carry machine
+ * sentences ("SCRUTINY Binding: … reference A → B"), not N1's four-letter
+ * verbs — one shared cap for the Files chip and the canvas edge label
+ * (full text stays reachable: Content pane, title attr). */
+export const VERB_CLIP = 28;
+
 function contentOf(resolution: Resolution): DossierContent {
 	const chain = resolution.chain;
 	switch (chain.status) {

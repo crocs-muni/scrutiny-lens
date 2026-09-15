@@ -39,3 +39,15 @@ _Avoid_: unverified pill, flagged claim
 **Coordination store**:
 The chat → surface link state that maps a citation to its claim span, its hover-card, and the target it can focus — pre-canvas: the dossier; post-#29b: the graph node ring. One-directional this cycle: hovering a node never lights chat.
 _Avoid_: focus store, sync store
+
+**Graph root**:
+The fixed hub the canvas's ego graph is drawn around — the first subject opened in an investigation. Later selections move the ring and the dossier but never re-center the graph; the root dies with the investigation.
+_Avoid_: center node, anchor card, focused hub
+
+**Shadow hub**:
+A product bound to a spoke but not expanded — drawn dimmed one ring outward along the shared metadata's ray, with a +N badge counting its admitted-but-unrevealed neighbors. Not a placeholder: every shadow is an admitted event with an admitted binding.
+_Avoid_: ghost node, stub, latent hub
+
+**Expansion**:
+The gesture (double-click on a shadow hub, undo chip in the toolbar) that reveals a shadow hub's admitted neighbors in place. Admitted-only — expansion never fetches; a neighbor the store can't show is counted in +N, never invented.
+_Avoid_: drill-down, lazy load, infinite graph

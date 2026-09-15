@@ -203,11 +203,9 @@ export interface FillCardsOptions {
   onFailure?: (kind: AIKind) => void;
 }
 
-const CLIP_LIMIT = { title: 120, snippet: 300 };
+import { clip } from '$lib/text';
 
-function clip(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max - 1) + "…";
-}
+const CLIP_LIMIT = { title: 120, snippet: 300 };
 
 export async function fillCards(
   cards: ProductCard[],

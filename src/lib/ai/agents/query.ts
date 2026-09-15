@@ -101,9 +101,7 @@ const INSTRUCTIONS = [
 
 const TAG_VALUE = /^[a-z0-9-]+:\S+$/i;
 
-function clip(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max - 1) + "…";
-}
+import { clip } from '$lib/text';
 
 interface TranslateOptions {
   question: string;

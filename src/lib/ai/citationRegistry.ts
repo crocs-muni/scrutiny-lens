@@ -19,6 +19,11 @@
 import { extractedGate } from './verifier';
 import type { NostrEvent } from '../fabric';
 
+/** Palette slots (citations.css --cite-0..5) — the pairing hue cycles over
+ * N modulo this. Single source: chat.ts computes colorIndex from it, the
+ * canvas ring derives slot the same way (#29b). */
+export const CITATION_SLOTS = 6;
+
 /** Canonical Citation (docs/types.md §Citation), plus the resolver's matched span. */
 export interface Citation {
 	/** Stable citation number (per-session). */
@@ -46,6 +51,9 @@ export interface CitationRegistry {
 	size(): number;
 	/** Inverse lookup: which eventId owns number n (undefined if never pinned). */
 	eventIdFor(n: number): string | undefined;
+	/** Which number an eventId owns (undefined if never pinned) — the canvas
+	 * ring's lookup direction (#29b: a node lights when its number is hovered). */
+	numberFor(eventId: string): number | undefined;
 	/**
 	 * Resolve a marker — a citation number (3 or '[3]') or an eventId — against
 	 * the visible events. An unseen-but-visible eventId is pinned on resolve
@@ -118,5 +126,11 @@ export function createCitationRegistry(): CitationRegistry {
 		return { ok: true, citation };
 	}
 
-	return { next, size: () => byEvent.size, eventIdFor: (n) => byN.get(n), resolve };
+	return {
+		next,
+		size: () => byEvent.size,
+		eventIdFor: (n) => byN.get(n),
+		numberFor: (eventId) => byEvent.get(eventId),
+		resolve
+	};
 }

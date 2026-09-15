@@ -33,7 +33,12 @@ import { z } from 'zod';
 import { streamLLM } from '../gateway';
 import type { CallLLMArgs, LLMMessage } from '../output';
 import { extractedGate, type ExtractionState } from '../verifier';
-import { createCitationRegistry, type Citation, type CitationRegistry } from '../citationRegistry';
+import {
+	CITATION_SLOTS,
+	createCitationRegistry,
+	type Citation,
+	type CitationRegistry
+} from '../citationRegistry';
 import { bestIdentifier } from '../projector';
 import type { NostrEvent } from '../../fabric';
 import {
@@ -185,7 +190,7 @@ function resolveFinal(
 					support: gate.state,
 					verified: gate.state !== 'extrapolatory',
 					status: 'resolved',
-					colorIndex: (res.citation.n - 1) % 6
+					colorIndex: (res.citation.n - 1) % CITATION_SLOTS
 				};
 			}
 		}

@@ -28,6 +28,9 @@ import {
   type SkeletonCard,
 } from "$lib/pipeline";
 import type { SearchRequest } from "$lib/ai/agents/query";
+import { batchNodeInterpret } from "$lib/ai/agents/nodes";
+import { getInterpretation, saveInterpretation } from "$lib/db";
+import type { NodeTile } from "$lib/graph/subject-graph";
 import {
   admitBatch,
   resolveGraph,
@@ -134,9 +137,20 @@ class Investigation {
 
   /** The selected dossier subject (issue #29a, ADR 0001): store-level —
    * facet filters and view hops never clear it; it dies exactly where the
-   * investigation itself dies (start/stop/reset). No deselect gesture
-   * (ruling 10). */
+   * investigation itself dies (start/stop/reset). Deselect is canvas-only
+   * (#29b ruling 7 — see clearSelection). */
   selectedEventId = $state<string | null>(null);
+
+  /** The subject graph's fixed subject (issue #29b ruling 4): the FIRST
+   * subject opened this investigation. Later selections move the ring and
+   * the dossier, never the layout — a re-anchoring click would destroy the
+   * ring's spatial memory. Dies with the investigation like the selection. */
+  graphSubjectId = $state<string | null>(null);
+
+  /** Expansion stack (issue #29b ruling 8): related products the user
+   * expanded, in order — the toolbar's undo chip pops it LIFO.
+   * Admitted-only: entries never imply a fetch. */
+  expandedRelated = $state<string[]>([]);
 
   /** Subjects whose §8.2 dossier context was fetched (or is in flight) —
    * one traversal per subject per session; dies with the session (start()
@@ -197,7 +211,12 @@ class Investigation {
     this.fillFailure = null;
     this.elapsedMs = null;
     this.selectedEventId = null;
+    this.graphSubjectId = null;
+    this.expandedRelated = [];
     this.contextFetched = new Set();
+    this.nodeTiles = new Map();
+    this.nodeQueue = [];
+    this.nodeQueued = new Set();
     this.running = true;
     const startedAt = performance.now();
 
@@ -290,6 +309,181 @@ class Investigation {
     // Selection survives an abort (ruling 10): stop() freezes the run but
     // keeps what it painted, so the dossier's evidence is still intact.
     this.controller?.abort();
+  }
+
+  /** Dossier-open from any surface (card row, graph node, citation). The
+   * FIRST subject of an investigation also anchors the graph subject (#29b
+   * ruling 4); later opens move ring + dossier only. */
+  selectSubject(id: string): void {
+    this.selectedEventId = id;
+    if (this.graphSubjectId === null) this.graphSubjectId = id;
+  }
+
+  /** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc clear the
+   * ring and return the drawer to its honest no-subject line. The graph
+   * subject stays (ruling 4). The results cards' click-to-reaffirm (#29a
+   * ruling 10) is untouched — this path never runs there. */
+  clearSelection(): void {
+    this.selectedEventId = null;
+  }
+
+  /** Reveal a related product's admitted neighbors (#29b ruling 8). */
+  expandRelated(id: string): void {
+    if (!this.expandedRelated.includes(id)) this.expandedRelated.push(id);
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Node-interpretation trickle (#29c, owner ruling C 2026-09-16)
+   *
+   * The canvas reports its placed ids whenever the graph re-derives;
+   * this lane pays the LLM for everything the CARD fill never touched
+   * (linked records, related products). Cache-first: a revisited graph
+   * paints sans at t≈0 from bySurface.node. Single-flight, ≤12/batch
+   * (the nodes agent's contract), the worklist drains live so a related
+   * expansion just appends. Interpretation only ever UPGRADES a node —
+   * anything unanswered stays rule-5 mono, which is true at render time
+   * (spec §2), so there is no spinner/badge surface by design.
+   * ---------------------------------------------------------------- */
+  /** Materialized interpretations keyed by event id — the subject-graph
+   * reads this map on every derive; whole-map copies per batch (copy-on-
+   * write, same reactivity rule as the card merge). */
+  nodeTiles = $state<Map<string, NodeTile>>(new Map());
+  /** Single-flight guard + the live worklist (queued ids, in priority
+   * order — the canvas passes subject→records→related order). */
+  private nodeQueue: string[] = [];
+  private nodeQueued = new Set<string>();
+  private nodeFillRunning = false;
+
+  /** The canvas reports placed ids; the lane starts (once) and drains. */
+  nodeFillFor(placedIds: string[]): void {
+    if (this.result === null) return;
+    let added = false;
+    for (const id of placedIds) {
+      if (this.nodeTiles.has(id) || this.nodeQueued.has(id)) continue;
+      this.nodeQueued.add(id);
+      this.nodeQueue.push(id);
+      added = true;
+    }
+    if (added && !this.nodeFillRunning) void this.runNodeFill();
+  }
+
+  private async runNodeFill(): Promise<void> {
+    const controller = this.controller;
+    if (controller == null) return;
+    this.nodeFillRunning = true;
+    try {
+      while (this.nodeQueue.length > 0) {
+        // Identity guard with the run-abort: a superseded/stopped run
+        // drops the whole tail — dead-run titles never write over a new
+        // subject (spec §8 lifecycle).
+        if (this.controller !== controller || controller.signal.aborted) return;
+        const batch: string[] = [];
+        while (batch.length < 12 && this.nodeQueue.length > 0) {
+          const id = this.nodeQueue.shift();
+          if (id !== undefined && !this.nodeTiles.has(id)) batch.push(id);
+        }
+        if (batch.length === 0) continue;
+        const model = settings.model;
+        // Cache pass — zero-cost paints (spec §6). bySurface merge means
+        // a node surface never stomps the card surface of the same event.
+        for (const id of batch) {
+          const hit = await getInterpretation(id, model);
+          const surface = hit?.bySurface.node as Partial<NodeTile> | undefined;
+          if (typeof surface?.title === "string" && typeof surface.typeToken === "string") {
+            const next = new Map(this.nodeTiles);
+            next.set(id, {
+              title: surface.title,
+              typeToken: surface.typeToken,
+              metaType: surface.metaType,
+              label: surface.label,
+            });
+            this.nodeTiles = next;
+          }
+        }
+        const missing = batch.filter((id) => !this.nodeTiles.has(id));
+        // No provider, no call — the honest fallback stays painted.
+        if (missing.length === 0 || settings.apiKey === "" || model === "") continue;
+        const admitted = this.result?.admitted;
+        if (admitted === undefined) return;
+        const events = admitted.filter((e) => missing.includes(e.id));
+        if (events.length === 0) continue;
+        if (this.controller !== controller) return;
+        const res = await batchNodeInterpret({
+          events,
+          graphContext: { rootSummary: "", query: this.lastQuestion },
+          // 60s: the first call against a cold BYOK endpoint is the
+          // gateway's slowest — same arm the card lanes use (issue #53).
+          abortSignal: AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(60_000),
+          ]),
+          provider: {
+            baseUrl: settings.endpoint,
+            model,
+            apiKey: settings.apiKey,
+          },
+          callLLM: defaultCallLLM,
+        });
+        if (this.controller !== controller) return;
+        if (!res.ok) {
+          // Unreachable endpoint: stop burning tokens; schema/content
+          // failures retry nothing — the fallback is already the truth.
+          if (res.kind === "unreachable") return;
+          continue;
+        }
+        const vms = res.result.nodes;
+        const interpreted = new Set(res.result.interpretedIds);
+        const next = new Map(this.nodeTiles);
+        // Saves are awaited with the batch, not void-fired: an orphaned
+        // write committing AFTER the lane reported drained would let a
+        // staler fallback-era read race a later wipe (data-loss class —
+        // reproduced as a test flake where a committed row survived the
+        // harness's clearAllLocalData).
+        const saves: Promise<void>[] = [];
+        for (const vm of vms) {
+          if (!interpreted.has(vm.entityId)) continue; // skeleton — never persisted (spec §2)
+          const tile: NodeTile = {
+            title: vm.title,
+            typeToken: vm.typeToken as string,
+            ...(vm.kind === "metadata"
+              ? { metaType: vm.metaType, label: vm.label }
+              : {}),
+          };
+          next.set(vm.entityId, tile);
+          saves.push(saveInterpretation(vm.entityId, model, "node", tile));
+        }
+        await Promise.all(saves);
+        this.nodeTiles = next;
+      }
+    } finally {
+      this.nodeFillRunning = false;
+    }
+  }
+
+
+  /** Toolbar's undo chip — pops the LAST expansion, nothing else. */
+  undoExpandRelated(): void {
+    this.expandedRelated.pop();
+  }
+
+  /** @internal — the module-level reset seam (reload/close) clears the
+   * lane's private worklist; public state is cleared directly there. */
+  _resetNodeFill(): void {
+    this.nodeTiles = new Map();
+    this.nodeQueue = [];
+    this.nodeQueued = new Set();
+  }
+
+  /** @internal — test seam for the node trickle (same spirit as
+   * `_fillInChunksForTests`): seeds a settled result, arms a controller,
+   * queues ids, awaits full drain. UI callers go through nodeFillFor. */
+  async _nodeFillForTests(ids: string[], admitted: FabricEvent[]): Promise<void> {
+    this.controller = new AbortController();
+    this.result = { admitted } as SearchSession;
+    this.nodeFillFor(ids);
+    while (this.nodeFillRunning || this.nodeQueue.length > 0) {
+      await sleep(5, this.controller.signal);
+    }
   }
 
   /** Traversal-failure visibility (lens #68, spec §4 honesty lane): the
@@ -608,6 +802,7 @@ export function resetInvestigation(): void {
   investigation.fillFailure = null;
   investigation.selectedEventId = null;
   investigation.contextFetched = new Set();
+  investigation._resetNodeFill();
   investigation.running = false;
 }
 

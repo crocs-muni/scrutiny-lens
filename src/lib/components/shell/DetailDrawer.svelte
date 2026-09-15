@@ -26,7 +26,8 @@
 	import PublisherChip from '../ui/PublisherChip.svelte';
 	import { COLLAPSE } from '../ui/motion';
 	import { formatRel, shell, type DrawerSection } from '$lib/shell.svelte';
-	import type { Dossier, HistoryRow } from '$lib/dossier';
+	import { VERB_CLIP, type Dossier, type HistoryRow } from '$lib/dossier';
+	import { clipMiddle } from '$lib/text';
 
 	interface Section {
 		key: DrawerSection;
@@ -387,10 +388,14 @@
 								{row.destination === 'subject' ? '←' : '→'}
 							</span>
 							{#if row.verb !== ''}
+								<!-- corpus bindings carry machine sentences, not
+									four-letter verbs — the chip clips (full text on
+									hover + in Content); the count is untouched. -->
 								<span
 									class="shrink-0 rounded-[6px] border border-line bg-inset px-2 py-px font-mono text-[10.5px] text-ink-2"
+									title={clipMiddle(row.verb, VERB_CLIP) !== row.verb ? row.verb : undefined}
 								>
-									{row.verb}
+									{clipMiddle(row.verb, VERB_CLIP)}
 								</span>
 							{/if}
 							{#if row.counterpartyTitle !== null}
