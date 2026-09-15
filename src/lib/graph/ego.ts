@@ -126,11 +126,11 @@ export interface EgoOptions {
  * screenshot 2026-09-14).
  * ------------------------------------------------------------------ */
 /* Geometric floor, not a taste tone: the hub card is 250px wide, a spoke
- * 230px — ring 1 must clear hub-half + spoke-half + a 10px gutter, or the
- * first spoke lands ON the hub (owner screenshot 2026-09-14). */
+ * 230px — every gap must clear card-half + neighbor-half + a 12px gutter,
+ * or the first spoke lands ON the hub (owner screenshot 2026-09-14). All
+ * steps derive from that one constraint. */
+const R_STEP = 250;
 const R1_MIN = 252;
-const R_RING2 = 180;
-const R_RING3 = 170;
 /** Fan step between an expanded shadow's own spokes (rad). */
 const FAN_STEP = 0.5;
 /** Dyadic slot grid (ruling 3's append-only, done honestly): a spoke's
@@ -138,18 +138,23 @@ const FAN_STEP = 0.5;
  * verb sort — a sort recomputes every existing angle when a new neighbor
  * arrives mid-session (Spec review finding 2026-09-14). Slots are
  * n-independent: bit-reversed index × 45° spreads each prefix maximally
- * (0, 180, 90, 270, 45, 135, 225, 315), 8 per ring, overflow stepping out. */
+ * (0, 180, 90, 270, 45, 135, 225, 315). */
 const SLOT_ANGLE = Math.PI / 4;
-const SLOTS_PER_RING = 8;
+const SLOTS_PER_QUAD = 8;
 
 function dyadicAngle(k: number): number {
 	const rev = ((k & 1) << 2) | (k & 2) | ((k & 4) >> 2);
 	return rev * SLOT_ANGLE;
 }
 
-/** Ring radius for a slot index — overflow rings step out, stable per slot. */
+/** Slot radius. The four CARDINAL slots (0°/90°/180°/270°) live on the
+ * inner ring; the four DIAGONAL slots move one ring out — at 45° on the
+ * inner ring the 5th/6th… spoke collides with a cardinal neighbor (chord
+ * 194px < 240px required). Overflow slots repeat the grid +1 ring each. */
 function radiusFor(slot: number): number {
-	return R1_MIN + Math.floor(slot / SLOTS_PER_RING) * R_RING3;
+	const quad = slot % SLOTS_PER_QUAD;
+	const ring = (slot - quad) / SLOTS_PER_QUAD;
+	return (quad < 4 ? R1_MIN : R1_MIN + 180) + ring * R_STEP;
 }
 
 /** The other endpoint of a binding row from one participant's side —
@@ -313,7 +318,7 @@ export function deriveEgo(
 	ring1Ids.forEach((id, slot) => {
 		// Slot 0 lands EAST; the dyadic sequence keeps every prefix size
 		// maximally spread (0, 180, 90, 270, 45, 135, 225, 315…).
-		const angle = dyadicAngle(slot % SLOTS_PER_RING);
+		const angle = dyadicAngle(slot % SLOTS_PER_QUAD);
 		angleOf.set(id, angle);
 		const r = radiusFor(slot);
 		placed.set(id, { x: r * Math.cos(angle), y: r * Math.sin(angle) });
@@ -322,8 +327,10 @@ export function deriveEgo(
 	// Shadows + promoted hubs: one radius out along the circular mean of their
 	// bridges' angles — the multihop ray reads outward (G1).
 	const outerRing = ring1Ids.length === 0 ? R1_MIN : radiusFor(ring1Ids.length - 1);
-	const r2 = outerRing + R_RING2;
-	const r3 = r2 + R_RING3;
+	// Ring 2 (shadow hubs — products, 250px) and ring 3 (their metadata
+	// spokes): each step clears neighbor-half of the wider side pair.
+	const r2 = outerRing + R_STEP;
+	const r3 = r2 + R_STEP;
 	const shadowAngle = new Map<string, number>();
 	for (const [shadowId, bridges] of [...shadowOf].sort(([a], [b]) => a.localeCompare(b))) {
 		const angles = bridges.map((b) => angleOf.get(b) ?? 0);

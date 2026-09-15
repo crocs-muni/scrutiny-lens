@@ -124,6 +124,35 @@ describe('deriveEgo — placement', () => {
 		expect(m3?.y).toBeCloseTo(0, 5);
 	});
 
+	it('diagonal slots move out one ring; overflow repeats the grid +1 ring', () => {
+		// The collision class the owner screenshot caught: at 45° on the
+		// inner ring (slot 4, chord 194px) spoke halves overlap 230px cards —
+		// slot 4 must sit on the +180 ring; slot 8 repeats the grid +1 ring.
+		const root = product('root\n', 1000, [], 'root');
+		const events: NostrEvent[] = [root];
+		for (let i = 0; i < 10; i++) {
+			events.push(
+				metadata(`meta ${i}`, 1100 + i, [], `m${i}`),
+				binding('root', `m${i}`, 'documents', 1500 + i, `b${i}`)
+			);
+		}
+		const view = deriveEgo(events, 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		// slot 4 = rev(4)=1 → 45° NE on the diagonal ring (radius 432):
+		// x≈y≈432·cos45≈305.47
+		const m4 = view.nodes.find((n) => n.id === 'm4');
+		expect(m4?.x).toBeCloseTo(305.47, 1);
+		expect(m4?.y).toBeCloseTo(305.47, 1);
+		// slot 5 = rev(5)=5 → 225° SW: x≈y≈-305.47
+		const m5 = view.nodes.find((n) => n.id === 'm5');
+		expect(m5?.x).toBeCloseTo(-305.47, 1);
+		expect(m5?.y).toBeCloseTo(-305.47, 1);
+		// slot 8 = ring overflow, grid repeat +1 ring: cardinal east at 502.
+		const m8 = view.nodes.find((n) => n.id === 'm8');
+		expect(m8?.x).toBeCloseTo(502, 5);
+		expect(m8?.y).toBeCloseTo(0, 5);
+		expect(view.nodes.filter((n) => n.role === 'spoke')).toHaveLength(10);
+	});
+
 	it('routes edges Metadata → Product with the verb label and facing handles', () => {
 		const f = baseFixture();
 		const view = deriveEgo([f.root, f.m1, f.b1], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
@@ -178,8 +207,11 @@ describe('deriveEgo — shadows and expansion (ruling 8)', () => {
 		const m2 = view.nodes.find((n) => n.id === 'm2');
 		expect(m2).toBeDefined();
 		expect(m2?.role).toBe('spoke');
-		// Fan placement continues outward along the bridge ray (east here).
-		expect(m2!.x).toBeCloseTo(252 + 180 + 170, 5);
+		// Shadow hub at inner-ring + one hub-width step from the origin…
+		const shadowP2 = view.nodes.find((n) => n.id === 'p2');
+		expect(shadowP2?.x).toBeCloseTo(252 + 250, 5);
+		// …and its own leaf one step beyond (east bridge ray).
+		expect(m2!.x).toBeCloseTo(252 + 250 + 250, 5);
 		expect(m2!.y).toBeCloseTo(0, 5);
 		const leaf = view.edges.find((e) => e.id === 'b4');
 		expect(leaf).toMatchObject({ source: 'm2', target: 'p2', shadowed: false });

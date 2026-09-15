@@ -147,6 +147,7 @@
 					{nodeTypes}
 					fitView
 					fitViewOptions={FIT_OPTIONS}
+					nodeOrigin={[0.5, 0.5]}
 					minZoom={0.25}
 					maxZoom={1.6}
 					nodesDraggable={false}
