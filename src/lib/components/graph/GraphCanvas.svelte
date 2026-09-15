@@ -37,6 +37,8 @@
 	import FlowActions, { type FlowViewportActions } from './FlowActions.svelte';
 	import { deriveEgo, FIT_OPTIONS } from '$lib/graph/ego';
 	import { investigation } from '$lib/investigation.svelte';
+	import { VERB_CLIP } from '$lib/dossier';
+	import { clipMiddle } from '$lib/text';
 	import { shell } from '$lib/shell.svelte';
 	import { chat } from '$lib/chat.svelte';
 	import { CITATION_SLOTS } from '$lib/ai/citationRegistry';
@@ -103,8 +105,11 @@
 			id: e.id,
 			source: e.source,
 			target: e.target,
-			// The binding's verb, always readable (N1⑦); '' stays unlabeled.
-			label: e.label === '' ? undefined : e.label,
+			// The binding's verb, clipped (N1⑦) — corpus bindings carry
+			// machine sentences, which at full length paint a canvas-spanning
+			// bar where an edge label belongs (owner screenshot 2026-09-14);
+			// '' stays unlabeled.
+			label: e.label === '' ? undefined : clipMiddle(e.label, VERB_CLIP),
 			sourceHandle: `s-${e.sourceHandle}`,
 			targetHandle: `t-${e.targetHandle}`,
 			// Arrows at the destination end (N1⑦ crow's-foot rule); shadow

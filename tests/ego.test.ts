@@ -99,9 +99,9 @@ describe('deriveEgo — placement', () => {
 		// m1 admitted before m3 → slot 0 (EAST), slot 1 (WEST).
 		const m1 = a.nodes.find((n) => n.id === 'm1');
 		const m3 = a.nodes.find((n) => n.id === 'm3');
-		expect(m1?.x).toBeCloseTo(210, 5);
+		expect(m1?.x).toBeCloseTo(252, 5);
 		expect(m1?.y).toBeCloseTo(0, 5);
-		expect(m3?.x).toBeCloseTo(-210, 5);
+		expect(m3?.x).toBeCloseTo(-252, 5);
 		expect(m3?.y).toBeCloseTo(0, 5);
 	});
 
@@ -120,7 +120,7 @@ describe('deriveEgo — placement', () => {
 		expect(deriveEgo(after, 'root', opts)).toEqual(grown);
 		// Slot 1's dyadic angle is π (west) — the sequence bit-reverses.
 		const m3 = grown.nodes.find((n) => n.id === 'm3');
-		expect(m3?.x).toBeCloseTo(-210, 5);
+		expect(m3?.x).toBeCloseTo(-252, 5);
 		expect(m3?.y).toBeCloseTo(0, 5);
 	});
 
@@ -179,7 +179,7 @@ describe('deriveEgo — shadows and expansion (ruling 8)', () => {
 		expect(m2).toBeDefined();
 		expect(m2?.role).toBe('spoke');
 		// Fan placement continues outward along the bridge ray (east here).
-		expect(m2!.x).toBeCloseTo(210 + 180 + 170, 5);
+		expect(m2!.x).toBeCloseTo(252 + 180 + 170, 5);
 		expect(m2!.y).toBeCloseTo(0, 5);
 		const leaf = view.edges.find((e) => e.id === 'b4');
 		expect(leaf).toMatchObject({ source: 'm2', target: 'p2', shadowed: false });

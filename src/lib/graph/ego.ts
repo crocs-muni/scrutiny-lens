@@ -125,7 +125,10 @@ export interface EgoOptions {
  * oversized radii push fitView under the N4 dense floors (owner
  * screenshot 2026-09-14).
  * ------------------------------------------------------------------ */
-const R1_MIN = 210;
+/* Geometric floor, not a taste tone: the hub card is 250px wide, a spoke
+ * 230px — ring 1 must clear hub-half + spoke-half + a 10px gutter, or the
+ * first spoke lands ON the hub (owner screenshot 2026-09-14). */
+const R1_MIN = 252;
 const R_RING2 = 180;
 const R_RING3 = 170;
 /** Fan step between an expanded shadow's own spokes (rad). */
