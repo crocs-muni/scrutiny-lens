@@ -53,16 +53,34 @@ export type NodeKind = 'product' | 'metadata';
 /** Ruling 9's amber footer word, mapped 1:1 from ChainState.status. */
 export type ChainWord = 'halted' | 'forked' | 'stopped at limit';
 
+/** A node's AI surface from the interpretations cache (bySurface.node —
+	 * spec §2 lists node titles as AI-writable). Only AI-authored fields
+	 * persist; everything deterministic re-derives from the event itself. */
+export interface NodeTile {
+	title: string;
+	/** Closed icon vocabulary (cards agent's IconToken): the model picks a
+	 * token, the token→icon map is deterministic — the model never names a
+	 * glyph (§9 writing rule: icons are machine-made). */
+	typeToken: string;
+	/** Metadata events only (report/target/maintenance/sbom/advisory/…). */
+	metaType?: string;
+	label?: string;
+}
+
 export interface SubjectGraphNode {
 	id: string;
 	kind: NodeKind;
 	role: GraphRole;
 	event: NostrEvent;
 	retracted: boolean;
-	/** Cache-first title (products) or rule-5 mono fallback — same voice
-	 * split as the dossier (§9 writing rule). */
+	/** Cache-first title — the card surface wins on products (it was
+	 * painted with the search fill), the node tile serves everything the
+	 * card pipeline never touched (linked records, related products);
+	 * rule-5 mono fallback otherwise. Same voice split as the dossier. */
 	title: string;
 	interpreted: boolean;
+	/** AI-chosen icon token when interpreted; undefined on fallback. */
+	typeToken: string | undefined;
 	pubkey: string;
 	createdAt: number;
 	/** Subject one-liner: products only, interpreted only (BIBLE N1 ④). */
@@ -111,12 +129,18 @@ export interface SubjectGraph {
  * framing). */
 export const FIT_OPTIONS = { padding: 0.2, maxZoom: 0.85 } as const;
 
+/** Zero-alloc default for the optional tiles surface; tests import this. */
+export const NO_TILES: ReadonlyMap<string, NodeTile> = new Map();
+
 export interface SubjectGraphOptions {
 	showDeleted: boolean;
 	/** Related products whose admitted neighbors are revealed (ruling 8). */
 	expanded: ReadonlySet<string>;
 	/** The interpretations cache's materialized face (product titles/snippets). */
 	cards: ProductCard[];
+	/** Node-surface interpretations (bySurface.node), materialized by the
+	 * investigation's node fill (cache-first, then the trickle). */
+	tiles?: ReadonlyMap<string, NodeTile>;
 }
 
 /* ------------------------------------------------------------------ *
@@ -365,11 +389,15 @@ export function deriveSubjectGraph(
 
 	/* ---------------- node materialization ---------------- */
 	const cardsById = new Map(opts.cards.map((c) => [c.id, c]));
+	const tiles = opts.tiles ?? NO_TILES;
 	function nodeFor(id: string, role: GraphRole): SubjectGraphNode {
 		const event = byId.get(id) as NostrEvent;
 		const kind = kinds.get(id) as NodeKind;
 		const card = cardsById.get(id);
-		const interpreted = card !== undefined && card.interpreted;
+		const tile = tiles.get(id);
+		// Card interpretation wins (search-fill provenance); the node tile
+		// is the surface for everything the card lane never interpreted.
+		const interpreted = (card !== undefined && card.interpreted) || tile !== undefined;
 		const resolution = resolve(id, coreEvents);
 		const { word, editedN } = chainWordOf(resolution);
 		// Subject counts scan ALL admitted bindings (dossier parity — the
@@ -401,8 +429,12 @@ export function deriveSubjectGraph(
 			role,
 			event,
 			retracted: retracted(id),
-			title: interpreted && card !== undefined ? card.title : deriveFallbackTitle(event),
+			title:
+				interpreted && card !== undefined
+					? card.title
+					: (tile?.title ?? deriveFallbackTitle(event)),
 			interpreted,
+			typeToken: tile?.typeToken,
 			pubkey: event.pubkey,
 			createdAt: event.created_at,
 			snippet: kind === 'product' && interpreted ? card?.snippet : undefined,

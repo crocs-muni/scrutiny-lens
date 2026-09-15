@@ -391,12 +391,16 @@ function degradedNode(event: NostrEvent, det: Deterministic): NodeVM {
   }
 }
 
+/** `fromDraft` marks a model-backed interpretation (draft present AND
+ * its assembly survived the strict gate) vs a deterministic degraded
+ * skeleton — the cache may persist only the former (spec §2 never-lie:
+ * a skeleton fed back on the next visit would READ as interpretation). */
 function finalizeNode(
   event: NostrEvent,
   det: Deterministic,
   draft: NodeDraft | undefined,
   ctx: DeadLetterCtx,
-): NodeVM {
+): { vm: NodeVM; fromDraft: boolean } {
   const base = {
     entityId: det.entityId,
     title:
@@ -487,7 +491,7 @@ function finalizeNode(
   }
 
   const parsed = schema.safeParse(candidate);
-  if (parsed.success) return parsed.data;
+  if (parsed.success) return { vm: parsed.data, fromDraft: draft !== undefined };
 
   // Per-item failure → degrade this node, keep the batch.
   const reason = parsed.error.issues
@@ -502,7 +506,7 @@ function finalizeNode(
     payload: candidate,
     reason: `node validation failed: ${reason}`,
   });
-  return degradedNode(event, det);
+  return { vm: degradedNode(event, det), fromDraft: false };
 }
 
 /* ------------------------------------------------------------------ *
@@ -517,7 +521,7 @@ function mapKind(kind: AIKind): AIKind {
 
 export async function batchNodeInterpret(
   opts: BatchNodeInterpretOptions,
-): Promise<AIResult<{ nodes: NodeVM[] }>> {
+): Promise<AIResult<{ nodes: NodeVM[]; interpretedIds: string[] }>> {
   const events = opts.events;
   const view = resolveGraph(events);
   const profile = opts.profile ?? DEFAULT_PROFILE;
@@ -527,6 +531,10 @@ export async function batchNodeInterpret(
   const dets = events.map((e) => buildDeterministic(e, view, events));
 
   const nodes: NodeVM[] = [];
+  // Model-backed records only — degraded skeletons stay out of this list,
+  // so a consumer (the cache) can persist interpretations without ever
+  // persisting a fallback dressed as one.
+  const interpretedIds: string[] = [];
   for (let i = 0; i < events.length; i += BATCH_SIZE) {
     const pageEvents = events.slice(i, i + BATCH_SIZE);
     const pageDets = dets.slice(i, i + BATCH_SIZE);
@@ -537,7 +545,12 @@ export async function batchNodeInterpret(
         kind: pageDets[j].kind,
         retracted: pageDets[j].retracted,
         tags: e.tags,
-        content: e.content,
+        // Payload clip (owner ruling 2026-09-16): the node's interpretation
+        // needs the event's own prose, not its full artifact dump — these
+        // bytes leave the browser for the BYOK endpoint, so 400 chars is
+        // the privacy + token ceiling (cards clip at 200; nodes keep a
+        // little more because the title has to name the artifact).
+        content: clip(e.content, 400),
       })),
     });
 
@@ -595,16 +608,16 @@ export async function batchNodeInterpret(
         profile,
         model,
       };
-      nodes.push(
-        finalizeNode(
-          pageEvents[j],
-          pageDets[j],
-          drafts.get(pageEvents[j].id),
-          ctx,
-        ),
+      const { vm, fromDraft } = finalizeNode(
+        pageEvents[j],
+        pageDets[j],
+        drafts.get(pageEvents[j].id),
+        ctx,
       );
+      nodes.push(vm);
+      if (fromDraft) interpretedIds.push(vm.entityId);
     }
   }
 
-  return { ok: true, result: { nodes } };
+  return { ok: true, result: { nodes, interpretedIds } };
 }

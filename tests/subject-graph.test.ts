@@ -335,6 +335,42 @@ describe('deriveSubjectGraph — node voice', () => {
 		expect(m1).toMatchObject({ title: 'cve:CVE-2017-15361', interpreted: false, snippet: undefined });
 	});
 
+	it('node tiles interpret the records and hand the icon token through; the card surface still wins on products (#29c ruling C)', () => {
+		const f = baseFixture();
+		// Cache-hot revisit: m1 was interpreted as a node surface on a prior
+		// visit; root's card surface arrives as usual.
+		const tiles = new Map([
+			['m1', { title: 'ROCA advisory for the TPM module', typeToken: 'vulnerability', metaType: 'advisory', label: 'ROCA advisory' }],
+			['root', { title: 'SHADOW TITLE — must never win the card surface', typeToken: 'generic' }]
+		]);
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', {
+			showDeleted: false,
+			expanded: NO_EXPAND,
+			cards: [cardFor(f.root)],
+			tiles
+		});
+		// Record: tile paints sans with the token — never the rule-5 mono id.
+		expect(view.nodes.find((n) => n.id === 'm1')).toMatchObject({
+			title: 'ROCA advisory for the TPM module',
+			interpreted: true,
+			typeToken: 'vulnerability',
+			snippet: undefined
+		});
+		// Product: the card surface outranks the node tile even on a hit.
+		expect(view.nodes.find((n) => n.id === 'root')).toMatchObject({
+			title: 'AI title',
+			interpreted: true,
+			typeToken: 'generic'
+		});
+		// Fallback stays pure without a tile — interpreted marks the voice.
+		const noTiles = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', {
+			showDeleted: false,
+			expanded: NO_EXPAND,
+			cards: []
+		});
+		expect(noTiles.nodes.find((n) => n.id === 'm1')).toMatchObject({ interpreted: false, typeToken: undefined });
+	});
+
 	it('subject counts scan the admitted store, not the placed subset', () => {
 		const f = baseFixture();
 		// m2 never placed (p2 unexpanded) — but it IS an admitted binding of p2.

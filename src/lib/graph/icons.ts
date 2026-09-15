@@ -8,7 +8,26 @@
  */
 
 import type { Icon } from '@tabler/icons-svelte';
-import { IconBug, IconCpu, IconFile, IconFileText, IconShield, IconTarget } from '@tabler/icons-svelte';
+import {
+	IconBandage,
+	IconBooks,
+	IconBug,
+	IconBuilding,
+	IconCertificate,
+	IconCpu,
+	IconFile,
+	IconFileText,
+	IconFingerprint,
+	IconHelp,
+	IconHexagon,
+	IconLock,
+	IconRouter,
+	IconShield,
+	IconStack2,
+	IconTarget,
+	IconTool,
+	IconWorld
+} from '@tabler/icons-svelte';
 import { tagValues, type NostrEvent } from '$lib/fabric';
 import type { NodeKind } from './subject-graph';
 
@@ -27,7 +46,39 @@ const BY_I_PREFIX: Record<string, Icon> = {
 	'cc-pp': IconShield
 };
 
-export function iconForNode(kind: NodeKind, event: NostrEvent): NodeIconMapping {
+/** Interpreted icons: the model picks a TOKEN from the card agent's closed
+ * IconToken vocabulary; the token→glyph map is ours (spec §2: icons are
+ * machine-made — the model never names an icon). Keys not present fall
+ * through to the deterministic i-prefix path. */
+const BY_TOKEN: Record<string, Icon> = {
+	certificate: IconCertificate,
+	vulnerability: IconBug,
+	report: IconFileText,
+	target: IconTarget,
+	maintenance: IconTool,
+	patch: IconBandage,
+	smartcard: IconCpu,
+	biometric: IconFingerprint,
+	'network-device': IconRouter,
+	software: IconStack2,
+	hsm: IconLock,
+	tpm: IconShield,
+	scheme: IconWorld,
+	vendor: IconBuilding,
+	document: IconFile,
+	corpus: IconBooks,
+	generic: IconHexagon,
+	unknown: IconHelp
+};
+
+/** Resolution order: interpretation token (AI-chosen, machine-mapped) → i-prefix
+ * heuristics → kind default. The warn tint stays i-prefix-driven — an amber
+ * stroke is a deterministic signal, never an AI opinion (N2). */
+export function iconForNode(kind: NodeKind, event: NostrEvent, token?: string): NodeIconMapping {
+	if (token !== undefined) {
+		const icon = BY_TOKEN[token];
+		if (icon !== undefined) return { icon, warn: false };
+	}
 	if (kind === 'product') return { icon: IconCpu, warn: false };
 	for (const value of tagValues(event, 'i')) {
 		const prefix = value.split(':', 1)[0];

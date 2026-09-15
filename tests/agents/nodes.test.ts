@@ -476,6 +476,31 @@ describe("batchNodeInterpret — batching", () => {
   });
 });
 
+describe("batchNodeInterpret — payload hygiene", () => {
+  it("clips event content to 400 chars before it leaves the browser (privacy + token ceiling, owner ruling 2026-09-16)", async () => {
+    // A long artifact dump: head prose identifies the document; the tail
+    // marker sits way past the clip window and must never reach the wire.
+    const head = "Security target for BSI-DSZ-CC-1185-2023. PDF: https://x.test/st.pdf";
+    const tail = "SHA-256: BEYOND-MARKER-MUST-NOT-APPEAR";
+    const prod = product(1, [], `${head}\n ${"padding line. ".repeat(60)}\n${tail}`);
+    const page = [`entityId: ${prod.id}`, "title: Security target", "typeToken: target"].join("\n");
+    const { call, calls } = fakeLLM(page);
+
+    const res = await batchNodeInterpret({
+      events: [prod],
+      graphContext: CTX,
+      provider: PROVIDER,
+      callLLM: call,
+    });
+    expect(res.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    const wire = JSON.stringify(calls[0].messages);
+    expect(wire).toContain("BSI-DSZ-CC-1185-2023");
+    expect(wire).not.toContain("BEYOND-MARKER-MUST-NOT-APPEAR");
+    expect(res.ok && res.result.interpretedIds).toEqual([prod.id]);
+  });
+});
+
 /* ---------- id affinity (spec §2 never-lie) ---------- */
 
 describe("batchNodeInterpret — id affinity", () => {

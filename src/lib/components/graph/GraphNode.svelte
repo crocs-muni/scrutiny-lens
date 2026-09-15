@@ -67,7 +67,9 @@
 				: 'disc'
 	);
 
-	const mapping = $derived(iconForNode(data.kind, data.event));
+	// Interpreted → the model's icon token (machine-mapped to a glyph,
+	// icons.ts); fallback → deterministic i-prefix → kind default (N2).
+	const mapping = $derived(iconForNode(data.kind, data.event, data.typeToken));
 	const IconComponent = $derived(mapping.icon);
 
 	/** Ring stack: box-shadow paints FIRST-listed TOPMOST — accent leads

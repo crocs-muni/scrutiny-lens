@@ -67,8 +67,20 @@
 		return deriveSubjectGraph(events, root, {
 			showDeleted: shell.showDeleted,
 			expanded: new Set(investigation.expandedRelated),
-			cards
+			cards,
+			// Node-surface interpretations (bySurface.node): the trickle
+			// re-renders nodes in place as tiles land (owner ruling C).
+			tiles: investigation.nodeTiles
 		});
+	});
+
+	// The interpretation trickle: report placed ids, in priority order
+	// (subject → its records → related products → their records, the order
+	// deriveSubjectGraph emits them). Cache-first; the lane pays the LLM
+	// only for what the card fill never touched. No starved path: queued/
+	// tiled ids are no-op, expansions just append (#29c ruling C).
+	$effect(() => {
+		if (graph.nodes.length > 0) investigation.nodeFillFor(graph.nodes.map((n) => n.id));
 	});
 
 	// SvelteFlow's bind:nodes needs writable fields; the $effect copies the
