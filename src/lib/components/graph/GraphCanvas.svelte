@@ -1,9 +1,10 @@
 <script lang="ts">
-	/* GRAPH CANVAS (#29b) — the ego graph over the session's admitted store,
-	 * on @xyflow/svelte (ruling 1). All ten rulings land here:
+	/* GRAPH CANVAS (#29b) — the subject graph over the session's admitted
+	 * store, on @xyflow/svelte (ruling 1). All ten rulings land here:
 	 *
-	 *  - Ego scope (2): the fixed root hub + admitted neighbors + shadowed
-	 *    multihop ends; deriveEgo owns placement, this file owns painting.
+	 *  - Subject scope (2): the fixed subject + its own records + related-
+	 *    product multihop ends; deriveSubjectGraph owns placement, this file
+	 *    owns painting.
 	 *  - Fixed root, free selection (4): clicks never move the layout; the
 	 *    {#key} on the root (in +page) remounts the flow when a NEW root
 	 *    anchors, so fitView frames one fresh map per anchor.
@@ -12,10 +13,10 @@
 	 *    onDeselect. xyflow's own selection is disabled — the accent ring is
 	 *    data-driven (ruling 2/#29a), never a canvas-local truth.
 	 *  - Admitted-only expansion (8): the +N badge's dbl-click bubbles to
-	 *    investigation.expandHub; every rendered edge is backed by an
-	 *    admitted event by construction (deriveEgo).
+	 *    investigation.expandRelated; every rendered edge is backed by an
+	 *    admitted event by construction (deriveSubjectGraph).
 	 *  - Chain word (9) renders on the node; retraction and Show-deleted (10)
-	 *    filter in deriveEgo, the switch lives in the toolbar.
+	 *    filter in deriveSubjectGraph, the switch lives in the toolbar.
 	 *  - Citation ring: the chat's registry pins (n ↔ eventId) are mapped to
 	 *    palette slots; spotlight hover lights the matching node and forces
 	 *    full detail (N4). The registry is non-reactive internally, so the
@@ -35,7 +36,7 @@
 	import GraphNode, { type GraphNodeData } from './GraphNode.svelte';
 	import CanvasToolbar from './CanvasToolbar.svelte';
 	import FlowActions, { type FlowViewportActions } from './FlowActions.svelte';
-	import { deriveEgo, FIT_OPTIONS } from '$lib/graph/ego';
+	import { deriveSubjectGraph, FIT_OPTIONS } from '$lib/graph/subject-graph';
 	import { investigation } from '$lib/investigation.svelte';
 	import { shell } from '$lib/shell.svelte';
 	import { chat } from '$lib/chat.svelte';
@@ -48,7 +49,7 @@
 		/** The session's admitted set (ADR 0001 — never the facet-filtered view). */
 		events: NostrEvent[];
 		cards: ProductCard[];
-		/** The ego anchor (investigation.canvasRootId); null → honest empty. */
+		/** The graph subject (investigation.graphSubjectId); null → honest empty. */
 		root: string | null;
 		selectedEventId: string | null;
 		onSelect: (id: string) => void;
@@ -61,17 +62,17 @@
 	 * FlowActions: provider-scope init binds a dead store on remount). */
 	let viewport = $state<FlowViewportActions | null>(null);
 
-	const ego = $derived.by(() => {
+	const graph = $derived.by(() => {
 		if (root === null) return { nodes: [], edges: [] };
-		return deriveEgo(events, root, {
+		return deriveSubjectGraph(events, root, {
 			showDeleted: shell.showDeleted,
-			expanded: new Set(investigation.expandedHubs),
+			expanded: new Set(investigation.expandedRelated),
 			cards
 		});
 	});
 
 	// SvelteFlow's bind:nodes needs writable fields; the $effect copies the
-	// derived view in whenever any input (ego, selection, spotlight, pins)
+	// derived view in whenever any input (graph, selection, spotlight, pins)
 	// changes. One-directional: the flow never writes back (no dragging,
 	// no connects), so there is no sync loop to guard.
 	//
@@ -82,7 +83,7 @@
 	$effect(() => {
 		void chat.messages.length;
 		const lit = new Set(spotlight.active);
-		nodes = ego.nodes.map((n) => {
+		nodes = graph.nodes.map((n) => {
 			const citeN = chat.registry.numberFor(n.id) ?? null;
 			const citationIndex = citeN === null ? null : (citeN - 1) % CITATION_SLOTS;
 			return {
@@ -95,11 +96,11 @@
 					citationIndex,
 					citationLit: citeN !== null && lit.has(citeN),
 					onSelect,
-					onExpand: (target: string) => investigation.expandHub(target)
+					onExpand: (target: string) => investigation.expandRelated(target)
 				} satisfies GraphNodeData
 			};
 		});
-		edges = ego.edges.map((e) => ({
+		edges = graph.edges.map((e) => ({
 			id: e.id,
 			source: e.source,
 			target: e.target,
@@ -109,17 +110,18 @@
 			// Files rows and Content instead).
 			sourceHandle: `s-${e.sourceHandle}`,
 			targetHandle: `t-${e.targetHandle}`,
-			// Arrows at the destination end (N1⑦ crow's-foot rule); shadow
-			// edges wear G1's amber dashed multihop language. Strokes use
-			// --ink-3, not --line-strong: the hairline tone is white-on-white
-			// in LIGHT mode (owner screenshot, every prior round was dark).
+			// Arrows at the destination end (N1⑦ crow's-foot rule); related-
+			// product edges wear G1's amber dashed multihop language. Strokes
+			// use --ink-3, not --line-strong: the hairline tone is
+			// white-on-white in LIGHT mode (owner screenshot, every prior
+			// round was dark).
 			markerEnd: {
 				type: MarkerType.ArrowClosed,
 				width: 14,
 				height: 14,
-				color: e.shadowed ? 'var(--orange)' : 'var(--ink-3)'
+				color: e.related ? 'var(--orange)' : 'var(--ink-3)'
 			},
-			style: e.shadowed
+			style: e.related
 				? 'stroke: var(--orange); stroke-dasharray: 4 5; stroke-width: 1.8;'
 				: 'stroke: var(--ink-3); stroke-width: 1.8;'
 		}));

@@ -10,7 +10,7 @@
 import type { Icon } from '@tabler/icons-svelte';
 import { IconBug, IconCpu, IconFile, IconFileText, IconShield, IconTarget } from '@tabler/icons-svelte';
 import { tagValues, type NostrEvent } from '$lib/fabric';
-import type { NodeKind } from './ego';
+import type { NodeKind } from './subject-graph';
 
 export interface NodeIconMapping {
 	/** Tabler's (legacy-class) component type — dynamic tags accept it the

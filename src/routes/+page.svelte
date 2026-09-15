@@ -143,9 +143,9 @@
 	}
 
 	/** Card click / graph node / Files-row deep-link (BIBLE 678): select,
-	 * open, land on session. The FIRST subject also anchors the ego root
-	 * (#29b ruling 4, inside selectSubject); clicking the selected card
-	 * again re-affirms (#29a ruling 10). */
+	 * open, land on session. The FIRST subject also anchors the graph
+	 * subject (#29b ruling 4, inside selectSubject); clicking the selected
+	 * card again re-affirms (#29a ruling 10). */
 	function openDossier(id: string): void {
 		investigation.selectSubject(id);
 		shell.drawerOpen = true;
@@ -445,16 +445,16 @@
 						{/if}
 					{/key}
 				{:else}
-					<!-- Session surface (#29b): the ego canvas + drawer, gated on
+					<!-- Session surface (#29b): the subject-graph canvas + drawer, gated on
 						session identity — a foreign live run's evidence never paints
 						under this session's title. -->
 					{#if sessionOwnsRun}
 						<div class="flex min-h-0 w-full flex-1 flex-col">
-							{#key investigation.canvasRootId}
+							{#key investigation.graphSubjectId}
 								<GraphCanvas
 									events={investigation.result?.admitted ?? []}
 									cards={investigation.cards}
-									root={investigation.canvasRootId}
+									root={investigation.graphSubjectId}
 									selectedEventId={investigation.selectedEventId}
 									onSelect={openDossier}
 									onDeselect={clearSelection}

@@ -1,7 +1,7 @@
 <script lang="ts" module>
 	/* Exported for GraphCanvas (the nodeTypes map's data contract) — module
 	 * script so the type may be exported. */
-	export interface GraphNodeData extends EgoNode {
+	export interface GraphNodeData extends SubjectGraphNode {
 		selected: boolean;
 		/** Citation palette slot (0–5) when the chat cites this event. */
 		citationIndex: number | null;
@@ -16,27 +16,29 @@
 	/* GRAPH NODE (#29b) — the canvas's per-event surface. Anatomy is
 	 * BIBLE-locked, never improvised:
 	 *
-	 *  - N1: hub (product) = tinted 30px tile + title + publisher + one-line
-	 *    description + footer (time · edited ×N · icon-number counts); the
-	 *    spoke (metadata) omits description and counts.
+	 *  - N1: subject (product) = tinted 30px tile + title + publisher +
+	 *    one-line description + footer (time · edited ×N · icon-number
+	 *    counts); a linked record (metadata) omits description and counts.
 	 *  - N3 states: retracted = dashed red border + hatch + struck title;
-	 *    uninterpreted = mono rule-5 title (§9 writing rule); shadow hub =
-	 *    dimmed + +N badge (admitted-but-hidden neighbors, ruling 8).
+	 *    uninterpreted = mono rule-5 title (§9 writing rule); related
+	 *    product = dimmed + +N badge (admitted-but-hidden neighbors,
+	 *    ruling 8).
 	 *  - N4 zoom ladder: rendered zoom floors full → icon+mono line → icon
 	 *    disc; selected / hovered / citation-lit break every floor.
 	 *  - Chain word (ruling 9): one amber footer word, verbatim from core
-	 *    resolve() via ego — halted / forked / stopped at limit. No pill.
+	 *    resolve() via the subject graph — halted / forked / stopped at
+	 *    limit. No pill.
 	 *  - Rings: selection = accent (ruling 2/#29a); citation spotlight =
 	 *    --cite hue OUTSIDE the accent (citations.css). Hover must never
 	 *    change store-level state — hovered is component-local.
 	 *
 	 * xyflow contract: this component is the `scrutiny` nodeType. Eight
-	 * invisible handles (source+target × four sides) let ego's quadrant math
-	 * attach edges to facing sides; ids `s-<side>` / `t-<side>`. */
+	 * invisible handles (source+target × four sides) let the subject graph's
+	 * quadrant math attach edges to facing sides; ids `s-<side>` / `t-<side>`. */
 
 	import { Handle, Position, useViewport, type NodeProps } from '@xyflow/svelte';
 	import { IconClock, IconFile, IconLink } from '@tabler/icons-svelte';
-	import type { EgoNode, HandleSide } from '$lib/graph/ego';
+	import type { SubjectGraphNode, HandleSide } from '$lib/graph/subject-graph';
 	import { iconForNode } from '$lib/graph/icons';
 	import PublisherChip from '../ui/PublisherChip.svelte';
 	import { formatRel } from '$lib/shell.svelte';
@@ -83,7 +85,7 @@
 		return layers.join(', ');
 	});
 
-	const expandable = $derived(data.role === 'shadow' && data.badge !== null);
+	const expandable = $derived(data.role === 'related' && data.badge !== null);
 
 	/** Time footer pieces (mono, machine-made — §9 writing rule). Hues are
 	 * boarded: the retracted word is N3's RED, chain words stay amber. */
@@ -131,7 +133,7 @@
 		{tier === 'line' ? 'flex w-[150px] items-center gap-1.5 rounded-[9px] px-2 py-1.5' : ''}
 		{tier === 'disc' ? 'flex h-7 w-7 items-center justify-center rounded-full p-0' : ''}
 		{data.retracted ? 'border-2 border-dashed border-[var(--red)]' : data.selected ? 'border-accent' : 'border-line'}
-		{data.role === 'shadow' && !data.retracted ? 'opacity-70' : ''}
+		{data.role === 'related' && !data.retracted ? 'opacity-70' : ''}
 		{hovered || data.selected ? 'shadow-raised' : ''}"
 	style:box-shadow={ringStyle}
 	style:background={data.retracted
@@ -187,8 +189,8 @@
 			<p class="mt-1.5 truncate text-[12px] leading-[1.5] text-ink-2">{data.snippet}</p>
 		{/if}
 
-		{#if data.role === 'shadow'}
-			<p class="mt-1 text-[10px] text-ink-3">shadowed (multihop) · dbl-click expands</p>
+		{#if data.role === 'related'}
+			<p class="mt-1 text-[10px] text-ink-3">related product · dbl-click expands</p>
 		{/if}
 
 		<div
@@ -227,7 +229,7 @@
 		>
 	{/if}
 
-	<!-- Edge anchors (invisible): ego's quadrant math keys source/target side. -->
+	<!-- Edge anchors (invisible): the subject graph's quadrant math keys source/target side. -->
 	{#each SIDES as [side, pos] (side)}
 		<Handle id="s-{side}" type="source" position={pos} class="!invisible" isConnectable={false} />
 		<Handle id="t-{side}" type="target" position={pos} class="!invisible" isConnectable={false} />

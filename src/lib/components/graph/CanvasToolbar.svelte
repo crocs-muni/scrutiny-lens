@@ -46,11 +46,11 @@
 		disabled={actions === null}
 		onclick={() => actions?.fit()}><IconMaximize size={14} /></button
 	>
-	{#if investigation.expandedHubs.length > 0}
+	{#if investigation.expandedRelated.length > 0}
 		<button
 			class="flex h-8 items-center gap-1.5 rounded-[7px] border border-line px-2.5 text-[12px] text-ink-2 transition-colors hover:bg-hover"
 			title="Undo last expansion"
-			onclick={() => investigation.undoExpandHub()}
+			onclick={() => investigation.undoExpandRelated()}
 		>
 			<IconArrowBackUp size={13} />undo expand
 		</button>

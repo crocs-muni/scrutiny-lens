@@ -9,7 +9,7 @@
 	 * three viewport actions upward on ready. */
 
 	import { useSvelteFlow } from '@xyflow/svelte';
-	import { FIT_OPTIONS } from '$lib/graph/ego';
+	import { FIT_OPTIONS } from '$lib/graph/subject-graph';
 
 	export interface FlowViewportActions {
 		zoomIn: () => Promise<boolean>;

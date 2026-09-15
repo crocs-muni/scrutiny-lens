@@ -138,16 +138,16 @@ class Investigation {
    * (#29b ruling 7 — see clearSelection). */
   selectedEventId = $state<string | null>(null);
 
-  /** The ego graph's fixed hub (issue #29b ruling 4): the FIRST subject
-   * opened this investigation. Later selections move the ring and the
-   * dossier, never the layout — a re-anchoring click would destroy the
+  /** The subject graph's fixed subject (issue #29b ruling 4): the FIRST
+   * subject opened this investigation. Later selections move the ring and
+   * the dossier, never the layout — a re-anchoring click would destroy the
    * ring's spatial memory. Dies with the investigation like the selection. */
-  canvasRootId = $state<string | null>(null);
+  graphSubjectId = $state<string | null>(null);
 
-  /** Expansion stack (issue #29b ruling 8): shadow hubs the user expanded,
-   * in order — the toolbar's undo chip pops it LIFO. Admitted-only: entries
-   * never imply a fetch. */
-  expandedHubs = $state<string[]>([]);
+  /** Expansion stack (issue #29b ruling 8): related products the user
+   * expanded, in order — the toolbar's undo chip pops it LIFO.
+   * Admitted-only: entries never imply a fetch. */
+  expandedRelated = $state<string[]>([]);
 
   /** Subjects whose §8.2 dossier context was fetched (or is in flight) —
    * one traversal per subject per session; dies with the session (start()
@@ -208,8 +208,8 @@ class Investigation {
     this.fillFailure = null;
     this.elapsedMs = null;
     this.selectedEventId = null;
-    this.canvasRootId = null;
-    this.expandedHubs = [];
+    this.graphSubjectId = null;
+    this.expandedRelated = [];
     this.contextFetched = new Set();
     this.running = true;
     const startedAt = performance.now();
@@ -306,29 +306,29 @@ class Investigation {
   }
 
   /** Dossier-open from any surface (card row, graph node, citation). The
-   * FIRST subject of an investigation also anchors the ego root (#29b
+   * FIRST subject of an investigation also anchors the graph subject (#29b
    * ruling 4); later opens move ring + dossier only. */
   selectSubject(id: string): void {
     this.selectedEventId = id;
-    if (this.canvasRootId === null) this.canvasRootId = id;
+    if (this.graphSubjectId === null) this.graphSubjectId = id;
   }
 
   /** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc clear the
-   * ring and return the drawer to its honest no-subject line. The ego root
-   * stays (ruling 4). The results cards' click-to-reaffirm (#29a ruling
-   * 10) is untouched — this path never runs there. */
+   * ring and return the drawer to its honest no-subject line. The graph
+   * subject stays (ruling 4). The results cards' click-to-reaffirm (#29a
+   * ruling 10) is untouched — this path never runs there. */
   clearSelection(): void {
     this.selectedEventId = null;
   }
 
-  /** Reveal a shadow hub's admitted neighbors (#29b ruling 8). */
-  expandHub(id: string): void {
-    if (!this.expandedHubs.includes(id)) this.expandedHubs.push(id);
+  /** Reveal a related product's admitted neighbors (#29b ruling 8). */
+  expandRelated(id: string): void {
+    if (!this.expandedRelated.includes(id)) this.expandedRelated.push(id);
   }
 
   /** Toolbar's undo chip — pops the LAST expansion, nothing else. */
-  undoExpandHub(): void {
-    this.expandedHubs.pop();
+  undoExpandRelated(): void {
+    this.expandedRelated.pop();
   }
 
   /** Traversal-failure visibility (lens #68, spec §4 honesty lane): the

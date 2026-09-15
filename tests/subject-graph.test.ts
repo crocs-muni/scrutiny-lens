@@ -1,9 +1,10 @@
-// Ego-graph trust gate (issue #29b): the canvas derivation is deterministic
-// over the admitted store — positions computable from protocol data only,
-// badges counting exactly what placement hides, retraction honored per the
-// honoured-deletion rule, and chain words verbatim from core resolve().
-// AI never speaks here: ego.ts takes no AI seam, so this file is the
-// conformance assertion for the canvas slice's data contract.
+// Subject-graph trust gate (issue #29b): the canvas derivation is
+// deterministic over the admitted store — positions computable from protocol
+// data only, badges counting exactly what placement hides, retraction
+// honored per the honoured-deletion rule, and chain words verbatim from
+// core resolve(). AI never speaks here: subject-graph.ts takes no AI seam,
+// so this file is the conformance assertion for the canvas slice's data
+// contract.
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -13,7 +14,7 @@ import {
 	buildProduct,
 	type UnsignedEvent
 } from '@scrutiny-fabric/core';
-import { deriveEgo, sideToward, chainWordOf } from '$lib/graph/ego';
+import { deriveSubjectGraph, sideToward, chainWordOf } from '$lib/graph/subject-graph';
 import type { NostrEvent } from '$lib/fabric';
 import type { ProductCard } from '$lib/pipeline/cards';
 
@@ -71,8 +72,8 @@ function cardFor(event: NostrEvent, overrides: Partial<ProductCard> = {}): Produ
 
 const NO_EXPAND = new Set<string>();
 
-/** base ego fixture: root with two metadata spokes (distinct verbs) — m1
- * carries the URL (files=1), m1 also bridges to shadow product p2, p2's
+/** base fixture: subject with two linked records (distinct verbs) — m1
+ * carries the URL (files=1), m1 also bridges to related product p2, p2's
  * own m2 stays hidden behind the badge. */
 function baseFixture() {
 	const root = product('root content\n', 1000, ['cve:CVE-2017-15361'], 'root');
@@ -87,15 +88,15 @@ function baseFixture() {
 	return { root, m1, m3, p2, m2, b1, b3, b2, b4 };
 }
 
-describe('deriveEgo — placement', () => {
-	it('centers the root; spokes take dyadic slots by ADMISSION ORDER (ruling 3 append-only)', () => {
+describe('deriveSubjectGraph — placement', () => {
+	it('centers the subject; records take dyadic slots by ADMISSION ORDER (ruling 3 append-only)', () => {
 		const f = baseFixture();
 		const events = [f.root, f.m1, f.m3, f.p2, f.m2, f.b1, f.b3, f.b2, f.b4];
 		const opts = { showDeleted: false, expanded: NO_EXPAND, cards: [] };
-		const a = deriveEgo(events, 'root', opts);
+		const a = deriveSubjectGraph(events, 'root', opts);
 
 		const root = a.nodes.find((n) => n.id === 'root');
-		expect(root).toMatchObject({ role: 'root', kind: 'product', x: 0, y: 0 });
+		expect(root).toMatchObject({ role: 'subject', kind: 'product', x: 0, y: 0 });
 		// m1 admitted before m3 → slot 0 (EAST), slot 1 (WEST).
 		const m1 = a.nodes.find((n) => n.id === 'm1');
 		const m3 = a.nodes.find((n) => n.id === 'm3');
@@ -110,14 +111,14 @@ describe('deriveEgo — placement', () => {
 		const before = [f.root, f.m1, f.b1];
 		const after = [f.root, f.m1, f.b1, f.m3, f.b3];
 		const opts = { showDeleted: false, expanded: NO_EXPAND, cards: [] };
-		const young = deriveEgo(before, 'root', opts);
-		const grown = deriveEgo(after, 'root', opts);
+		const young = deriveSubjectGraph(before, 'root', opts);
+		const grown = deriveSubjectGraph(after, 'root', opts);
 		for (const shared of young.nodes) {
 			const same = grown.nodes.find((n) => n.id === shared.id);
 			expect(same, `${shared.id} moved when the store grew`).toMatchObject({ x: shared.x, y: shared.y });
 		}
 		// …and identical input is fully deterministic (pure module).
-		expect(deriveEgo(after, 'root', opts)).toEqual(grown);
+		expect(deriveSubjectGraph(after, 'root', opts)).toEqual(grown);
 		// Slot 1's dyadic angle is π (west) — the sequence bit-reverses.
 		const m3 = grown.nodes.find((n) => n.id === 'm3');
 		expect(m3?.x).toBeCloseTo(-252, 5);
@@ -126,7 +127,7 @@ describe('deriveEgo — placement', () => {
 
 	it('diagonal slots move out one ring; overflow repeats the grid +1 ring', () => {
 		// The collision class the owner screenshot caught: at 45° on the
-		// inner ring (slot 4, chord 194px) spoke halves overlap 230px cards —
+		// inner ring (slot 4, chord 194px) record halves overlap 230px cards —
 		// slot 4 must sit on the +180 ring; slot 8 repeats the grid +1 ring.
 		const root = product('root\n', 1000, [], 'root');
 		const events: NostrEvent[] = [root];
@@ -136,7 +137,7 @@ describe('deriveEgo — placement', () => {
 				binding('root', `m${i}`, 'documents', 1500 + i, `b${i}`)
 			);
 		}
-		const view = deriveEgo(events, 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph(events, 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
 		// slot 4 = rev(4)=1 → 45° NE on the diagonal ring (radius 432):
 		// x≈y≈432·cos45≈305.47
 		const m4 = view.nodes.find((n) => n.id === 'm4');
@@ -150,16 +151,17 @@ describe('deriveEgo — placement', () => {
 		const m8 = view.nodes.find((n) => n.id === 'm8');
 		expect(m8?.x).toBeCloseTo(502, 5);
 		expect(m8?.y).toBeCloseTo(0, 5);
-		expect(view.nodes.filter((n) => n.role === 'spoke')).toHaveLength(10);
+		expect(view.nodes.filter((n) => n.role === 'record')).toHaveLength(10);
 	});
 
 	it('routes edges Metadata → Product with the verb label and facing handles', () => {
 		const f = baseFixture();
-		const view = deriveEgo([f.root, f.m1, f.b1], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
 		expect(view.edges).toHaveLength(1);
 		const edge = view.edges[0];
-		expect(edge).toMatchObject({ source: 'm1', target: 'root', label: 'affected by', shadowed: false });
-		// m1 sits east of the root → the edge leaves m1's left, enters root's right.
+		expect(edge).toMatchObject({ source: 'm1', target: 'root', label: 'affected by', related: false });
+		// m1 sits east of the subject → the edge leaves m1's left, enters the
+		// subject's right.
 		expect(edge.sourceHandle).toBe('left');
 		expect(edge.targetHandle).toBe('right');
 		expect(sideToward(0, 5)).toBe('bottom');
@@ -168,69 +170,71 @@ describe('deriveEgo — placement', () => {
 		expect(sideToward(-9, 1)).toBe('left');
 	});
 
-	it('an absent root (or a non-node event) yields an empty view — the canvas', () => {
+	it('an absent subject (or a non-node event) yields an empty view — the canvas', () => {
 		const f = baseFixture();
-		expect(deriveEgo([f.root], 'ghost', { showDeleted: false, expanded: NO_EXPAND, cards: [] })).toEqual({ nodes: [], edges: [] });
-		expect(deriveEgo([f.root, f.b1], 'b1', { showDeleted: false, expanded: NO_EXPAND, cards: [] })).toEqual({ nodes: [], edges: [] });
+		expect(deriveSubjectGraph([f.root], 'ghost', { showDeleted: false, expanded: NO_EXPAND, cards: [] })).toEqual({ nodes: [], edges: [] });
+		expect(deriveSubjectGraph([f.root, f.b1], 'b1', { showDeleted: false, expanded: NO_EXPAND, cards: [] })).toEqual({ nodes: [], edges: [] });
 	});
 });
 
-describe('deriveEgo — shadows and expansion (ruling 8)', () => {
-	it('shared metadata exposes the other end as a shadow hub with a hidden-neighbor badge; the edge stays', () => {
+describe('deriveSubjectGraph — related products and expansion (ruling 8)', () => {
+	it('a shared linked record exposes the other end as a related product with a hidden-neighbor badge; the edge stays', () => {
 		const f = baseFixture();
-		const view = deriveEgo([f.root, f.m1, f.m3, f.p2, f.m2, f.b1, f.b3, f.b2, f.b4], 'root', {
+		const view = deriveSubjectGraph([f.root, f.m1, f.m3, f.p2, f.m2, f.b1, f.b3, f.b2, f.b4], 'root', {
 			showDeleted: false,
 			expanded: NO_EXPAND,
 			cards: []
 		});
 		const p2 = view.nodes.find((n) => n.id === 'p2');
 		expect(p2).toBeDefined();
-		expect(p2).toMatchObject({ role: 'shadow', badge: 1 }); // m2 is admitted but not placed
-		// The bridge edge to the shadow renders dashed (G1 multihop ray)…
+		expect(p2).toMatchObject({ role: 'related', badge: 1 }); // m2 is admitted but not placed
+		// The bridge edge to the related product renders dashed (G1 multihop
+		// ray)…
 		const bridge = view.edges.find((e) => e.id === 'b2');
-		expect(bridge).toMatchObject({ source: 'm1', target: 'p2', shadowed: true });
+		expect(bridge).toMatchObject({ source: 'm1', target: 'p2', related: true });
 		// …but the hidden neighbor itself has no node and no edge.
 		expect(view.nodes.some((n) => n.id === 'm2')).toBe(false);
 		expect(view.edges.some((e) => e.id === 'b4')).toBe(false);
 	});
 
-	it('expansion promotes the shadow and fans its admitted neighbors out; the badge drains', () => {
+	it('expansion promotes the related product and fans its admitted records out; the badge drains', () => {
 		const f = baseFixture();
 		const events = [f.root, f.m1, f.m3, f.p2, f.m2, f.b1, f.b3, f.b2, f.b4];
-		const view = deriveEgo(events, 'root', {
+		const view = deriveSubjectGraph(events, 'root', {
 			showDeleted: false,
 			expanded: new Set(['p2']),
 			cards: []
 		});
 		const p2 = view.nodes.find((n) => n.id === 'p2');
-		expect(p2).toMatchObject({ role: 'spoke', badge: null }); // never zero-shown
+		expect(p2).toMatchObject({ role: 'record', badge: null }); // never zero-shown
 		const m2 = view.nodes.find((n) => n.id === 'm2');
 		expect(m2).toBeDefined();
-		expect(m2?.role).toBe('spoke');
-		// Shadow hub at inner-ring + one hub-width step from the origin…
-		const shadowP2 = view.nodes.find((n) => n.id === 'p2');
-		expect(shadowP2?.x).toBeCloseTo(252 + 250, 5);
-		// …and its own leaf one step beyond (east bridge ray).
+		expect(m2?.role).toBe('record');
+		// Related product at inner-ring + one subject-width step from the
+		// origin…
+		const relatedP2 = view.nodes.find((n) => n.id === 'p2');
+		expect(relatedP2?.x).toBeCloseTo(252 + 250, 5);
+		// …and its own record one step beyond (east bridge ray).
 		expect(m2!.x).toBeCloseTo(252 + 250 + 250, 5);
 		expect(m2!.y).toBeCloseTo(0, 5);
 		const leaf = view.edges.find((e) => e.id === 'b4');
-		expect(leaf).toMatchObject({ source: 'm2', target: 'p2', shadowed: false });
+		expect(leaf).toMatchObject({ source: 'm2', target: 'p2', related: false });
 	});
 
 	it('a binding to a never-admitted event contributes nothing — no node, edge, or silent guess', () => {
 		const f = baseFixture();
 		const ghost = binding('root', 'ghost-meta', 'documents', 1900, 'b9');
-		const view = deriveEgo([f.root, f.m1, f.b1, ghost], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1, ghost], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
 		expect(view.nodes.map((n) => n.id)).toEqual(['root', 'm1']);
 		expect(view.edges).toHaveLength(1);
-		// Hub counts are dossier-parity (dossier.ts fileRows): "bindings
+		// Subject counts are dossier-parity (dossier.ts fileRows): "bindings
 		// referencing this event" — the ghost row counts there (it renders as
 		// a bare mono id), so it counts here too.
 		expect(view.nodes[0]).toMatchObject({ boundMetadata: 2 });
 	});
 });
 
-describe('deriveEgo — retraction (ruling 10)', () => {
+describe('deriveSubjectGraph — retraction (ruling 10)', () => {
 	const DEL = (targetId: string): NostrEvent => ({
 		id: `del-${targetId}`,
 		pubkey: AUTHOR,
@@ -248,28 +252,28 @@ describe('deriveEgo — retraction (ruling 10)', () => {
 		const bd = binding('root', 'mdel', 'documents', 1300, 'bd');
 		const ba = binding('root', 'alive', 'documents', 1400, 'ba');
 		const events = [root, mdel, alive, bd, ba, DEL('mdel')];
-		const hidden = deriveEgo(events, 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const hidden = deriveSubjectGraph(events, 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
 		expect(hidden.nodes.some((n) => n.id === 'mdel')).toBe(false);
 		expect(hidden.edges.some((e) => e.id === 'bd')).toBe(false);
-		const shown = deriveEgo(events, 'root', { showDeleted: true, expanded: NO_EXPAND, cards: [] });
+		const shown = deriveSubjectGraph(events, 'root', { showDeleted: true, expanded: NO_EXPAND, cards: [] });
 		expect(shown.nodes.find((n) => n.id === 'mdel')).toMatchObject({ retracted: true });
 		expect(shown.edges.some((e) => e.id === 'bd')).toBe(true);
 	});
 
-	it('the root always renders, retraction included — the canvas mirrors an opened dossier', () => {
+	it('the subject always renders, retraction included — the canvas mirrors an opened dossier', () => {
 		const root = product('root\n', 1000, [], 'root');
-		const view = deriveEgo([root, DEL('root')], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([root, DEL('root')], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
 		expect(view.nodes).toHaveLength(1);
-		expect(view.nodes[0]).toMatchObject({ id: 'root', role: 'root', retracted: true });
+		expect(view.nodes[0]).toMatchObject({ id: 'root', role: 'subject', retracted: true });
 	});
 });
 
-describe('deriveEgo — chain word and edited count (ruling 9)', () => {
+describe('deriveSubjectGraph — chain word and edited count (ruling 9)', () => {
 	it('clean patches read plain edited ×N with no word', () => {
 		const root = product('v1\n', 1000, [], 'root');
 		const p1 = patch('root', 'root', 'v1\n', 'v2\n', 2000, 'p1');
 		const p2 = patch('root', 'p1', 'v2\n', 'v3\n', 3000, 'p2');
-		const view = deriveEgo([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
 		expect(view.nodes[0]).toMatchObject({ editedN: 2, chainWord: null });
 	});
 
@@ -278,7 +282,7 @@ describe('deriveEgo — chain word and edited count (ruling 9)', () => {
 		const p1 = patch('root', 'root', 'v1\n', 'v2\n', 2000, 'p1');
 		// H1 halt: a well-formed diff against the wrong base (T1 no-match).
 		const p2 = patch('root', 'p1', 'WRONG\n', 'v3\n', 3000, 'p2');
-		const view = deriveEgo([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
 		expect(view.nodes[0]).toMatchObject({ editedN: 1, chainWord: 'halted' });
 	});
 
@@ -286,7 +290,7 @@ describe('deriveEgo — chain word and edited count (ruling 9)', () => {
 		const root = product('v1\n', 1000, [], 'root');
 		const p1 = patch('root', 'root', 'v1\n', 'v2-a\n', 2000, 'p1a');
 		const p2 = patch('root', 'root', 'v1\n', 'v2-b\n', 2100, 'p1b');
-		const view = deriveEgo([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
 		expect(view.nodes[0]).toMatchObject({ editedN: 0, chainWord: 'forked' });
 	});
 
@@ -300,7 +304,7 @@ describe('deriveEgo — chain word and edited count (ruling 9)', () => {
 			.join('\n');
 		const root = product(wide, 1000, [], 'root');
 		const p1 = patch('root', 'root', wide, changed, 2000, 'p1');
-		const res = deriveEgo([root, p1], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const res = deriveSubjectGraph([root, p1], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
 		expect(res.nodes[0].chainWord).toBe('stopped at limit');
 	});
 
@@ -319,11 +323,11 @@ describe('deriveEgo — chain word and edited count (ruling 9)', () => {
 	});
 });
 
-describe('deriveEgo — node voice', () => {
+describe('deriveSubjectGraph — node voice', () => {
 	it('interpreted products take the cache title+snippet; metadata stays rule-5 mono with no snippet', () => {
 		const f = baseFixture();
 		const cards = [cardFor(f.root)];
-		const view = deriveEgo([f.root, f.m1, f.b1], 'root', { showDeleted: false, expanded: NO_EXPAND, cards });
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', { showDeleted: false, expanded: NO_EXPAND, cards });
 		const root = view.nodes.find((n) => n.id === 'root');
 		expect(root).toMatchObject({ title: 'AI title', interpreted: true, snippet: 'AI description' });
 		const m1 = view.nodes.find((n) => n.id === 'm1');
@@ -331,10 +335,10 @@ describe('deriveEgo — node voice', () => {
 		expect(m1).toMatchObject({ title: 'cve:CVE-2017-15361', interpreted: false, snippet: undefined });
 	});
 
-	it('hub counts scan the admitted store, not the placed subset', () => {
+	it('subject counts scan the admitted store, not the placed subset', () => {
 		const f = baseFixture();
 		// m2 never placed (p2 unexpanded) — but it IS an admitted binding of p2.
-		const view = deriveEgo([f.root, f.m1, f.m3, f.p2, f.m2, f.b1, f.b3, f.b2, f.b4], 'root', {
+		const view = deriveSubjectGraph([f.root, f.m1, f.m3, f.p2, f.m2, f.b1, f.b3, f.b2, f.b4], 'root', {
 			showDeleted: false,
 			expanded: NO_EXPAND,
 			cards: []
@@ -344,17 +348,17 @@ describe('deriveEgo — node voice', () => {
 		expect(view.nodes.find((n) => n.id === 'p2')).toMatchObject({ boundMetadata: 2, files: 1 });
 	});
 
-	it('a metadata ego root counts its bound PRODUCTS (dossier Files parity)', () => {
+	it('a metadata subject counts its bound PRODUCTS (dossier Files parity)', () => {
 		const f = baseFixture();
-		// m1 as the hub: counterparties are root and p2 — both counted, no
-		// metadata-kind self-filter (a metadata root's dossier Files shows
-		// exactly these rows).
-		const view = deriveEgo([f.root, f.m1, f.p2, f.b1, f.b2], 'm1', {
+		// m1 as the subject: counterparties are root and p2 — both counted,
+		// no metadata-kind self-filter (a metadata subject's dossier Files
+		// shows exactly these rows).
+		const view = deriveSubjectGraph([f.root, f.m1, f.p2, f.b1, f.b2], 'm1', {
 			showDeleted: false,
 			expanded: NO_EXPAND,
 			cards: []
 		});
-		const hub = view.nodes.find((n) => n.id === 'm1');
-		expect(hub).toMatchObject({ boundMetadata: 2, kind: 'metadata', role: 'root' });
+		const subject = view.nodes.find((n) => n.id === 'm1');
+		expect(subject).toMatchObject({ boundMetadata: 2, kind: 'metadata', role: 'subject' });
 	});
 });
