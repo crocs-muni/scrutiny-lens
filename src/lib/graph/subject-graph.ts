@@ -19,9 +19,10 @@
  *  - Retraction (ruling 10 / N3): retracted nodes vanish from the canvas
  *    unless Show deleted — EXCEPT the subject itself: the canvas mirrors an
  *    explicitly opened dossier, and a dossier always renders (ruling 3/#29a).
- *  - Chain word (ruling 9): one amber footer word, verbatim from core
- *    resolve()'s chain status — halted / forked / stopped at limit (§5.4:
- *    an abort is never named "halted"). Clean chains show plain `edited ×N`
+ *  - Chain word (ruling 9): one amber footer word mapped 1:1 from core
+ *    resolve()'s ChainState.status — halted / forked, and the §0 status
+ *    `aborted` rendered as the plain "stopped at limit" (owner ruling: an
+ *    abort never reads as "halted"). Clean chains show plain `edited ×N`
  *    (N1⑥, applied canonical patches only). No word without patches.
  *  - resolveGraph drops bindings whose other endpoint isn't admitted
  *    (dossier.ts header) — the canvas never counts those in +N; the dossier
@@ -95,7 +96,7 @@ export interface SubjectGraphNode {
 	editedN: number;
 	chainWord: ChainWord | null;
 	/** Related-product badge: admitted neighbors hidden by placement — never
-	 * zero-shown (BILE: never zero-shown); null on other nodes. */
+	 * zero-shown (BIBLE: never zero-shown); null on other nodes. */
 	badge: number | null;
 	/** xyflow position (px, center-origin). */
 	x: number;
@@ -210,7 +211,8 @@ interface BindingRow {
 	label: string;
 }
 
-/** The amber footer word, verbatim from the resolution (ruling 9). */
+/** The amber footer word, mapped 1:1 from the resolution's ChainState
+ * (ruling 9; `aborted` renders as plain "stopped at limit"). */
 export function chainWordOf(resolution: Resolution): { word: ChainWord | null; editedN: number } {
 	switch (resolution.chain.status) {
 		case 'halted':

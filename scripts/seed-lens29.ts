@@ -138,7 +138,7 @@ const f2 = sign(
 );
 
 // Honoured retraction (DEL-1: same author, e-tag) — store-only relay keeps
-// it inert; the client computes the state (resolveGraph/deriveEgo).
+// it inert; the client computes the state (resolveGraph/deriveSubjectGraph).
 const del = finalizeEvent({ kind: 5, created_at: NOW - 2 * DAY, tags: [['e', pD.id]], content: '' }, sk);
 
 const profile = finalizeEvent(
