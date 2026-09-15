@@ -37,8 +37,6 @@
 	import FlowActions, { type FlowViewportActions } from './FlowActions.svelte';
 	import { deriveEgo, FIT_OPTIONS } from '$lib/graph/ego';
 	import { investigation } from '$lib/investigation.svelte';
-	import { VERB_CLIP } from '$lib/dossier';
-	import { clipMiddle } from '$lib/text';
 	import { shell } from '$lib/shell.svelte';
 	import { chat } from '$lib/chat.svelte';
 	import { CITATION_SLOTS } from '$lib/ai/citationRegistry';
@@ -105,28 +103,25 @@
 			id: e.id,
 			source: e.source,
 			target: e.target,
-			// The binding's verb, clipped (N1⑦) — corpus bindings carry
-			// machine sentences, which at full length paint a canvas-spanning
-			// bar where an edge label belongs (owner screenshot 2026-09-14);
-			// '' stays unlabeled.
-			label: e.label === '' ? undefined : clipMiddle(e.label, VERB_CLIP),
+			// NO text on canvas edges (owner ruling 2026-09-14, superseding
+			// N1⑦'s label anatomy: corpus binding content is a machine
+			// sentence, useless as a verbal edge; verbs live in the drawer's
+			// Files rows and Content instead).
 			sourceHandle: `s-${e.sourceHandle}`,
 			targetHandle: `t-${e.targetHandle}`,
 			// Arrows at the destination end (N1⑦ crow's-foot rule); shadow
-			// edges wear G1's amber dashed multihop language.
+			// edges wear G1's amber dashed multihop language. Strokes use
+			// --ink-3, not --line-strong: the hairline tone is white-on-white
+			// in LIGHT mode (owner screenshot, every prior round was dark).
 			markerEnd: {
 				type: MarkerType.ArrowClosed,
 				width: 14,
 				height: 14,
-				color: e.shadowed ? 'var(--orange)' : 'var(--line-strong)'
+				color: e.shadowed ? 'var(--orange)' : 'var(--ink-3)'
 			},
 			style: e.shadowed
 				? 'stroke: var(--orange); stroke-dasharray: 4 5; stroke-width: 1.8;'
-				: 'stroke: var(--line-strong); stroke-width: 1.8;',
-			// Halo, not a chip: a fill-rect labelBgStyle reads as an unthemed
-			// white bar (owner report 2026-09-14); paint-order stroke keeps
-			// the verb legible on the dots at every zoom.
-			labelStyle: `font-family: var(--font-mono-face); font-size: 10px; fill: ${e.shadowed ? 'var(--orange)' : 'var(--ink-2)'}; paint-order: stroke; stroke: var(--canvas); stroke-width: 4px;`
+				: 'stroke: var(--ink-3); stroke-width: 1.8;'
 		}));
 	});
 </script>
