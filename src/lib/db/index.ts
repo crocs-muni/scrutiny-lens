@@ -244,6 +244,22 @@ async function open(): Promise<void> {
 		});
 		persistent = true;
 		void navigator.storage?.persist?.().catch(() => {});
+		// Issue #46: a second tab on a NEWER schema build asks the browser for
+		// an upgrade; the versionchange event fires on every older connection,
+		// which must CLOSE or the newer open (and every open after it) waits on
+		// us forever. Without this handler an old-build tab wedges the whole
+		// profile (owner incident 2026-09-10: v3→v4 never fired, opens queued
+		// permanently, all persistence silently dead). Yielding here means we
+		// run memory-only until the tab reloads — which is the honest degrade
+		// (spec §6): ops no-op instead of lying about persistence.
+		conn.onversionchange = () => {
+			conn?.close();
+			conn = undefined;
+			persistent = false;
+			console.warn(
+				'[db] newer schema requested by another tab; closed this connection, memory-only until reload'
+			);
+		};
 	} catch {
 		// Safari private windows can open IDB yet abort transactions; any open
 		// failure simply means memory-only operation (spec §6 silent degrade).

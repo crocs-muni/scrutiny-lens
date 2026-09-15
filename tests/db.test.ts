@@ -491,4 +491,28 @@ describe('schema upgrade (v1 → v2 convergence)', () => {
 		expect((await listEvents()).map((e) => e.id)).toEqual(['e1']);
 		expect(await getEventsByTag('nostr')).toEqual(['e1']);
 	});
+
+	it('yields its connection on versionchange so a newer tab can upgrade (issue #46)', async () => {
+		// Two-tab wedge: the module holds a connection; a "newer build" tab
+		// opens at DB_VERSION+1. Without an onversionchange handler the held
+		// connection never closes, the newer open's upgrade can never start,
+		// and every later open (of any version) queues behind it forever —
+		// the permanent init hang reproduced on the owner's profile after the
+		// v3→v4 bump. The held connection must close on versionchange.
+		// Awaiting the upgrade directly: with the fix the held connection's
+		// onversionchange closes it and the newer open completes; without the
+		// fix the upgrade waits on the held connection forever and vitest's
+		// test timeout fails this test (no fake timers will drive IDB's real
+		// event loop — the red state IS the waited-on event never firing).
+		await openDB(DB_NAME, DB_VERSION + 1, {
+			upgrade(db) {
+				if (!db.objectStoreNames.contains('futureStore')) {
+					db.createObjectStore('futureStore', { keyPath: 'id' });
+				}
+			}
+		});
+		// And per spec §6 the yielded tab degrades honestly instead of throwing:
+		// the module marks itself non-persistent and ops no-op.
+		expect(isPersistent()).toBe(false);
+	}, 8000);
 });
