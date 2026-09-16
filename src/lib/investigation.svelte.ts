@@ -28,12 +28,14 @@ import {
   type SkeletonCard,
 } from "$lib/pipeline";
 import type { SearchRequest } from "$lib/ai/agents/query";
+import type { NostrEvent } from 'nostr-tools/core';
 import { batchNodeInterpret } from "$lib/ai/agents/nodes";
 import { getInterpretation, saveInterpretation } from "$lib/db";
 import type { NodeTile } from "$lib/graph/subject-graph";
 import {
   admitBatch,
   resolveGraph,
+  scrutinyEventType,
   type NostrEvent as FabricEvent,
 } from "$lib/fabric";
 import { indexEvent } from "$lib/search";
@@ -140,6 +142,19 @@ class Investigation {
    * session-store work, spec §0). */
   sessionId = $state<string | null>(null);
 
+  /** Hinted relays a cold-open share link reported as failed (issue #31,
+   * spec §4): the event still opened — from the rest of the hints or the
+   * cache — so this is a degradation notice, not a block. Set by
+   * openShared from the resolver's report; dies with the investigation
+   * like the run's other state. */
+  shareHints = $state<string[]>([]);
+
+  /** Whether the cold-open link carried any relay hints at all (issue #31
+   * F2): the share-hints notice only renders combined with a non-empty
+   * shareHints — a hintless link that resolved via the configured pool
+   * must not be blamed for "failed hints" it never had (spec §4 never-lie). */
+  hasShareHints = $state(false);
+
   /** The selected dossier subject (issue #29a, ADR 0001): store-level —
    * facet filters and view hops never clear it; it dies exactly where the
    * investigation itself dies (start/stop/reset). Deselect is canvas-only
@@ -192,15 +207,14 @@ class Investigation {
     }
   }
 
-  /** Start a search from the J1 composer. The transport and provider are
-   * constructed per run from live settings — edits in Settings take effect
-   * on the next question, never mid-run. */
-  async start(question: string): Promise<void> {
-    this.controller?.abort();
-    const controller = new AbortController();
-    this.controller = controller;
+  /** Fresh-canvas reset for a brand-new run (issue #31): start() and
+   * openShared() both supersede whatever a live run painted — identical
+   * fields, so one reset keeps the two entry points in lockstep. Callers
+   * set their deltas right after (start: the question; openShared: done
+   * phase + the cold-open's failed hints). */
+  private resetRun(): void {
     this.phase = "idle";
-    this.lastQuestion = question;
+    this.lastQuestion = "";
     this.slices = [];
     this.searches = [];
     this.skeletons = [];
@@ -220,10 +234,23 @@ class Investigation {
     this.graphSubjectId = null;
     this.expandedRelated = [];
     this.contextFetched = new Set();
+    this.shareHints = [];
+    this.hasShareHints = false;
     this.nodeTiles = new Map();
     this.nodeQueue = [];
     this.nodeQueued = new Set();
     this.running = true;
+  }
+
+  /** Start a search from the J1 composer. The transport and provider are
+   * constructed per run from live settings — edits in Settings take effect
+   * on the next question, never mid-run. */
+  async start(question: string): Promise<void> {
+    this.controller?.abort();
+    const controller = new AbortController();
+    this.controller = controller;
+    this.resetRun();
+    this.lastQuestion = question;
     const startedAt = performance.now();
 
     // The session row exists before the first slice so the rail shows the
@@ -307,6 +334,109 @@ class Investigation {
         this.elapsedMs = Math.round(performance.now() - startedAt);
       }
     }
+  }
+
+  /**
+   * Cold-open adoption for issue #31 share links (spec §1 L22, §8): the
+   * shared root was already fetched and admission-gated by the event route
+   * (share-open.ts + fabric's admitEvent); this adopts it as a ONE-SUBJECT
+   * run shaped exactly like a settled search — same store-level selection,
+   * session row, cards, facet groups, fill lane, and dossier-context legs —
+   * so the drawer opens on the FULL card-inspection screen for the shared
+   * subject, uninterpreted first with the existing progressive fill.
+   * `failedHints` are the hinted relays the resolver could not reach; they
+   * surface as a dismissible degradation notice on both center surfaces
+   * (spec §4: tell the recipient which hinted relays failed). `hadHints`
+   * records whether the link carried relay hints at all — the notice
+   * renders ONLY when a hinted link actually had failures, so a hintless
+   * link that resolved is never blamed for hints it never had (§4).
+   */
+  async openShared(root: NostrEvent, failedHints: string[], hadHints: boolean): Promise<void> {
+    this.controller?.abort();
+    const controller = new AbortController();
+    this.controller = controller;
+    // Same fresh-canvas reset as start() — a cold open supersedes any
+    // live run — plus its deltas: no trace stages, hints carried over.
+    this.resetRun();
+    this.phase = "done";
+    this.shareHints = failedHints;
+    this.hasShareHints = hadHints;
+
+    // The session row exists before any card paints (same rationale as
+    // start()): the rail shows the shared investigation while the fill
+    // lane works. There is no question — the type tag names it honestly.
+    shell.newSession(this.shareTitle(root));
+    this.sessionId = shell.session?.id ?? null;
+    shell.view = "session";
+    shell.drawerOpen = true;
+
+    this.result = {
+      searches: [],
+      admitted: [root],
+      invalidSkipped: 0,
+      notices: [],
+      relays: [],
+    } as SearchSession;
+    this.cards = assembleCards(resolveGraph([root]), [root]);
+    this.facetGroups = computeFacets([root]);
+    // Store-level selection: the drawer opens on the shared subject — the
+    // card-inspection screen the share URL promises (spec §8).
+    this.selectSubject(root.id);
+    // §8.2 dossier context — patches and deletions are unreachable by the
+    // search's discovery filters; open them the way a card click would
+    // (fire-and-forget like openDossier, spec §8.2 lens #68).
+    void this.refreshSessionContext();
+    void this.ensureSubjectContext(root.id);
+    // Cache write-through: a revisit of the same link (or a search that
+    // finds the event) hits getEvent cache-first instead of re-fetching
+    // (spec §6). Best-effort like the pipeline's own write-through.
+    void indexEvent(root as unknown as FabricEvent).catch(() => {});
+
+    // Progressive fill — the SAME existing lane as a search (spec §8
+    // "uninterpreted first"): the shared card renders rule-5 immediately
+    // and interprets in chunks when a provider is configured. Cached
+    // interpretations return instantly from the cache pass inside.
+    const provider: ProviderOverrideInput | undefined =
+      settings.apiKey === ""
+        ? undefined
+        : {
+            baseUrl: settings.endpoint,
+            model: settings.model,
+            apiKey: settings.apiKey,
+          };
+    if (provider !== undefined && settings.model !== "" && this.cards.length > 0) {
+      // Fire-and-forget, deliberately NOT awaited: the cold open's caller
+      // (the event route) must hand over to the shell immediately — the
+      // card renders rule-5 now and the existing fill lane interprets it in
+      // place on the session surface ("uninterpreted first", spec §8).
+      this.filling = true;
+      void this.fillInChunks(
+        provider,
+        defaultCallLLM,
+        controller,
+        LANE_STAGGER_MS,
+        streamLLM
+      )
+        .catch(() => {})
+        .finally(() => {
+          if (this.controller === controller) this.filling = false;
+        });
+    }
+    if (this.controller === controller) {
+      this.running = false;
+      this.elapsedMs = 0;
+    }
+  }
+
+  /** Run title for a shared root — there is no question (spec §8); the
+   * core's own type classifier names the card honestly from its `t` tag
+   * ("Shared product" / "Shared metadata"), falling back to the neutral
+   * "Shared event" for anything else (a foreign or type-less root can
+   * never reach here anyway — the gate rejects it, spec §3). Hand-rolled
+   * tag sniffing is not used: core is the single classifier (AGENTS.md). */
+  private shareTitle(root: NostrEvent): string {
+    const type = scrutinyEventType(root as unknown as FabricEvent);
+    return type === "product" || type === "metadata" ? `Shared ${type}` : "Shared event";
   }
 
   /** Abort the in-flight run (spec §8) without clearing what it already
@@ -805,6 +935,7 @@ export function resetInvestigation(): void {
   investigation.fillErrorMessage = null;
   investigation.selectedEventId = null;
   investigation.contextFetched = new Set();
+  investigation.shareHints = [];
   investigation._resetNodeFill();
   investigation.running = false;
 }

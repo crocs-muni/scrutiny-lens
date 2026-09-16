@@ -34,7 +34,11 @@ export const DB_NAME = 'scrutiny-lens';
 // database that somehow already has them, and inert against the two stores'
 // absence on pre-v5 databases — the bump is what guarantees the upgrade
 // fires at all, exactly the v4 lesson restated.
-export const DB_VERSION = 5;
+//
+// v6 (issue #31) adds relayHints, the per-event seen-on relay registry the
+// share-link flow encodes into nevent hints (spec §8) and the cold-open
+// reports against (§4). Same no-op store-set change as v4/v5.
+export const DB_VERSION = 6;
 const SETTINGS_KEY = 'app';
 
 /** Ring size for the dead-letter store; deadLetter.ts imports this so the
@@ -130,6 +134,10 @@ interface LensDB extends DBSchema {
 		indexes: { sessionId: string };
 	};
 	chatPins: { key: string; value: { sessionId: string; pins: string[] } };
+	// v6 (issue #31): per-event seen-on relay hints, keyed by event id.
+	// Value shape mirrors chatPins (id field + array payload) so both stores
+	// share the same keyPath convention. See seen-on.ts.
+	relayHints: { key: string; value: { eventId: string; relays: string[] } };
 }
 
 let conn: IDBPDatabase<LensDB> | undefined;
@@ -239,6 +247,12 @@ async function open(): Promise<void> {
 				}
 				if (!db.objectStoreNames.contains('chatPins')) {
 					db.createObjectStore('chatPins', { keyPath: 'sessionId' });
+				}
+				if (!db.objectStoreNames.contains('relayHints')) {
+					// v6 (issue #31): seen-on relay hints for share links (spec §8).
+					// keyed by event id so one row per event, hints in seen order.
+					// Same guard shape as every store above.
+					db.createObjectStore('relayHints', { keyPath: 'eventId' });
 				}
 			}
 		});
@@ -427,6 +441,28 @@ export async function getChatPins(
 	sessionId: string
 ): Promise<{ sessionId: string; pins: string[] } | null> {
 	return attempt(async (d) => (await d.get('chatPins', sessionId)) ?? null, null);
+}
+
+/** Merge-on-write seen-on hint (v6, issue #31): ONE readwrite transaction
+ * merges the new url into the stored list — the same merge fix as
+ * saveInterpretation (review T-1), so concurrent recordSeenOn calls from
+ * fetchRouted's per-relay legs cannot lose a hint. First-observed wins
+ * (a listed url is a no-op); `cap` trims later arrivals (SEEN_ON_CAP). */
+export async function saveRelayHint(eventId: string, relayUrl: string, cap: number): Promise<void> {
+	await attempt(async (d) => {
+		const tx = d.transaction('relayHints', 'readwrite');
+		const hints = (await tx.store.get(eventId))?.relays ?? [];
+		if (hints.includes(relayUrl)) return;
+		await tx.store.put({ eventId, relays: [...hints, relayUrl].slice(0, cap) });
+		await tx.done;
+	}, undefined);
+}
+
+/** Reads one event's seen-on relay hints; null when never observed. */
+export async function getRelayHints(
+	eventId: string
+): Promise<{ eventId: string; relays: string[] } | null> {
+	return attempt(async (d) => (await d.get('relayHints', eventId)) ?? null, null);
 }
 
 /** Appends and trims inside one transaction, keeping the DEAD_LETTER_CAP

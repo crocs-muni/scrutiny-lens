@@ -45,6 +45,7 @@
 import { SimplePool } from 'nostr-tools/pool';
 import type { NostrEvent } from 'nostr-tools/core';
 import { mergeFilters, type Filter } from 'nostr-tools/filter';
+import { recordSeenOn } from './seen-on';
 
 /** Per-relay connect timeout (ms). Each relay connects independently. */
 export const CONNECT_TIMEOUT_MS = 5_000;
@@ -265,6 +266,13 @@ class RelayTransport implements Transport {
 							'fetch'
 						);
 						const status: RelayStatus = { url, status: 'ok' as const, count: events.length };
+						// Issue #31 (spec §8): each ok event is recorded as seen on
+						// THIS relay, so the share link's nevent hints reflect where
+						// the event was actually observed. Fire-and-forget and
+						// idempotent (first-observed wins); must also run on the
+						// no-op traversal legs where onSlice still fires — hints are
+						// about observation, not about slice usefulness.
+						for (const event of events) recordSeenOn(event.id, url);
 						onSlice({ url, events, status, route: route.label });
 						return { status, events };
 					} catch (error) {

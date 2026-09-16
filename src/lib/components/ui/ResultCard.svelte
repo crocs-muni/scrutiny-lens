@@ -1,12 +1,13 @@
 <script lang="ts">
 	/* RESULT CARD — P3 anatomy per BIBLE J2 (issue #38, spec §9 + §2 rule 5).
 	 *
-	 * Variants:
-	 *   interpreted     — title (sans 14.5/600) + snippet (sans 13.5, lh 1.55);
-	 *                     mono id chips; hairline-split footer (publisher chip
-	 *                     + event-age clock + icon counts); share icon copies
-	 *                     the raw `nevent` (#31 will own the full share route).
-	 *   not interpreted — dashed border, event's own tags + first chars,
+ * Variants:
+ *   interpreted     — title (sans 14.5/600) + snippet (sans 13.5, lh 1.55);
+ *                     mono id chips; hairline-split footer (publisher chip
+ *                     + event-age clock + icon counts). No action buttons
+ *                     on faces (spec §9): sharing lives in the drawer's
+ *                     SharePopover, never on the card surface.
+ *   not interpreted — dashed border, event's own tags + first chars,
 	 *                     "not interpreted" badge; same footer (publisher +
 	 *                     metadata/files/updates counts are deterministic,
 	 *                     never AI). While a fill lane holds the card's id in
@@ -16,17 +17,16 @@
 	 *                     field names the lane-side SETTLE signal (in-flight
 	 *                     claims), and only the badge TEXT speaks user UI
 	 *                     vocabulary; same split as `filling` / "AI slow…".
-	 *   retracted       — either variant + red warning pill (protocol kind-5,
-	 *                     never presentational, spec §2 rule 2); retracted
-	 *                     interpreted cards name their provenance ("as relays
-	 *                     returned") in place of the share action. */
+ *   retracted       — either variant + red warning pill (protocol kind-5,
+ *                     never presentational, spec §2 rule 2); retracted
+ *                     interpreted cards name their provenance ("as relays
+ *                     returned"). */
 
 	import type { ProductCard } from '$lib/pipeline/cards';
 	import type { SkeletonCard } from '$lib/pipeline';
 	import { formatRel } from '$lib/shell.svelte';
-	import { nip19 } from 'nostr-tools';
 	import PublisherChip from './PublisherChip.svelte';
-	import { IconCheck, IconClock, IconFile, IconLink, IconPencil, IconShare } from '@tabler/icons-svelte';
+	import { IconClock, IconFile, IconLink, IconPencil } from '@tabler/icons-svelte';
 
 interface Props {
 	/** Skeleton during fetch (rule 5), ProductCard once assembled. */
@@ -77,17 +77,6 @@ const dashed = $derived(product === null || !product.interpreted);
 	const extraIdentifiers = $derived(
 		product === null ? 0 : product.identifiers.length - shownIdentifiers.length
 	);
-
-	let shared = $state(false);
-	async function share(): Promise<void> {
-		if (product === null) return;
-		// Deep link to the raw event (issue #31's shape); copy the address —
-		// the card never opens anything outside the user's own clipboard.
-		const nevent = nip19.neventEncode({ id: product.id, author: product.pubkey });
-		await navigator.clipboard.writeText(nevent);
-		shared = true;
-		setTimeout(() => (shared = false), 1500);
-	}
 
 	function open(): void {
 		onOpen?.();
@@ -160,24 +149,6 @@ const dashed = $derived(product === null || !product.interpreted);
 					retracted
 				</span>
 				<span class="shrink-0 font-mono text-[11px] text-ink-2">as relays returned</span>
-			{:else}
-				<!-- share: copies the raw event address (nevent) -->
-				<button
-					type="button"
-					aria-label="Copy share link"
-					title={shared ? 'copied' : 'Copy share link'}
-					class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] text-ink-2 hover:bg-inset"
-					onclick={(e) => {
-						e.stopPropagation();
-						void share();
-					}}
-				>
-					{#if shared}
-						<IconCheck size={13} stroke={2} />
-					{:else}
-						<IconShare size={13} stroke={2} />
-					{/if}
-				</button>
 			{/if}
 		</div>
 		{#if product.snippet !== undefined}

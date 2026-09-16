@@ -252,6 +252,19 @@
 		noticeRollup('capability', 'relays report no or unverifiable search support')
 	);
 	const traversalNote = $derived(noticeRollup('traversal', 'context-fetch warnings'));
+	// Issue #31 (spec §4): a cold-open share link carried relay hints and
+	// some of them failed — the record still opened (from the rest of the
+	// hints or the cache), so it's a degradation banner on both center
+	// surfaces, not a block. Gated on hasShareHints (F2): a HINTLESS link
+	// that resolved via the configured pool must not be blamed for "failed
+	// hints" it never carried (spec §2 never-lie).
+	const shareNote = $derived(
+		!investigation.hasShareHints || investigation.shareHints.length === 0
+			? ''
+			: investigation.shareHints.length === 1
+				? `hinted relay ${investigation.shareHints[0]} failed — record opened from the rest`
+				: `${investigation.shareHints.length} hinted relays failed (${investigation.shareHints.join(' · ')}) — record opened from the rest`
+	);
 	// §4: no AI key set — everything still works; the hint belongs on the
 	// RESULTS surface too (the hero's NoKeyBanner is invisible post-submit).
 	const noKey = $derived(settings.apiKey === '' && investigation.result !== null);
@@ -375,6 +388,7 @@
 									{@render note(aiNote !== '', 'ai-note', aiNote)}
 									{@render note(degradedNote !== '', 'degraded', degradedNote)}
 									{@render note(traversalNote !== '', 'traversal', traversalNote)}
+									{@render note(shareNote !== '', 'share-hints', shareNote)}
 									{#if investigation.result !== null}
 										<!-- header: cohort only (spec §3); centers on the same 760
 											rail as cards (scroller spans wider so its scrollbar
@@ -451,6 +465,10 @@
 						under this session's title. -->
 					{#if sessionOwnsRun}
 						<div class="flex min-h-0 w-full flex-1 flex-col">
+							<!-- issue #31 (spec §4): the cold open lands on the SESSION
+								surface, so the failed-hint degradation lives here too —
+								same dismissible lane as the results surface. -->
+							{@render note(shareNote !== '', 'share-hints', shareNote)}
 							{#key investigation.graphSubjectId}
 								<GraphCanvas
 									events={investigation.result?.admitted ?? []}
