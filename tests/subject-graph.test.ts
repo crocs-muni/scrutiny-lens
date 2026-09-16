@@ -77,7 +77,9 @@ const NO_EXPAND = new Set<string>();
  * own m2 stays hidden behind the badge. */
 function baseFixture() {
 	const root = product('root content\n', 1000, ['cve:CVE-2017-15361'], 'root');
-	const m1 = metadata('CVE-2017-15361 advisory https://x.test/a.pdf', 1100, ['cve:CVE-2017-15361'], 'm1');
+	// m1's artifact uses the labeled-line grammar (#77) — a mid-prose URL
+	// is deliberately NOT an artifact (the advisory-homepage bug).
+	const m1 = metadata('CVE-2017-15361 advisory.\nPDF: https://x.test/a.pdf', 1100, ['cve:CVE-2017-15361'], 'm1');
 	const m3 = metadata('Security Target document', 1200, ['st:ST-1'], 'm3');
 	const p2 = product('second product\n', 1300, ['cpe:2.3:h:nxp:jcop4'], 'p2');
 	const m2 = metadata('Maintenance report, no links', 1400, [], 'm2');

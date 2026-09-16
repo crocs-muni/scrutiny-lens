@@ -42,6 +42,7 @@ import {
 	type Resolution
 } from '$lib/fabric';
 import { bindingEndpoints } from '$lib/fabric';
+import { artifactsOf } from '$lib/artifacts';
 import { deriveFallbackTitle, type ProductCard } from '$lib/pipeline/cards';
 
 /** Radial roles — the subject centered, its own records in ring 1; related
@@ -409,10 +410,15 @@ export function deriveSubjectGraph(
 		// counted rows are its bound products — the same rows its dossier
 		// Files section renders.
 		const bound = bindingsByEndpoint.get(id) ?? [];
-		const files = bound.filter((b) => {
-			const ev = byId.get(otherEnd(b, id));
-			return ev !== undefined && /https?:\/\//.test(ev.content);
-		});
+		// Files = ARTIFACTS (issue #77), the dossier's exact row semantics:
+		// subject-own + per-binding artifacts of the other end, one seam —
+		// never "URL in content" (an advisory's homepage is not a file).
+		const fileCount =
+			artifactsOf(event).length +
+			bound.reduce((sum, b) => {
+				const ev = byId.get(otherEnd(b, id));
+				return sum + (ev === undefined ? 0 : artifactsOf(ev).length);
+			}, 0);
 		// Materialized ids are placed by construction (the subject, its
 		// records, related-product, and their-record sets drive both) — a
 		// placement regression must scream, not collapse a node onto the
@@ -441,7 +447,7 @@ export function deriveSubjectGraph(
 			createdAt: event.created_at,
 			snippet: kind === 'product' && interpreted ? card?.snippet : undefined,
 			boundMetadata: bound.length,
-			files: files.length,
+			files: fileCount,
 			editedN,
 			chainWord: word,
 			badge: hidden > 0 ? hidden : null,

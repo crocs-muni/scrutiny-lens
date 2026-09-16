@@ -143,14 +143,13 @@ describe("assembleCards (issue #28)", () => {
     expect(cards[0].updates).toBe(2);
   });
 
-  it("counts files: bound metadata whose content carries an http(s) link (spec §2 — deterministic)", () => {
+  it("counts files via the artifact seam (#77): a labeled PDF descriptor is a file; a prose-only record stays at zero (never a mere url, spec §2 deterministic)", () => {
     const prod = event("prod-1");
     const metaWithLink = event("meta-1", {
-      content:
-        "Maintenance report #1. PDF: https://commoncriteriaportal.org/maint.pdf",
+      content: "Maintenance report #1.\nPDF: https://commoncriteriaportal.org/maint.pdf",
     });
     const metaPlain = event("meta-2", {
-      content: "keywords: EAL5, smart card, TOC",
+      content: "keywords: EAL5, smart card, TOC https://example.com/",
     });
     const graph: GraphView = {
       nodes: [

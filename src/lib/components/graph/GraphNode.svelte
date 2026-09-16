@@ -212,10 +212,12 @@
 				>
 			{/each}
 			{#if data.kind === 'product'}
-				<span class="ml-auto flex items-center gap-1" title="bound metadata"
+				<!-- Icon pair pinned with ResultCard (§9): IconFile =
+					bound records, IconLink = artifacts (issue #77). -->
+				<span class="ml-auto flex items-center gap-1" title="bound records (metadata)"
 					><IconFile size={11} stroke-width={2} />{data.boundMetadata}</span
 				>
-				<span class="flex items-center gap-1" title="files (linked artifacts)"
+				<span class="flex items-center gap-1" title="artifacts (pdf/csv/…) named by this record or its bound records"
 					><IconLink size={11} stroke-width={2} />{data.files}</span
 				>
 			{/if}

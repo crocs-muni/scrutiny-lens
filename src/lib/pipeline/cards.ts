@@ -18,6 +18,7 @@ import {
 } from "$lib/fabric";
 import type { NostrEvent as FabricEvent } from "$lib/fabric";
 import type { ProviderOverrideInput } from "$lib/ai/provider";
+import { artifactsOf } from "$lib/artifacts";
 import { getInterpretation, saveInterpretation } from "$lib/db";
 import { type AIKind, type CallLLM } from "$lib/ai/output";
 import { generateRecords, streamRecords, type StreamLLM } from "$lib/ai/records";
@@ -68,10 +69,14 @@ export function assembleCards(
       const boundEdges = graph.edges.filter(
         (e) => e.target === node.id && e.source !== node.id,
       );
-      const files = boundEdges.filter((edge) => {
+      // Footer files = ARTIFACTS over the GRAPH-PRESENT set (issue #77):
+      // own + bound sources, one seam (artifactsOf) — the dossier's card
+      // divergence is the input universe (graph-present here, admitted
+      // there), never the extraction judgement (dossier.ts note).
+      const files = artifactsOf(ev).length + boundEdges.reduce((sum, edge) => {
         const src = graph.nodes.find((n) => n.id === edge.source);
-        return src !== undefined && /https?:\/\//.test(src.event.content);
-      }).length;
+        return sum + (src === undefined ? 0 : artifactsOf(src.event).length);
+      }, 0);
       const updates = patchSources.filter((p) => {
         const eTags = tagValues(p, "e");
         return eTags.includes(node.id) && tTags(p).includes("scrutiny-patch");

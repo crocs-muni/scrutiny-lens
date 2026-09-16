@@ -41,6 +41,7 @@ import {
 	type Resolution
 } from '$lib/fabric';
 import { deriveFallbackTitle, type ProductCard } from '$lib/pipeline/cards';
+import { artifactsOf, type ArtifactRef } from '$lib/artifacts';
 
 export interface DossierTitle {
 	text: string;
@@ -77,17 +78,23 @@ export interface HistoryRow {
 }
 
 export interface FileRow {
-	bindingId: string;
-	/** The binding event's own content — the edge verb ("documents"). '' =
-	 * no verb carried; the row omits it (BIBLE: never zero-shown). */
-	verb: string;
-	counterpartyId: string;
-	/** Observed counterparty's title — cache-first (sans) or rule-5 fallback
-	 * (mono), the same DossierTitle voice split as the section title (§9
-	 * writing rule); null when the counterparty wasn't fetched → bare mono id. */
-	counterpartyTitle: DossierTitle | null;
-	/** Metadata → Product per the fabric seam: the root endpoint is the
-	 * arrowhead end. 'subject' — the dossier's event is the product. */
+	/** Artifact identity (`${recordId}#${fnv1a(url)}`) — unique per
+	 * (record, artifact), stable across refetches (artifacts.ts). */
+	id: string;
+	artifact: ArtifactRef;
+	/** The record that DESCRIBES this artifact — the deep-link target
+	 * (BIBLE-678: Files rows are the drawer's way INTO records). */
+	recordId: string;
+	/** Describing record's title — cache-first (sans) or rule-5 fallback
+	 * (mono); null + 'this record' when the subject itself carries the
+	 * artifact (its tiles are interpreted elsewhere). */
+	recordTitle: DossierTitle | null;
+	/** The binding's verb bringing the record (clipped ≤VERB_CLIP, chip);
+	 * null for subject-own artifacts. */
+	verb: string | null;
+	bindingId: string | null;
+	/** Metadata → Product edge direction of the provenance binding;
+	 * 'subject' for subject-own rows. */
 	destination: 'subject' | 'counterparty';
 }
 
@@ -291,13 +298,15 @@ function historyRows(
 	return rows;
 }
 
-/** Files rows scan ADMITTED bindings directly — deliberately NOT
- * graph.edges (resolveGraph drops bindings whose counterparty isn't in the
- * batch, a drawing convenience, not evidence judgment). Divergence from the
- * card footer's "N metadata" (graph-derived, both-endpoints-present only) is
- * intentional: a delivered binding is evidence even when its other end
- * wasn't fetched; the footer count reads as "bound metadata in this result
- * set", the dossier count reads as "bindings referencing this event". */
+/** Files = the record's ARTIFACTS (issue #77 ruling): imeta-first with
+ * parsed legacy fallback, via artifactsOf — never "any URL in content".
+ * Subject-own artifacts list first ("this record", verb-free); provenance
+ * rows follow per (binding × artifact) scanned over ADMITTED bindings —
+ * deliberately NOT graph.edges (resolveGraph drops bindings whose other end
+ * wasn't fetched): a delivered binding is evidence anyway (dossier.ts's
+ * intentional divergence from the card footer, kept). A counterparty that
+ * wasn't admitted contributes no rows — artifacts are unreadable without
+ * the record, and inventing a description would fabricate (spec §2). */
 function fileRows(
 	subjectId: string,
 	events: NostrEvent[],
@@ -306,6 +315,20 @@ function fileRows(
 ): FileRow[] {
 	const byId = new Map(events.map((e) => [e.id, e]));
 	const rows: FileRow[] = [];
+	const subject = byId.get(subjectId);
+	if (subject !== undefined) {
+		for (const artifact of artifactsOf(subject)) {
+			rows.push({
+				id: artifact.id,
+				artifact,
+				recordId: subjectId,
+				recordTitle: null, // "this record" in the template
+				verb: null,
+				bindingId: null,
+				destination: 'subject'
+			});
+		}
+	}
 	for (const event of coreEvents) {
 		if (scrutinyEventType(event) !== 'binding') continue;
 		const endpoints = bindingEndpoints(event);
@@ -316,19 +339,23 @@ function fileRows(
 		const subjectIsRoot = endpoints.rootId === subjectId;
 		const counterpartyId = subjectIsRoot ? endpoints.linkId : endpoints.rootId;
 		const counterparty = byId.get(counterpartyId);
+		if (counterparty === undefined) continue;
 		const card = cards.find((c) => c.id === counterpartyId);
-		rows.push({
-			bindingId: event.id,
-			verb: event.content.trim(),
-			counterpartyId,
-			counterpartyTitle:
-				card !== undefined && card.interpreted
-					? { text: card.title, interpreted: true }
-					: counterparty !== undefined
-						? { text: deriveFallbackTitle(counterparty), interpreted: false }
-						: null,
-			destination: subjectIsRoot ? 'subject' : 'counterparty'
-		});
+		const recordTitle =
+			card !== undefined && card.interpreted
+				? { text: card.title, interpreted: true }
+				: { text: deriveFallbackTitle(counterparty), interpreted: false };
+		for (const artifact of artifactsOf(counterparty)) {
+			rows.push({
+				id: artifact.id,
+				artifact,
+				recordId: counterpartyId,
+				recordTitle,
+				verb: event.content.trim(),
+				bindingId: event.id,
+				destination: subjectIsRoot ? 'subject' : 'counterparty'
+			});
+		}
 	}
 	return rows;
 }

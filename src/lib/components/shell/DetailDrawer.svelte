@@ -27,6 +27,8 @@
 	import { COLLAPSE } from '../ui/motion';
 	import { formatRel, shell, type DrawerSection } from '$lib/shell.svelte';
 	import { VERB_CLIP, type Dossier, type HistoryRow } from '$lib/dossier';
+	import { artifactIcon } from '$lib/artifacts';
+	import { IconExternalLink } from '@tabler/icons-svelte';
 	import { clipMiddle } from '$lib/text';
 
 	interface Section {
@@ -370,49 +372,84 @@
 				{/each}
 			</div>
 		{:else}
-			<!-- Files: bindings with this event as endpoint (ruling 8) — the
-				binding's own verb with the arrowhead at the destination end
-				(N1⑦), counterparty label or bare mono id, roles on hover. -->
+			<!-- Files: the record's ARTIFACTS (#77) — one row per artifact
+				(imeta-first + parsed legacy, artifacts.ts); subject-own rows
+				first ("this record"), then per (binding × record) with verb
+				chip and counterparty/story deep-link preserved (BIBLE-678).
+				open↗ is the EXTERNAL affordance (noopener,noreferrer); the
+				record chip swaps the dossier in place. -->
 			{#if dossier.files.length === 0}
-				<p class="font-mono text-[11.5px] text-ink-3">no bindings reference this event</p>
+				<p class="font-mono text-[11.5px] text-ink-3">no artifacts in this record or its bound references</p>
 			{:else}
 				<div class="flex flex-col gap-1">
-					{#each dossier.files as row (row.bindingId)}
-						<button
-							type="button"
-							class="flex items-center gap-2 rounded-[8px] px-1.5 py-1 text-left text-[12.5px] text-ink-2 transition-colors duration-100 hover:bg-hover"
-							title="{row.destination === 'subject' ? 'root' : 'link'} endpoint · {row.counterpartyId}"
-							onclick={() => onSelect?.(row.counterpartyId)}
+					{#each dossier.files as row (row.id)}
+						{@const RowIcon = artifactIcon(row.artifact)}
+						<div
+							class="flex items-start gap-2 rounded-[8px] px-1.5 py-1 transition-colors duration-100 hover:bg-hover"
 						>
-							<span class="shrink-0 font-mono text-[11px] text-ink-3">
-								{row.destination === 'subject' ? '←' : '→'}
-							</span>
-							{#if row.verb !== ''}
-								<!-- corpus bindings carry machine sentences, not
-									four-letter verbs — the chip clips (full text on
-									hover + in Content); the count is untouched. -->
-								<span
-									class="shrink-0 rounded-[6px] border border-line bg-inset px-2 py-px font-mono text-[10.5px] text-ink-2"
-									title={clipMiddle(row.verb, VERB_CLIP) !== row.verb ? row.verb : undefined}
+							<RowIcon size={15} stroke={1.7} class="mt-[3px] shrink-0 text-ink-2" />
+							<div class="min-w-0 flex-1">
+								<div class="flex items-center gap-2">
+									<!-- mono: machine-derived label/basename (§9 writing rule) -->
+									<span class="truncate font-mono text-[12px] font-medium text-ink">
+										{row.artifact.label ?? clipMiddle(row.artifact.url, 44)}
+									</span>
+									{#if row.artifact.sizeText !== undefined}
+										<span class="shrink-0 font-mono text-[10.5px] text-ink-3">{row.artifact.sizeText}</span>
+									{/if}
+									{#if row.artifact.sha256 !== undefined}
+										<span
+											class="shrink-0 rounded-[5px] border border-line bg-inset px-1.5 py-px font-mono text-[10px] text-ink-3"
+											title="SHA-256: {row.artifact.sha256}"
+										>
+											{clipMiddle(row.artifact.sha256, 17)}
+										</span>
+									{/if}
+									<a
+										href={row.artifact.url}
+										target="_blank"
+										rel="noopener noreferrer"
+										class="ml-auto shrink-0 rounded-[6px] p-1 text-ink-3 transition-colors hover:text-accent-ink"
+										title="Open artifact: {row.artifact.url}"
+										onclick={(e) => e.stopPropagation()}
+									>
+										<IconExternalLink size={13} stroke={2} />
+									</a>
+								</div>
+								<button
+									type="button"
+									class="mt-0.5 flex min-w-0 items-center gap-1.5 text-left"
+									title="{row.destination === 'subject' ? 'root' : 'link'} endpoint · {row.recordId}"
+									onclick={() => onSelect?.(row.recordId)}
 								>
-									{clipMiddle(row.verb, VERB_CLIP)}
-								</span>
-							{/if}
-							{#if row.counterpartyTitle !== null}
-								<!-- §9 writing rule: sans only on a cache hit;
-									rule-5 fallback titles are machine-made, mono. -->
-								<span
-									class="truncate {row.counterpartyTitle.interpreted
-										? 'text-[12.5px] font-medium text-ink'
-										: 'font-mono text-[11.5px] text-ink-2'}"
-								>
-									{row.counterpartyTitle.text}
-								</span>
-							{/if}
-							<span class="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-3">
-								{row.counterpartyId.slice(0, 16)}…
-							</span>
-						</button>
+									<span class="shrink-0 font-mono text-[10.5px] text-ink-3">
+										{row.destination === 'subject' && row.verb !== null ? '←' : row.verb !== null ? '→' : '·'}
+									</span>
+									{#if row.verb !== null && row.verb !== ''}
+										<!-- corpus bindings carry machine sentences, not
+											four-letter verbs — the chip clips (full text on
+											hover + in Content); the count is untouched. -->
+										<span
+											class="shrink-0 rounded-[6px] border border-line bg-inset px-1.5 py-px font-mono text-[10px] text-ink-2"
+											title={clipMiddle(row.verb, VERB_CLIP) !== row.verb ? row.verb : undefined}
+										>
+											{clipMiddle(row.verb, VERB_CLIP)}
+										</span>
+									{/if}
+									{#if row.recordTitle !== null}
+										<span
+											class="truncate {row.recordTitle.interpreted
+												? 'text-[12px] font-medium text-ink'
+												: 'font-mono text-[11px] text-ink-2'}"
+										>
+											{row.recordTitle.text}
+										</span>
+									{:else}
+										<span class="shrink-0 font-mono text-[10.5px] text-ink-3">this record</span>
+									{/if}
+								</button>
+							</div>
+						</div>
 					{/each}
 				</div>
 			{/if}
