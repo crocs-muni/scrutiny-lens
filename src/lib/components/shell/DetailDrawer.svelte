@@ -23,6 +23,7 @@
 	} from '@tabler/icons-svelte';
 	import { nip19 } from 'nostr-tools';
 	import KeyHint from './KeyHint.svelte';
+	import SharePopover from './SharePopover.svelte';
 	import PublisherChip from '../ui/PublisherChip.svelte';
 	import { COLLAPSE } from '../ui/motion';
 	import { formatRel, shell, type DrawerSection } from '$lib/shell.svelte';
@@ -203,6 +204,11 @@
 			</span>
 		{/if}
 		<span class="min-w-0 flex-1"></span>
+		<!-- BIBLE L1090: share lives in the drawer header — copies the
+			record's share links (issue #31: URL + nostr: URI). -->
+		{#if dossier !== null}
+			<SharePopover subject={dossier.subject} />
+		{/if}
 		<KeyHint
 			label="Detail drawer"
 			keys="Ctrl+;"

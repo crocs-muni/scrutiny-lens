@@ -5,7 +5,8 @@
 	 *   interpreted     — title (sans 14.5/600) + snippet (sans 13.5, lh 1.55);
 	 *                     mono id chips; hairline-split footer (publisher chip
 	 *                     + event-age clock + icon counts); share icon copies
-	 *                     the raw `nevent` (#31 will own the full share route).
+	 *                     the record's share links via the shared deep-link helper
+	 *                     (issue #31: `${origin}${base}event/<nevent>` + `nostr:` URI).
 	 *   not interpreted — dashed border, event's own tags + first chars,
 	 *                     "not interpreted" badge; same footer (publisher +
 	 *                     metadata/files/updates counts are deterministic,
@@ -24,8 +25,11 @@
 	import type { ProductCard } from '$lib/pipeline/cards';
 	import type { SkeletonCard } from '$lib/pipeline';
 	import { formatRel } from '$lib/shell.svelte';
-	import { nip19 } from 'nostr-tools';
 	import PublisherChip from './PublisherChip.svelte';
+	import type { NostrEvent } from 'nostr-tools';
+	import { SCRUTINY_KIND } from '@scrutiny-fabric/core';
+	import { seenOnRelays } from '$lib/net/seen-on';
+	import { buildShareLinks } from '$lib/share/deep-link';
 	import { IconCheck, IconClock, IconFile, IconLink, IconPencil, IconShare } from '@tabler/icons-svelte';
 
 interface Props {
@@ -81,10 +85,30 @@ const dashed = $derived(product === null || !product.interpreted);
 	let shared = $state(false);
 	async function share(): Promise<void> {
 		if (product === null) return;
-		// Deep link to the raw event (issue #31's shape); copy the address —
-		// the card never opens anything outside the user's own clipboard.
-		const nevent = nip19.neventEncode({ id: product.id, author: product.pubkey });
-		await navigator.clipboard.writeText(nevent);
+		// Same helper as the drawer's SharePopover — one behavior, two
+		// surfaces, one helper (issue #31); the card copies the URL channel
+		// (the popover carries both per spec §9 L94).
+		// buildShareLinks reads id/pubkey/kind only; the rest is type filler
+		// for NostrEvent's required fields (spec §2 — never shown to the user).
+		const subject: NostrEvent = {
+			id: product.id,
+			sig: '',
+			kind: SCRUTINY_KIND,
+			pubkey: product.pubkey,
+			created_at: product.createdAt,
+			tags: [],
+			content: ''
+		};
+		let seen: string[] = [];
+		try {
+			seen = await seenOnRelays(subject.id);
+		} catch {
+			// IDB unavailable (private mode): share hintless — still an
+			// honest, resolvable address.
+			seen = [];
+		}
+		const links = buildShareLinks(subject, seen);
+		await navigator.clipboard.writeText(links.url);
 		shared = true;
 		setTimeout(() => (shared = false), 1500);
 	}

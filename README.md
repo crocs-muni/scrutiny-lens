@@ -49,6 +49,12 @@ step also copies it to `build/404.html` for GitHub Pages, and
   }
   ```
 
+Share links `${origin}${base}event/<nevent1…>` deep-link straight into the
+detail drawer through the same fallback: the nginx rule above covers them
+identically, and GitHub Pages boots them via `404.html`. Chat apps unfurling
+a shared link show the generic site card — per-event og meta needs a running
+server, which this one doesn't have (see [`docs/research-nostr-sharing.md`](docs/research-nostr-sharing.md)).
+
 - **Apache:** the shipped `static/.htaccess` (`FallbackResource /index.html`)
   handles it without mod_rewrite.
 

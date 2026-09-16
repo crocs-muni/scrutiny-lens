@@ -3,6 +3,27 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>SCRUTINY Lens</title>
+		<!--
+			GENERIC OG CARD (issue #31) — deep links (`/event/<nevent1…>`) unfurl
+			as this site-level card in chat apps. Per-event og is impossible on
+			our hosting: og meta must be served in the HTML head, and this is a
+			pure SPA with no server to fetch the event before the crawler asks
+			(docs/research-nostr-sharing.md §"What this means for scrutiny-lens").
+			Name/type/title/description are a one-line honest summary mirrored
+			from README, never event-fabricated (spec §2 never-lie).
+		-->
+		<meta property="og:site_name" content="SCRUTINY Lens" />
+		<meta property="og:type" content="website" />
+		<meta property="og:title" content="SCRUTINY Lens" />
+		<meta
+			property="og:description"
+			content="A static, serverless web app for exploring SCRUTINY Fabric security metadata."
+		/>
+		<!-- og:image omitted: `static/` ships no logo/image asset, and a
+			fabricated og card would be art about the app instead of a statement
+			fact about itself. Add one only when a real mark exists. -->
+		<meta name="twitter:card" content="summary" />
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
