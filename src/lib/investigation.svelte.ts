@@ -201,15 +201,14 @@ class Investigation {
     }
   }
 
-  /** Start a search from the J1 composer. The transport and provider are
-   * constructed per run from live settings — edits in Settings take effect
-   * on the next question, never mid-run. */
-  async start(question: string): Promise<void> {
-    this.controller?.abort();
-    const controller = new AbortController();
-    this.controller = controller;
+  /** Fresh-canvas reset for a brand-new run (issue #31): start() and
+   * openShared() both supersede whatever a live run painted — identical
+   * fields, so one reset keeps the two entry points in lockstep. Callers
+   * set their deltas right after (start: the question; openShared: done
+   * phase + the cold-open's failed hints). */
+  private resetRun(): void {
     this.phase = "idle";
-    this.lastQuestion = question;
+    this.lastQuestion = "";
     this.slices = [];
     this.searches = [];
     this.skeletons = [];
@@ -234,6 +233,17 @@ class Investigation {
     this.nodeQueue = [];
     this.nodeQueued = new Set();
     this.running = true;
+  }
+
+  /** Start a search from the J1 composer. The transport and provider are
+   * constructed per run from live settings — edits in Settings take effect
+   * on the next question, never mid-run. */
+  async start(question: string): Promise<void> {
+    this.controller?.abort();
+    const controller = new AbortController();
+    this.controller = controller;
+    this.resetRun();
+    this.lastQuestion = question;
     const startedAt = performance.now();
 
     // The session row exists before the first slice so the rail shows the
@@ -335,33 +345,11 @@ class Investigation {
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
-    // Same fresh-run reset as start(): a cold open supersedes any live run.
+    // Same fresh-canvas reset as start() — a cold open supersedes any
+    // live run — plus its deltas: no trace stages, hints carried over.
+    this.resetRun();
     this.phase = "done";
-    this.lastQuestion = "";
-    this.slices = [];
-    this.searches = [];
-    this.skeletons = [];
-    this.notices = [];
-    this.result = null;
-    this.error = null;
-    this.cards = [];
-    this.facetGroups = [];
-    this.selections = {};
-    this.filling = false;
-    this.pending = new Set();
-    this.fillStats = { interpreted: 0, total: 0 };
-    this.fillFailure = null;
-    this.fillErrorMessage = null;
-    this.elapsedMs = null;
-    this.selectedEventId = null;
-    this.graphSubjectId = null;
-    this.expandedRelated = [];
-    this.contextFetched = new Set();
     this.shareHints = failedHints;
-    this.nodeTiles = new Map();
-    this.nodeQueue = [];
-    this.nodeQueued = new Set();
-    this.running = true;
 
     // The session row exists before any card paints (same rationale as
     // start()): the rail shows the shared investigation while the fill

@@ -255,8 +255,7 @@
 	// Issue #31 (spec §4): a cold-open share link reported some hinted relays
 	// failed — the record still opened (from the rest of the hints or the
 	// cache), so it's a degradation banner on both center surfaces, not a
-	// block. Numeric — per-relay verbatim details are not re-listed because
-	// the whole cold-open URL usually points at ONE missing relay.
+	// block.
 	const shareNote = $derived(
 		investigation.shareHints.length === 0
 			? ''

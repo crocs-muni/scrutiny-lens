@@ -99,15 +99,8 @@ const dashed = $derived(product === null || !product.interpreted);
 			tags: [],
 			content: ''
 		};
-		let seen: string[] = [];
-		try {
-			seen = await seenOnRelays(subject.id);
-		} catch {
-			// IDB unavailable (private mode): share hintless — still an
-			// honest, resolvable address.
-			seen = [];
-		}
-		const links = buildShareLinks(subject, seen);
+		// seenOnRelays never rejects (the db layer's attempt() degrades, spec §6).
+		const links = buildShareLinks(subject, await seenOnRelays(product.id));
 		await navigator.clipboard.writeText(links.url);
 		shared = true;
 		setTimeout(() => (shared = false), 1500);

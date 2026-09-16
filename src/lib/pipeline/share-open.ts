@@ -31,7 +31,6 @@
  * told which of the shareer's hints died. A relay that answered ok with no
  * copy is NOT a failure — it was reachable and said so.
  */
-import type { Filter } from 'nostr-tools/filter';
 import type { SharePointer } from '$lib/share/deep-link';
 import { createTransport, type PoolFactory } from '$lib/net/transport';
 import { getEvent } from '$lib/db';

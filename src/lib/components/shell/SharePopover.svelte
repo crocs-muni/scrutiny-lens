@@ -12,7 +12,7 @@
 
 	The IDB read is async, so links compute lazily on popover open and the
 	rows show a transient '…' while pending. Icon flips to a check on copy,
-	timed like ResultCard/CitationPill (1200ms).
+	timed like CitationPill (1200ms).
 -->
 <script lang="ts">
 	import type { NostrEvent } from 'nostr-tools';
@@ -36,18 +36,13 @@
 	let copied: 'link' | 'nostr' | null = $state(null);
 
 	/** Lazily (re)compute on open and every dossier swap — the seen-on read
-	 * is an IDB round-trip keyed to the CURRENT subject; a failed read means
-	 * no hints, never an unbuildable address. */
+	 * is an IDB round-trip keyed to the CURRENT subject; seenOnRelays never
+	 * rejects (the db layer's attempt() degrades to [], spec §6), so a
+	 * private-mode window simply shares hintless — honest, still opens. */
 	async function computeLinks(subj: NostrEvent): Promise<void> {
 		url = '';
 		nostrUri = '';
-		let seen: string[] = [];
-		try {
-			seen = await seenOnRelays(subj.id);
-		} catch {
-			// IDB unavailable (private mode): share hintless — honest, still opens.
-			seen = [];
-		}
+		const seen = await seenOnRelays(subj.id);
 		// Stale-write guard: the dossier may have swapped during the IDB read.
 		if (subj.id !== subject.id) return;
 		const links = buildShareLinks(subj, seen);

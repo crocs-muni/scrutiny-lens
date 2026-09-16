@@ -443,11 +443,18 @@ export async function getChatPins(
 	return attempt(async (d) => (await d.get('chatPins', sessionId)) ?? null, null);
 }
 
-/** Rewrites one event's seen-on relay hints (v6, issue #31). Callers merge
- * before writing; see seen-on.ts. Whole-row put matches chatPins. */
-export async function putRelayHints(eventId: string, relays: string[]): Promise<void> {
+/** Merge-on-write seen-on hint (v6, issue #31): ONE readwrite transaction
+ * merges the new url into the stored list — the same merge fix as
+ * saveInterpretation (review T-1), so concurrent recordSeenOn calls from
+ * fetchRouted's per-relay legs cannot lose a hint. First-observed wins
+ * (a listed url is a no-op); `cap` trims later arrivals (SEEN_ON_CAP). */
+export async function saveRelayHint(eventId: string, relayUrl: string, cap: number): Promise<void> {
 	await attempt(async (d) => {
-		await d.put('relayHints', { eventId, relays });
+		const tx = d.transaction('relayHints', 'readwrite');
+		const hints = (await tx.store.get(eventId))?.relays ?? [];
+		if (hints.includes(relayUrl)) return;
+		await tx.store.put({ eventId, relays: [...hints, relayUrl].slice(0, cap) });
+		await tx.done;
 	}, undefined);
 }
 

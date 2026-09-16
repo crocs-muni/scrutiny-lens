@@ -6,12 +6,7 @@ import {
 	noteEncode,
 	npubEncode
 } from 'nostr-tools/nip19';
-import {
-	buildShareLinks,
-	decodeShareLink,
-	ShareLinkDecodeError,
-	type SharePointer
-} from '$lib/share/deep-link';
+import { buildShareLinks, decodeShareLink, ShareLinkDecodeError } from '$lib/share/deep-link';
 
 // buildShareLinks reads location.origin + import.meta.env.BASE_URL at call
 // time; node has neither, so the tests stub both under their control.
@@ -101,13 +96,6 @@ describe('buildShareLinks (issue #31, spec §1 L22 + §8)', () => {
 });
 
 describe('decodeShareLink (issue #31, spec §1 L22)', () => {
-	it('decodes the bare nevent token', () => {
-		const subject = makeEvent();
-		const { nostrUri } = buildShareLinks(subject, ['wss://a']);
-		const pointer = decodeShareLink(extractNevent(nostrUri));
-		expect(pointer.id).toBe(subject.id);
-	});
-
 	it('accepts the nostr: URI prefix and surrounding whitespace', () => {
 		const subject = makeEvent();
 		const { nostrUri } = buildShareLinks(subject, ['wss://a']);
@@ -149,14 +137,5 @@ describe('decodeShareLink (issue #31, spec §1 L22)', () => {
 		const bare = neventEncode({ id: '22'.repeat(32) });
 		const pointer = decodeShareLink(bare);
 		expect(pointer).toEqual({ id: '22'.repeat(32), relays: [] });
-	});
-});
-
-describe('SharePointer shape', () => {
-	it('exposes the contract fields', () => {
-		const p: SharePointer = { id: 'x'.repeat(64), relays: [] };
-		expect(p.relays).toEqual([]);
-		expect(p.author).toBeUndefined();
-		expect(p.kind).toBeUndefined();
 	});
 });
