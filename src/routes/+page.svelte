@@ -252,12 +252,14 @@
 		noticeRollup('capability', 'relays report no or unverifiable search support')
 	);
 	const traversalNote = $derived(noticeRollup('traversal', 'context-fetch warnings'));
-	// Issue #31 (spec §4): a cold-open share link reported some hinted relays
-	// failed — the record still opened (from the rest of the hints or the
-	// cache), so it's a degradation banner on both center surfaces, not a
-	// block.
+	// Issue #31 (spec §4): a cold-open share link carried relay hints and
+	// some of them failed — the record still opened (from the rest of the
+	// hints or the cache), so it's a degradation banner on both center
+	// surfaces, not a block. Gated on hasShareHints (F2): a HINTLESS link
+	// that resolved via the configured pool must not be blamed for "failed
+	// hints" it never carried (spec §2 never-lie).
 	const shareNote = $derived(
-		investigation.shareHints.length === 0
+		!investigation.hasShareHints || investigation.shareHints.length === 0
 			? ''
 			: investigation.shareHints.length === 1
 				? `hinted relay ${investigation.shareHints[0]} failed — record opened from the rest`

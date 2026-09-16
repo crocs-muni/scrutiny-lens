@@ -93,6 +93,17 @@ describe('buildShareLinks (issue #31, spec §1 L22 + §8)', () => {
 		expect(pointer.author).toBe(subject.pubkey);
 		expect(pointer.kind).toBe(subject.kind);
 	});
+
+	// F5a: the subject shape is only the three nevent fields — a caller
+	// with just an event id/pubkey/kind (dossier row, enhanced href) must
+	// be able to share without fabricating a full NostrEvent.
+	it('accepts the three-field subject shape (id/pubkey/kind only)', () => {
+		const links = buildShareLinks(
+			{ id: '11'.repeat(32), pubkey: 'ab'.repeat(32), kind: 1 },
+			[]
+		);
+		expect(decodeShareLink(extractNevent(links.url)).id).toBe('11'.repeat(32));
+	});
 });
 
 describe('decodeShareLink (issue #31, spec §1 L22)', () => {

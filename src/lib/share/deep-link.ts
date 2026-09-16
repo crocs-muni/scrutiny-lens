@@ -15,7 +15,6 @@
  * reuse the reference encoder).
  */
 import { decode, neventEncode, type DecodedResult } from 'nostr-tools/nip19';
-import type { NostrEvent } from 'nostr-tools/core';
 
 /** Decoded nevent: id is mandatory; hints/author/kind may be absent. */
 export interface SharePointer {
@@ -70,8 +69,15 @@ export function decodeShareLink(neventText: string): SharePointer {
  * (spec §8) and they are passed through in first-observed order.
  * `base` is import.meta.env.BASE_URL, which always ends in '/' — so the
  * URL works identically for root-mounted and path-mounted deploys.
+ *
+ * The subject is ONLY the three nevent fields (id/pubkey/kind — F5a): a
+ * full NostrEvent would advertise a false dependency on fields this
+ * function never reads.
  */
-export function buildShareLinks(subject: NostrEvent, seenOn: string[]): { url: string; nostrUri: string } {
+export function buildShareLinks(
+	subject: { id: string; pubkey: string; kind: number },
+	seenOn: string[]
+): { url: string; nostrUri: string } {
 	const nevent = neventEncode({
 		id: subject.id,
 		relays: seenOn.slice(0, 3),

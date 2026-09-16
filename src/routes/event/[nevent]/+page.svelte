@@ -29,18 +29,23 @@
 
 	type Stage =
 		| { kind: 'resolving' }
-		| { kind: 'error'; title: string; message: string; relays: string[] };
+		| {
+				kind: 'error';
+				title: string;
+				message: string;
+				relays: string[];
+				answeredOk: boolean;
+			};
 	let stage = $state<Stage>({ kind: 'resolving' });
 
 	async function goHome(): Promise<void> {
 		await goto(base + '/');
 	}
 
-	onMount(async () => {
-		// Read the param inside the closure: the page only cold-opens the
-		// FIRST link it mounts for (success hands over to the root route via
-		// goto), so the mount-time value is the one that matters.
-		const nevent = params.nevent;
+	async function resolve(nevent: string): Promise<void> {
+		// Retry re-enters here, so the frame flips back to the honest
+		// "opening…" line before the relay round-trip starts again.
+		stage = { kind: 'resolving' };
 		// 1. Decode — the parse error's message names what was actually
 		// pasted so the recipient isn't told a lie about their own link.
 		let pointer: SharePointer;
@@ -51,12 +56,13 @@
 				kind: 'error',
 				title: "That link isn't a shareable record",
 				message: err instanceof Error ? err.message : String(err),
-				relays: []
+				relays: [],
+				answeredOk: false
 			};
 			return;
 		}
-		// 2. Resolve — cache-first, then the hinted relays, then the
-		// configured pool (share-open.ts); admission was already gated there.
+		// 2. Resolve — cache-first, then the hinted relays, then NIP-65 and
+		// the configured pool (share-open.ts); admission was gated there.
 		try {
 			const resolved = await openSharedRecord(pointer);
 			// The resolver reports the id (contract) and cached the gated
@@ -67,42 +73,57 @@
 					kind: 'error',
 					title: "Couldn't open the shared record",
 					message: "the app's local storage is unavailable — reopen the link in a normal window",
-					relays: []
+					relays: [],
+					answeredOk: false
 				};
 				return;
 			}
-			await investigation.openShared(cached, resolved.failedHints);
+			await investigation.openShared(cached, resolved.failedHints, pointer.relays.length > 0);
 			// The shell lives on the root route; hand over there. replaceState
 			// keeps the share URL out of the back/forward loop — back from the
 			// opened record must not re-run the cold open.
 			await goto(base + '/', { replaceState: true });
 		} catch (err) {
 			if (err instanceof ShareNotFoundError) {
+				// never-lie (spec §2/§4): when answeredOk is true, some relay
+				// WAS reachable and said it holds no copy — the failure is
+				// absence, not silence, so the copy blames no relay; when
+				// false, nothing answered and the dead hints are named.
 				stage = {
 					kind: 'error',
 					title: 'Shared record not found',
-					message:
-						err.triedRelays.length === 0
+					message: err.answeredOk
+						? 'the relays that answered were reachable, but none held this record — it may have been deleted or never reached them'
+						: err.triedRelays.length === 0
 							? 'no relay held it and the link carried no working relay hints'
 							: 'the record was not found — these hinted relays failed to answer',
-					relays: err.triedRelays
+					relays: err.triedRelays,
+					answeredOk: err.answeredOk
 				};
 			} else if (err instanceof ShareRejectedError) {
 				stage = {
 					kind: 'error',
 					title: 'Shared record rejected',
 					message: err.message,
-					relays: []
+					relays: [],
+					answeredOk: false
 				};
 			} else {
 				stage = {
 					kind: 'error',
 					title: "Couldn't open the shared record",
 					message: err instanceof Error ? err.message : String(err),
-					relays: []
+					relays: [],
+					answeredOk: false
 				};
 			}
 		}
+	}
+
+	onMount(() => {
+		// The page only cold-opens links it mounts for; retry re-invokes
+		// resolve with the CURRENT param, so the closure reads it per call.
+		void resolve(params.nevent);
 	});
 </script>
 
@@ -136,13 +157,28 @@
 				</div>
 			{/if}
 
-			<div class="mt-1 flex gap-2">
+			<div class="mt-1 flex flex-wrap items-center gap-2">
 				<button
 					type="button"
 					class="rounded-full bg-ink px-4 py-1.5 text-[12px] font-medium text-surface hover:opacity-90"
+					onclick={() => void resolve(params.nevent)}
+				>
+					Try again
+				</button>
+				<button
+					type="button"
+					class="rounded-full border border-line px-4 py-1.5 text-[12px] font-medium text-ink hover:bg-inset"
 					onclick={goHome}
 				>
 					Go to overview
+				</button>
+				<button
+					type="button"
+					class="rounded-full px-3 py-1.5 text-[12px] font-medium text-ink-2 hover:bg-inset"
+					title="Settings lives on the overview — edit your relay list there"
+					onclick={goHome}
+				>
+					Edit relay list in Settings
 				</button>
 			</div>
 		</div>

@@ -2,14 +2,18 @@
  * Issue #31 cold-open resolution (spec §1 L22, §4, §6, §8): openSharedRecord
  * must resolve the shared root cache-first, then from the hinted relays,
  * report which hints failed, reject non-admissible/non-card records, and
- * fall back to the receiver's configured pool when the link carried no
- * hints. The admission gate runs on the REAL bytes (fabric admitEvent) —
- * tests forge genuinely-signed SCRUTINY product events (traversal.test.ts
- * recipe).
+ * fall back to NIP-65 relay discovery and the receiver's configured pool
+ * when the link carried no working hints. The admission gate runs on the
+ * REAL bytes (fabric admitEvent) — tests forge genuinely-signed SCRUTINY
+ * product events (traversal.test.ts recipe).
  */
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
+import {
+	finalizeEvent,
+	generateSecretKey,
+	getPublicKey
+} from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/core';
 import type { Filter } from 'nostr-tools/filter';
 import { openSharedRecord, ShareNotFoundError, ShareRejectedError } from '../src/lib/pipeline/share-open';
@@ -23,7 +27,10 @@ import { resetSettings, settings } from '$lib/settings.svelte';
 type Scripts = Record<string, NostrEvent[] | undefined>;
 
 /** Fake pool mirroring transport.test.ts: each relay resolves to its script
- * (empty array = connects ok but holds nothing); absent scripts refuse. */
+ * (empty array = connects ok but holds nothing); absent scripts refuse.
+ * Filter-aware like a real relay: kind-10002 relay lists are only served
+ * for `{ kinds: [10002] }` queries, everything else only for other filters —
+ * a relay asked for one event id must not hand back its author's relay list. */
 class FakePool implements PoolLike {
 	readonly queried: string[] = [];
 	constructor(private readonly scripts: Scripts) {}
@@ -35,15 +42,27 @@ class FakePool implements PoolLike {
 		return Promise.resolve({ count: async () => 0, close: () => {} });
 	}
 
-	querySync(urls: string[], _filter: Filter): Promise<NostrEvent[]> {
+	querySync(urls: string[], filter: Filter): Promise<NostrEvent[]> {
 		this.queried.push(urls[0]);
-		return Promise.resolve(this.scripts[urls[0]] ?? []);
+		const script = this.scripts[urls[0]] ?? [];
+		const askForRelayList = filter.kinds?.includes(10002) ?? false;
+		return Promise.resolve(
+			askForRelayList
+				? script.filter((e) => e.kind === 10002)
+				: script.filter((e) => e.kind !== 10002)
+		);
 	}
 }
 
 /** Genuinely-signed SCRUTINY product: real key, real NIP-01 id — passes the
  * fabric admitEvent gate (fabric.test.ts selfConsistentProduct recipe). */
 function scProduct(overrides: { i?: string } = {}): NostrEvent {
+	return scProductBy(generateSecretKey(), overrides);
+}
+
+/** Same, with a caller-controlled key — NIP-65 rows must sign the author's
+ * kind-10002 relay list with the SAME identity as the shared product. */
+function scProductBy(key: Uint8Array, overrides: { i?: string } = {}): NostrEvent {
 	return finalizeEvent(
 		{
 			kind: 1,
@@ -56,7 +75,16 @@ function scProduct(overrides: { i?: string } = {}): NostrEvent {
 			],
 			content: 'Widget X certificate'
 		},
-		generateSecretKey()
+		key
+	);
+}
+
+/** NIP-65 relay list (kind 10002) signed by `key`: not a SCRUTINY event at
+ * all, so no admission applies — the resolver only parses its `r` tags. */
+function relayList(key: Uint8Array, tags: string[][]): NostrEvent {
+	return finalizeEvent(
+		{ kind: 10002, created_at: 1_780_000_002, tags, content: '' },
+		key
 	);
 }
 
@@ -85,8 +113,8 @@ function scBinding(): NostrEvent {
 	);
 }
 
-function pointer(id: string, relays: string[] = ['wss://a', 'wss://b']): SharePointer {
-	return { id, relays };
+function pointer(id: string, relays: string[] = ['wss://a', 'wss://b'], author?: string): SharePointer {
+	return author === undefined ? { id, relays } : { id, relays, author };
 }
 
 const HINT_NO_QUERY = (() => {
@@ -106,17 +134,21 @@ afterEach(() => {
 describe('openSharedRecord — cold-open resolution (issue #31)', () => {
 	it('resolves from the hinted relays when the record is not cached', async () => {
 		const subject = scProduct({ i: 'cc-pp:VULN-1' });
+		settings.relays = ['wss://never-asked'];
 		const pool = new FakePool({ 'wss://a': [subject], 'wss://b': [] });
 		const res = await openSharedRecord(pointer(subject.id), () => pool);
 
 		expect(res.subjectId).toBe(subject.id);
 		expect(res.failedHints).toEqual([]);
-		// Only the hinted relays are queried — never the whole configured pool.
+		// Found at the hint leg → the NIP-65 and configured legs are never
+		// reached, even though a configured fallback exists (never-lie:
+		// no pointless extra queries for an already-found record, spec §8).
 		expect(pool.queried).toEqual(['wss://a', 'wss://b']);
 	});
 
 	it('reports hinted relays that failed when the rest still delivered', async () => {
 		const subject = scProduct();
+		settings.relays = [];
 		const pool = new FakePool({ 'wss://dead': undefined, 'wss://live': [subject] });
 		const res = await openSharedRecord(pointer(subject.id, ['wss://dead', 'wss://live']), () => pool);
 
@@ -126,6 +158,7 @@ describe('openSharedRecord — cold-open resolution (issue #31)', () => {
 
 	it('throws not-found naming the failed hints when nothing delivered — an ok-but-empty relay is not a failure', async () => {
 		const id = 'be'.repeat(32);
+		settings.relays = [];
 		const pool = new FakePool({ 'wss://dead': undefined, 'wss://empty': [] });
 		const err = await openSharedRecord(pointer(id, ['wss://dead', 'wss://empty']), () => pool).then(
 			() => null,
@@ -134,15 +167,21 @@ describe('openSharedRecord — cold-open resolution (issue #31)', () => {
 
 		expect(err).toBeInstanceOf(ShareNotFoundError);
 		expect((err as ShareNotFoundError).triedRelays).toEqual(['wss://dead']);
+		// wss://empty answered ok — reachable but held nothing: the caller
+		// must be told "relays answered, no copy", not "relays failed".
+		expect((err as ShareNotFoundError).answeredOk).toBe(true);
 	});
 
 	it('lists every refused hinted relay when all of them fail', async () => {
 		const id = 'bf'.repeat(32);
+		settings.relays = [];
 		const pool = new FakePool({ 'wss://a': undefined, 'wss://b': undefined });
 		const err = await openSharedRecord(pointer(id), () => pool).then(() => null, (e) => e);
 
 		expect(err).toBeInstanceOf(ShareNotFoundError);
 		expect((err as ShareNotFoundError).triedRelays).toEqual(['wss://a', 'wss://b']);
+		// Every leg refused — no relay was reachable at all.
+		expect((err as ShareNotFoundError).answeredOk).toBe(false);
 	});
 
 	it('falls back to the receiver’s configured relays when the link carried no hints', async () => {
@@ -152,7 +191,92 @@ describe('openSharedRecord — cold-open resolution (issue #31)', () => {
 		const res = await openSharedRecord(pointer(subject.id, []), () => pool);
 
 		expect(res.subjectId).toBe(subject.id);
+		expect(res.failedHints).toEqual([]);
 		expect(pool.queried).toEqual(['wss://configured']);
+	});
+
+	it('resolves through NIP-65 when every hint died but the author lists a live write relay', async () => {
+		const key = generateSecretKey();
+		const subject = scProductBy(key);
+		settings.relays = ['wss://nip65src'];
+		const pool = new FakePool({
+			'wss://dead1': undefined,
+			'wss://dead2': undefined,
+			'wss://nip65src': [relayList(key, [['r', 'wss://nip65write']])],
+			'wss://nip65write': [subject]
+		});
+		const res = await openSharedRecord(
+			pointer(subject.id, ['wss://dead1', 'wss://dead2'], subject.pubkey),
+			() => pool
+		);
+
+		expect(res.subjectId).toBe(subject.id);
+		expect(res.failedHints).toEqual(['wss://dead1', 'wss://dead2']);
+		// The shared transport asks hints first (both died → no pushes),
+		// then the NIP-65 source for the author's kind-10002 list, then the
+		// freshly-discovered write relay for the record — the source relay
+		// is asked once, never twice.
+		expect(pool.queried).toEqual(['wss://nip65src', 'wss://nip65write']);
+	});
+
+	it('falls through to the configured pool when the hints died and the link names no author', async () => {
+		const subject = scProduct();
+		settings.relays = ['wss://configured'];
+		const pool = new FakePool({ 'wss://dead': undefined, 'wss://configured': [subject] });
+		const res = await openSharedRecord(
+			pointer(subject.id, ['wss://dead'], undefined),
+			() => pool
+		);
+
+		expect(res.subjectId).toBe(subject.id);
+		expect(res.failedHints).toEqual(['wss://dead']);
+	});
+
+	it('skips read-only NIP-65 relays and reports not-found honestly when nothing else answers', async () => {
+		const key = generateSecretKey();
+		const id = 'd0'.repeat(32);
+		settings.relays = ['wss://nip65src', 'wss://configured'];
+		const pool = new FakePool({
+			'wss://dead': undefined,
+			// A 'read'-marked r-tag is read-only (NIP-65): never queried
+			// for the record, so no write relays exist for this author.
+			'wss://nip65src': [relayList(key, [['r', 'wss://readonly', 'read']])],
+			'wss://configured': []
+		});
+		const err = await openSharedRecord(
+			pointer(id, ['wss://dead'], getPublicKey(key)),
+			() => pool
+		).then(() => null, (e) => e);
+
+		expect(err).toBeInstanceOf(ShareNotFoundError);
+		// Only wss://dead failed; every other relay answered ok but held
+		// nothing — never-lie: reachable, just no copy.
+		expect((err as ShareNotFoundError).triedRelays).toEqual(['wss://dead']);
+		expect((err as ShareNotFoundError).answeredOk).toBe(true);
+	});
+
+	it('lists every refused relay across ALL legs when nothing is reachable anywhere', async () => {
+		const key = generateSecretKey();
+		const id = 'd1'.repeat(32);
+		settings.relays = ['wss://cfg'];
+		const pool = new FakePool({
+			'wss://hint1': undefined,
+			'wss://hint2': undefined,
+			'wss://cfg': undefined
+		});
+		const err = await openSharedRecord(
+			pointer(id, ['wss://hint1', 'wss://hint2'], getPublicKey(key)),
+			() => pool
+		).then(() => null, (e) => e);
+
+		expect(err).toBeInstanceOf(ShareNotFoundError);
+		expect((err as ShareNotFoundError).triedRelays).toEqual([
+			'wss://hint1',
+			'wss://hint2',
+			'wss://cfg'
+		]);
+		// No relay was reachable in any leg — answeredOk stays false.
+		expect((err as ShareNotFoundError).answeredOk).toBe(false);
 	});
 
 	it('throws not-found with no failed hints when nothing is configured and the link has no hints', async () => {

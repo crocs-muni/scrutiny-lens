@@ -35,7 +35,7 @@ import type { NodeTile } from "$lib/graph/subject-graph";
 import {
   admitBatch,
   resolveGraph,
-  tTags,
+  scrutinyEventType,
   type NostrEvent as FabricEvent,
 } from "$lib/fabric";
 import { indexEvent } from "$lib/search";
@@ -149,6 +149,12 @@ class Investigation {
    * like the run's other state. */
   shareHints = $state<string[]>([]);
 
+  /** Whether the cold-open link carried any relay hints at all (issue #31
+   * F2): the share-hints notice only renders combined with a non-empty
+   * shareHints — a hintless link that resolved via the configured pool
+   * must not be blamed for "failed hints" it never had (spec §4 never-lie). */
+  hasShareHints = $state(false);
+
   /** The selected dossier subject (issue #29a, ADR 0001): store-level —
    * facet filters and view hops never clear it; it dies exactly where the
    * investigation itself dies (start/stop/reset). Deselect is canvas-only
@@ -229,6 +235,7 @@ class Investigation {
     this.expandedRelated = [];
     this.contextFetched = new Set();
     this.shareHints = [];
+    this.hasShareHints = false;
     this.nodeTiles = new Map();
     this.nodeQueue = [];
     this.nodeQueued = new Set();
@@ -339,9 +346,12 @@ class Investigation {
    * subject, uninterpreted first with the existing progressive fill.
    * `failedHints` are the hinted relays the resolver could not reach; they
    * surface as a dismissible degradation notice on both center surfaces
-   * (spec §4: tell the recipient which hinted relays failed).
+   * (spec §4: tell the recipient which hinted relays failed). `hadHints`
+   * records whether the link carried relay hints at all — the notice
+   * renders ONLY when a hinted link actually had failures, so a hintless
+   * link that resolved is never blamed for hints it never had (§4).
    */
-  async openShared(root: NostrEvent, failedHints: string[]): Promise<void> {
+  async openShared(root: NostrEvent, failedHints: string[], hadHints: boolean): Promise<void> {
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
@@ -350,6 +360,7 @@ class Investigation {
     this.resetRun();
     this.phase = "done";
     this.shareHints = failedHints;
+    this.hasShareHints = hadHints;
 
     // The session row exists before any card paints (same rationale as
     // start()): the rail shows the shared investigation while the fill
@@ -418,14 +429,14 @@ class Investigation {
   }
 
   /** Run title for a shared root — there is no question (spec §8); the
-   * type tag names the card honestly ("Shared product" / "Shared
-   * metadata"), falling back to the neutral "Shared event" when the root
-   * carries no recognized type tag. */
+   * core's own type classifier names the card honestly from its `t` tag
+   * ("Shared product" / "Shared metadata"), falling back to the neutral
+   * "Shared event" for anything else (a foreign or type-less root can
+   * never reach here anyway — the gate rejects it, spec §3). Hand-rolled
+   * tag sniffing is not used: core is the single classifier (AGENTS.md). */
   private shareTitle(root: NostrEvent): string {
-    const tag = tTags(root as unknown as FabricEvent).find((t) =>
-      ["scrutiny-product", "scrutiny-metadata", "scrutiny-binding", "scrutiny-patch"].includes(t)
-    );
-    return tag === undefined ? "Shared event" : `Shared ${tag.replace("scrutiny-", "")}`;
+    const type = scrutinyEventType(root as unknown as FabricEvent);
+    return type === "product" || type === "metadata" ? `Shared ${type}` : "Shared event";
   }
 
   /** Abort the in-flight run (spec §8) without clearing what it already

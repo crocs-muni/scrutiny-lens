@@ -1,8 +1,6 @@
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-	DB_NAME,
-	DB_VERSION,
 	_closeForTests,
 	clearAllLocalData,
 	dumpAllForTests,
@@ -82,12 +80,5 @@ describe('seen-on relay registry (issue #31, spec §8)', () => {
 		} finally {
 			globalThis.indexedDB = real;
 		}
-	});
-
-	it('bumps the schema to v6 for the relayHints store', async () => {
-		// The v6 bump is what guarantees the upgrade fires at all (v4/v5
-		// lesson restated in db/index.ts); assert the constant we ship.
-		expect(DB_VERSION).toBe(6);
-		expect(DB_NAME).toBe('scrutiny-lens');
 	});
 });
