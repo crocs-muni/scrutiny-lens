@@ -32,9 +32,10 @@ The build is a pure SPA: `build/index.html` is the fallback page for every URL
 step also copies it to `build/404.html` for GitHub Pages, and
 `static/.nojekyll` ships so `_app/` assets are published.
 
-- **Automated deploys:** every green push to `main` publishes to the user-site
-  repo behind `https://scrutiny-lens-demo.github.io` — see
-  [`docs/deploy.md`](docs/deploy.md) for the pipeline and one-time setup.
+- **Automated deploys:** every green push to `main` publishes this repo's
+  project site at `https://crocs-muni.github.io/scrutiny-lens` — no secrets,
+  no extra repo; see [`docs/deploy.md`](docs/deploy.md) for the pipeline and
+  the one-time Settings flip.
 - **GitHub Pages:** serve `build/` as-is (decision record: issue #16). Deep
   links (`/event/nevent1…`) boot via `404.html` (unmatched paths return HTTP
   404 status — a soft-404). Project-site deployments
