@@ -1,8 +1,9 @@
 name: pages
 
-# Deploys the static SPA to the user-site repo scrutiny-lens-demo.github.io
-# (issue #16, deploy doc: docs/deploy.md). Root-mounted → BASE_PATH stays ''.
-# The push step skips cleanly until the repo secret DEMO_DEPLOY_TOKEN exists.
+# Deploys the static SPA to THIS repo's GitHub Pages (issue #16; deploy doc:
+# docs/deploy.md) — https://crocs-muni.github.io/scrutiny-lens.
+# Project site → BASE_PATH=/scrutiny-lens baked into the build.
+# Uses GITHUB_TOKEN only: no secrets, no external repo.
 
 on:
   push:
@@ -15,13 +16,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  gate-build-publish:
+  gate-and-build:
     runs-on: ubuntu-latest
     env:
       # HTTPS host → wss relays only. Corpus pool target per docs/deploy.md.
       PUBLIC_RELAY_URLS: wss://relay.damus.io,wss://nos.lol
-      BASE_PATH: ''
-      DEMO_DEPLOY_TOKEN: ${{ secrets.DEMO_DEPLOY_TOKEN }}
+      BASE_PATH: /scrutiny-lens
     steps:
       - name: Check out lens
         uses: actions/checkout@v4
@@ -43,29 +43,22 @@ jobs:
         working-directory: lens
         run: pnpm build
 
-      - name: Publish to scrutiny-lens-demo.github.io
-        if: env.DEMO_DEPLOY_TOKEN != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          git clone --depth 1 \
-            "https://x-access-token:${DEMO_DEPLOY_TOKEN}@github.com/scrutiny-lens-demo/scrutiny-lens-demo.github.io.git" \
-            "$RUNNER_TEMP/demo"
-          find "$RUNNER_TEMP/demo" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-          cp -r lens/build/. "$RUNNER_TEMP/demo/"
-          cd "$RUNNER_TEMP/demo"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No content changes — deploy up to date."
-          else
-            git -c user.name="github-actions[bot]" \
-                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-                commit -m "deploy: crocs-muni/scrutiny-lens@${GITHUB_SHA}"
-            git push
-          fi
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: lens/build
 
-      - name: Note when deploy is not configured yet
-        if: env.DEMO_DEPLOY_TOKEN == ''
-        run: |
-          echo "Build is green; deploy skipped."
-          echo "Set repo secret DEMO_DEPLOY_TOKEN per docs/deploy.md, then re-run this workflow."
+  deploy:
+    needs: gate-and-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
