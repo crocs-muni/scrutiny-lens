@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  gate-and-build:
+  gate-build-publish:
     runs-on: ubuntu-latest
     env:
       # HTTPS host → wss relays only. Corpus pool target per docs/deploy.md.
@@ -58,8 +58,8 @@ jobs:
           if git diff --cached --quiet; then
             echo "No content changes — deploy up to date."
           else
-            git -c user.name="scrutiny-lens CI" \
-                -c user.email="146263512+scrutiny-lens[bot]@users.noreply.github.com" \
+            git -c user.name="github-actions[bot]" \
+                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
                 commit -m "deploy: crocs-muni/scrutiny-lens@${GITHUB_SHA}"
             git push
           fi
