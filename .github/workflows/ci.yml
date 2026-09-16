@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out lens
+        uses: actions/checkout@v4
+        with:
+          path: lens
+
+      - name: Prepare (pinned siblings, pnpm, core build, install)
+        uses: ./lens/.github/actions/prepare
+
+      - name: Typecheck
+        working-directory: lens
+        run: pnpm check
+
+      - name: Test
+        working-directory: lens
+        run: pnpm test

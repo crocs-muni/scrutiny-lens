@@ -1,0 +1,71 @@
+name: pages
+
+# Deploys the static SPA to the user-site repo scrutiny-lens-demo.github.io
+# (issue #16, deploy doc: docs/deploy.md). Root-mounted → BASE_PATH stays ''.
+# The push step skips cleanly until the repo secret DEMO_DEPLOY_TOKEN exists.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Never cancel a deploy mid-flight; queue instead.
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  gate-and-build:
+    runs-on: ubuntu-latest
+    env:
+      # HTTPS host → wss relays only. Corpus pool target per docs/deploy.md.
+      PUBLIC_RELAY_URLS: wss://relay.damus.io,wss://nos.lol
+      BASE_PATH: ''
+      DEMO_DEPLOY_TOKEN: ${{ secrets.DEMO_DEPLOY_TOKEN }}
+    steps:
+      - name: Check out lens
+        uses: actions/checkout@v4
+        with:
+          path: lens
+
+      - name: Prepare (pinned siblings, pnpm, core build, install)
+        uses: ./lens/.github/actions/prepare
+
+      - name: Typecheck
+        working-directory: lens
+        run: pnpm check
+
+      - name: Test
+        working-directory: lens
+        run: pnpm test
+
+      - name: Build static site
+        working-directory: lens
+        run: pnpm build
+
+      - name: Publish to scrutiny-lens-demo.github.io
+        if: env.DEMO_DEPLOY_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 \
+            "https://x-access-token:${DEMO_DEPLOY_TOKEN}@github.com/scrutiny-lens-demo/scrutiny-lens-demo.github.io.git" \
+            "$RUNNER_TEMP/demo"
+          find "$RUNNER_TEMP/demo" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -r lens/build/. "$RUNNER_TEMP/demo/"
+          cd "$RUNNER_TEMP/demo"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No content changes — deploy up to date."
+          else
+            git -c user.name="scrutiny-lens CI" \
+                -c user.email="146263512+scrutiny-lens[bot]@users.noreply.github.com" \
+                commit -m "deploy: crocs-muni/scrutiny-lens@${GITHUB_SHA}"
+            git push
+          fi
+
+      - name: Note when deploy is not configured yet
+        if: env.DEMO_DEPLOY_TOKEN == ''
+        run: |
+          echo "Build is green; deploy skipped."
+          echo "Set repo secret DEMO_DEPLOY_TOKEN per docs/deploy.md, then re-run this workflow."

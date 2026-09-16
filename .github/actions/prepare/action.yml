@@ -1,0 +1,47 @@
+name: prepare
+# Sibling-checkout + install recipe shared by ci.yml and pages.yml.
+# Lens consumes two file: deps (AGENTS.md): @scrutiny-fabric/core from
+# ../scrutiny-fabric-tools/packages/core (needs its tsc build) and
+# beautiful-ui-svelte from ../scrutiny-design-system (ships source).
+# Both checkouts are PINNED SHAs — bump deliberately, one line each.
+# The caller workflow MUST have checked out lens into ./lens first.
+runs:
+  using: composite
+  steps:
+    - name: Check out @scrutiny-fabric/core (pinned)
+      uses: actions/checkout@v4
+      with:
+        repository: crocs-muni/scrutiny-fabric-tools
+        ref: b7c56b1426d2da515ab68b279d0c46b9a5f35806
+        path: scrutiny-fabric-tools
+
+    - name: Check out beautiful-ui-svelte (pinned)
+      uses: actions/checkout@v4
+      with:
+        repository: aykoooo/beautiful-ui-svelte
+        ref: 2d5320f595400ef10164abdaba4ead17a742d178
+        path: scrutiny-design-system
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 10
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: pnpm
+        cache-dependency-path: lens/pnpm-lock.yaml
+
+    - name: Build @scrutiny-fabric/core (tsc → dist; lens's exports target it)
+      working-directory: scrutiny-fabric-tools
+      shell: bash
+      run: |
+        pnpm install --frozen-lockfile --filter @scrutiny-fabric/core...
+        pnpm --filter @scrutiny-fabric/core run build
+
+    - name: Install lens
+      working-directory: lens
+      shell: bash
+      run: pnpm install --frozen-lockfile
