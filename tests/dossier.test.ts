@@ -221,8 +221,24 @@ describe('retraction is protocol truth, not presentation', () => {
 });
 
 describe('files rows mirror the seam edge semantics', () => {
-	it('product dossier: arrowhead at the subject, verb from binding content', () => {
-		const root = productRoot('prod\n', [], 'root');
+	it('product dossier rows: one per artifact, verb + provenance deep-link preserved (#77)', () => {
+		// Root product carries its OWN imeta artifact — subject-own rows exist
+		// (and in META1's dossier the root's rows are the cache-title voice).
+		const root = signed(
+			{
+				kind: 1,
+				created_at: 1000,
+				tags: [
+					['t', 'scrutiny-fabric'],
+					['t', 'scrutiny-v0.8.1'],
+					['t', 'scrutiny-product'],
+					['imeta', 'url https://x.test/st.pdf', 'alt Security Target']
+				],
+				content: 'prod\n'
+			},
+			AUTHOR,
+			'root'
+		);
 		const meta = signed(
 			{
 				kind: root.kind,
@@ -233,7 +249,8 @@ describe('files rows mirror the seam edge semantics', () => {
 					['t', 'scrutiny-metadata'],
 					['i', 'cert:BSI-1']
 				],
-				content: 'Certification Report PDF https://x.test/r.pdf'
+				// Legacy descriptor grammar (#77): labeled line, whole-line anchored.
+				content: 'Certification Report\nPDF: https://x.test/r.pdf'
 			},
 			AUTHOR,
 			'meta1'
@@ -243,22 +260,49 @@ describe('files rows mirror the seam edge semantics', () => {
 			AUTHOR,
 			'bind1'
 		);
+		// Root dossier: subject-own artifact first ("this record"),
+		// then the bound record's artifact with verb + destination.
 		const d = deriveDossier('root', [root, meta, binding], [])!;
-		expect(d.files).toHaveLength(1);
-		expect(d.files[0].verb).toBe('documents');
-		expect(d.files[0].destination).toBe('subject');
-		expect(d.files[0].counterpartyId).toBe('meta1');
-		expect(d.counts.files).toBe(1);
+		expect(d.files).toHaveLength(2);
+		expect(d.files[0]).toMatchObject({
+			recordId: 'root',
+			recordTitle: null,
+			verb: null,
+			destination: 'subject',
+			artifact: { url: 'https://x.test/st.pdf', label: 'Security Target', provenance: 'imeta' }
+		});
+		expect(d.files[1]).toMatchObject({
+			verb: 'documents',
+			destination: 'subject',
+			recordId: 'meta1'
+		});
+		expect(d.files[1].artifact).toMatchObject({
+			url: 'https://x.test/r.pdf',
+			label: 'PDF',
+			provenance: 'content'
+		});
+		expect(d.counts.files).toBe(2);
 
-		// …and the metadata dossier sees the same binding from the other end.
+		// Metadata dossier (meta1 AS subject): its OWN artifact lists first,
+		// "this record" (recordTitle null, verb null), destination 'subject'.
 		const m = deriveDossier('meta1', [root, meta, binding], [])!;
 		expect(m.subjectType).toBe('metadata');
-		expect(m.files[0].destination).toBe('counterparty');
-		expect(m.files[0].counterpartyTitle).toEqual({ text: 'prod', interpreted: false });
+		expect(m.files[0]).toMatchObject({
+			recordId: 'meta1',
+			recordTitle: null,
+			verb: null,
+			destination: 'subject'
+		});
+		expect(m.files[0].artifact.url).toBe('https://x.test/r.pdf');
 
-		// cache hit → the AI title sans-flagged; never a second vocabulary.
+		// The bound product's artifact rows share the recordTitle voice:
+		// cache hit → AI title sans; miss → rule-5 mono (never a second vocabulary).
+		expect(m.files[0].artifact).toBeDefined();
 		const cached = deriveDossier('meta1', [root, meta, binding], [cardFor(root)])!;
-		expect(cached.files[0].counterpartyTitle).toEqual({ text: 'AI title', interpreted: true });
+		expect(cached.files.find((r) => r.recordId === 'root')?.recordTitle).toEqual({
+			text: 'AI title',
+			interpreted: true
+		});
 	});
 
 	it('foreign overlay lands non-canonical with its §7.3 state word', () => {
@@ -280,7 +324,7 @@ describe('store-level honesty guards', () => {
 		expect(deriveDossier('ghost', [], [])).toBeNull();
 	});
 
-	it('binding endpoints outside the batch render as bare ids, never labels', () => {
+	it('a counterparty outside the admitted set contributes NO rows — unreadable artifacts, never fabricated (#77)', () => {
 		const root = productRoot('prod\n', [], 'root');
 		const binding = signed(
 			buildBinding({ id: 'root' }, { id: 'absent-meta' }, 'documents', 1600).template,
@@ -288,6 +332,7 @@ describe('store-level honesty guards', () => {
 			'bind1'
 		);
 		const d = deriveDossier('root', [root, binding], [])!;
-		expect(d.files[0].counterpartyTitle).toBeNull();
+		expect(d.files).toEqual([]);
+		expect(d.counts.files).toBe(0);
 	});
 });

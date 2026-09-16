@@ -212,14 +212,17 @@ const dashed = $derived(product === null || !product.interpreted);
 		</span>
 		<span class="flex-1"></span>
 		<span class="inline-flex shrink-0 items-center gap-2 font-mono text-[11px] text-ink-2">
+			<!-- One icon pair across node + card (issue #77, pinned §9):
+				IconFile = bound records (metadata), IconLink = artifacts
+				(pdf/csv/…) — the two surfaces must never disagree. -->
 			{#if c.files > 0}
 				<span class="inline-flex items-center gap-1">
-					<IconFile size={12} stroke={1.8} aria-hidden="true" />
+					<IconLink size={12} stroke={1.8} aria-hidden="true" />
 					{c.files} file{c.files === 1 ? '' : 's'}
 				</span>
 			{/if}
 			<span class="inline-flex items-center gap-1">
-				<IconLink size={12} stroke={1.8} aria-hidden="true" />
+				<IconFile size={12} stroke={1.8} aria-hidden="true" />
 				{c.boundMetadata} metadata
 			</span>
 			{#if c.updates > 0}

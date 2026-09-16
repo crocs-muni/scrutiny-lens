@@ -9,8 +9,12 @@ The single event the user has opened for detail, held as an event id at investig
 _Avoid_: highlighted card, active card, focused result
 
 **Dossier**:
-The detail drawer's body for the Selection — the four sections Summary, Content, History, Files, rendered entirely from deterministic event data plus cached AI prose.
+The detail drawer's body for the Selection — the four sections Summary, Content, History, Files, rendered entirely from deterministic event data plus cached AI prose. The Files section lists the subject's **Artifacts** (own descriptors first, "this record", then one row per artifact per bound record with verb chip + counterparty deep-link) — never "bindings", never "any URL".
 _Avoid_: details pane, inspector, drawer content
+
+**Artifact**:
+A file described by a record — the record's own deliverable: an `imeta` tag's url (primary tier) or a conservative legacy-in-content descriptor line (fallback tier, extension-whitelisted). Artifacts are extracted from exactly one seam (`artifacts.ts`); counts, drawer rows, and footers never re-judge "URL in content" anywhere else.
+_Avoid_: attachment, download, linked file, binding row
 
 **Facet filter**:
 View-level state that projects which cards the results list shows. It filters the list only; it never filters the underlying admitted events and never touches the Selection.
@@ -40,14 +44,18 @@ _Avoid_: unverified pill, flagged claim
 The chat → surface link state that maps a citation to its claim span, its hover-card, and the target it can focus — pre-canvas: the dossier; post-#29b: the graph node ring. One-directional this cycle: hovering a node never lights chat.
 _Avoid_: focus store, sync store
 
-**Graph root**:
-The fixed hub the canvas's ego graph is drawn around — the first subject opened in an investigation. Later selections move the ring and the dossier but never re-center the graph; the root dies with the investigation.
-_Avoid_: center node, anchor card, focused hub
+**Subject** (subject graph):
+The centered event the canvas's subject graph is drawn around — the first dossier subject opened in an investigation. Later selections move the ring and the dossier but never re-center the graph; the subject dies with the investigation. Normally a product; a linked record can also be centered (spec §9 glossary).
+_Avoid_: hub, graph root, ego anchor, center node, anchor card
 
-**Shadow hub**:
-A product bound to a spoke but not expanded — drawn dimmed one ring outward along the shared metadata's ray, with a +N badge counting its admitted-but-unrevealed neighbors. Not a placeholder: every shadow is an admitted event with an admitted binding.
-_Avoid_: ghost node, stub, latent hub
+**Linked record**:
+A metadata record bound to the subject — a node on the canvas, a paragraph in the record register, the counterparty an artifact row points at.
+_Avoid_: spoke, metadata node (unqualified)
+
+**Related product**:
+A product sharing a linked record with the subject, not expanded — drawn dimmed further out along the shared record's ray, with a +N badge counting its admitted-but-unrevealed neighbors. Not a placeholder: every one is an admitted event with an admitted binding.
+_Avoid_: shadow hub, ghost node, stub, latent hub
 
 **Expansion**:
-The gesture (double-click on a shadow hub, undo chip in the toolbar) that reveals a shadow hub's admitted neighbors in place. Admitted-only — expansion never fetches; a neighbor the store can't show is counted in +N, never invented.
+The gesture (double-click on a related product, undo chip in the toolbar) that reveals a related product's admitted neighbors in place. Admitted-only — expansion never fetches; a neighbor the store can't show is counted in +N, never invented.
 _Avoid_: drill-down, lazy load, infinite graph
