@@ -21,11 +21,12 @@ export const RELAY_MAX = 4;
 /** Spec §5 ships a known-good default; env overrides it, not replaces it. */
 const SPEC_ENDPOINT = 'https://llm.fi.muni.cz/v1';
 
-/** Spec §8 default relay pool (2026-09-17 test-corpus bootstrap: Primal's
- * write relay is the first free mirror to accept+retain the JCAlgTest /
- * sec-certs test corpora, verified live — the other publish targets stay
+/** Spec §8 default relay pool (2026-09-17 test-corpus bootstrap: the user's
+ * lens-demo relay (relay.tools/newlay) holds the full JCAlgTest + sec-certs
+ * test corpora with NIP-50 search; Primal is the free public mirror that
+ * accepted+retained first, verified live — other publish targets stay
  * addable through Settings; env overrides, not replaces). */
-const SPEC_RELAYS = ['wss://relay.primal.net/'];
+const SPEC_RELAYS = ['wss://lens-demo.feeds.relay.tools', 'wss://relay.primal.net/'];
 
 export function parseRelayUrls(raw: string): string[] {
 	const seen = new Set<string>();
