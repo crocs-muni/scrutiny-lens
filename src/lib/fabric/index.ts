@@ -46,6 +46,7 @@
 import {
 	DELETION_KIND,
 	bindingEndpoints,
+	classifyByRole,
 	eventIdMatches,
 	isDefaultViewRetracted,
 	scrutinyEventType,
@@ -339,4 +340,37 @@ export function resolveGraph(events: NostrEvent[]): GraphView {
 	}
 
 	return { nodes, edges };
+}
+
+/**
+ * The events "inside the open card": the selected node, every node one
+ * binding-edge away, the binding events themselves, and the patches plus
+ * honoured kind-5 deletions bound to any of the adjacent nodes — everything
+ * the dossier's summary/history sections could quote. Caller order
+ * preserved; only events present in `events` are returned (empty when the
+ * subject isn't a graph node). Chat grounding consumes this — user ruling
+ * 2026-09-17: the column answers about the OPENED card, not the cohort.
+ */
+export function subjectGrounding(events: NostrEvent[], subjectId: string): NostrEvent[] {
+	const { nodes, edges } = resolveGraph(events);
+	const nodeIds = new Set(nodes.map((n) => n.id));
+	if (!nodeIds.has(subjectId)) return [];
+	const cohort = new Set([subjectId]);
+	for (const edge of edges) {
+		if (edge.source === subjectId || edge.target === subjectId) {
+			cohort.add(edge.source);
+			cohort.add(edge.target);
+			cohort.add(edge.id); // the binding event carries the label
+		}
+	}
+	const adjacentNodes = [...cohort].filter((id) => nodeIds.has(id));
+	const core = events as unknown as CoreNostrEvent[];
+	for (const nodeId of adjacentNodes) {
+		for (const match of classifyByRole(core, nodeId, 'patch')) cohort.add(match.event.id);
+	}
+	for (const event of events) {
+		if (event.kind !== DELETION_KIND) continue;
+		if (event.tags.some((t) => t[0] === 'e' && adjacentNodes.includes(t[1] ?? ''))) cohort.add(event.id);
+	}
+	return events.filter((event) => cohort.has(event.id));
 }
