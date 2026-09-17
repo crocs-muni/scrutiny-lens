@@ -2,12 +2,13 @@
  * Chat answer settle gates (issue #30, ADR 0003) — the deterministic pair the
  * renderer trusts:
  *
- *   scrubAnswer  — removes markers whose citation FAILED verbatim
- *                  verification. Nothing unverified may leave a trace: no
- *                  pill, no [N], no claim underline. Markers with no matching
- *                  citation at all stay as literal inert text (AI-Elements'
- *                  unmatched-marker precedent) because the scrub can only
- *                  delete what it can prove failed.
+ *   scrubAnswer  — STRIP-uniform (user ruling 2026-09-17, supersedes the
+ *                  AI-Elements "unmatched markers stay literal" precedent):
+ *                  a marker survives iff a VERIFIED citation carries its
+ *                  number. Failed-verification AND recordless markers both
+ *                  vanish: no pill, no [N], no claim underline — an
+ *                  unreadable number with no backing is decoration, and the
+ *                  rendered text must never quote decoration.
  *
  *   layoutAnswer — splits settled content into text runs carrying the
  *                  citation numbers whose claim span covers them, plus pill
@@ -41,13 +42,16 @@ export function scrubAnswer<T extends ScrubCitation>(
 	content: string,
 	citations: T[]
 ): { content: string; citations: T[] } {
-	const failed = new Set(citations.filter((c) => !c.verified).map((c) => c.n));
-	// Only markers PROVEN failed vanish — with one adjacent space so no
-	// orphan whitespace remains. Everything else (verified citations, bare
-	// [N] with no citation record) is literal text. Regex derived from
-	// CANON_MARKER so the token grammar lives in exactly one place.
+	const verified = new Set(citations.filter((c) => c.verified).map((c) => c.n));
+	// User ruling 2026-09-17 (chat-output rework): STRIP, uniformly. A
+	// marker stays iff a VERIFIED citation with its n survives — a bare [N]
+	// with no backing record used to linger as "literal inert text" and
+	// read like a rendered bug on screen ("[3]" over THALES/FIPS claims,
+	// live complaint). Swallow one adjacent space so no orphan whitespace
+	// remains. Regex derived from CANON_MARKER so the token grammar lives
+	// in exactly one place.
 	const text = content.replace(new RegExp(` ?${CANON_MARKER.source}`, 'g'), (raw, nRaw: string) =>
-		failed.has(Number(nRaw)) ? '' : raw
+		verified.has(Number(nRaw)) ? raw : ''
 	);
 	return { content: text, citations: citations.filter((c) => c.verified) };
 }

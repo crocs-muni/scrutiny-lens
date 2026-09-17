@@ -31,12 +31,12 @@ describe('scrubAnswer — failed citations vanish', () => {
 		expect(out.content).toBe('It is affected.');
 	});
 
-	it('does not invent markers: unknown [N] in prose is left for layout', () => {
-		// Layout treats markers with no citation as literal inert text (the
-		// AI-Elements unmatched-marker precedent) — the scrub only removes
-		// markers it can PROVE failed verification.
+	it('strips bare numbers with no verified backing (user ruling 2026-09-17)', () => {
+		// Supersedes the AI-Elements "unmatched marker stays literal inert
+		// text" precedent: a recordless [N] on screen reads as a rendering
+		// bug (live PQC-chat complaint: bare "[3]" over THALES claims).
 		const out = scrubAnswer('Bare [9] reference.', []);
-		expect(out.content).toBe('Bare [9] reference.');
+		expect(out.content).toBe('Bare reference.');
 	});
 });
 

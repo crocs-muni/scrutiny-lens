@@ -24,6 +24,7 @@
 	import { chat } from '$lib/chat.svelte';
 	import { settings } from '$lib/settings.svelte';
 	import { parseChatStream } from '$lib/chat/streamParse';
+	import ChatRichText, { type RichPart } from '../chat/ChatRichText.svelte';
 
 	interface Props {
 		collapsed: boolean;
@@ -60,7 +61,15 @@
 	const pinShimmer = (eventId: string): number | null =>
 		chat.grounding.some((e) => e.id === eventId) ? chat.registry.next(eventId) : null;
 
-	const streamSegments = $derived(chat.live === null ? [] : parseChatStream(chat.live.raw, pinShimmer));
+	/* Live parts = the same RichPart vocabulary as the settled path: prose
+	 * becomes markdown-able text runs, pending markers become shimmer. */
+	const liveParts: RichPart[] = $derived(
+		chat.live === null
+			? []
+			: parseChatStream(chat.live.raw, pinShimmer).map((s): RichPart =>
+					s.kind === 'prose' ? { kind: 'text', text: s.text, marks: [] } : { kind: 'pending', n: s.n }
+				)
+	);
 
 	let scrollEl = $state<HTMLDivElement | null>(null);
 	$effect(() => {
@@ -125,15 +134,9 @@
 							the honest >30s degrade (ruling 6) is simply this state lasting. -->
 						<span class="pending-pill" aria-label="Thinking…"></span>
 					{:else}
-						{#each streamSegments as segment, i (i)}
-							{#if segment.kind === 'pending'}
-								<span class="pending-pill" aria-label="Verifying citation {segment.n ?? ''}…"
-									>{segment.n ?? ''}</span
-								>
-							{:else}
-								{segment.text}
-							{/if}
-						{/each}
+						<!-- Same renderer as the settled path (chat-output T2): markdown
+							from the FIRST delta, pending shimmer for unverified markers. -->
+						<ChatRichText parts={liveParts} {onOpenDossier} />
 					{/if}
 				</div>
 			{/if}

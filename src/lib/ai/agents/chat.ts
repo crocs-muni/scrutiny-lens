@@ -48,6 +48,7 @@ import {
 	NO_KEY_MESSAGE
 } from '../provider';
 import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
+import { scanMarkers } from '../../chat/markers';
 /** Injectable streaming transport — yields raw model text chunks as they arrive. Throws on transport failure. */
 export type StreamLLM = (args: CallLLMArgs) => AsyncIterable<string>;
 
@@ -178,12 +179,10 @@ function frame(payload: unknown): Uint8Array {
  * Marker protocol
  * ------------------------------------------------------------------ */
 
-/** `[N]{"eventId":"…","quote":"…"}` — one JSON object, no nested braces.
- * Single owner of the raw marker grammar: the live stream parser
- * ($lib/chat/streamParse) re-exports and matches against THIS so the
- * pending-shimmer surface and the settle gate can never silently diverge
- * (standards review P2). */
-export const MARKER = /\[(\d+)\]\s*\{([^{}]*)\}/g;
+/* Marker grammar's single owner is $lib/chat/markers.ts (scanMarkers —
+ * balanced-brace, string-aware; 2026-09-17 rework). The flat `[^{}]*`
+ * capture died when a live PQC answer nested braces inside a quote field
+ * and the corrupt JSON rendered as prose. */
 
 const markerPayloadSchema = z.object({
 	eventId: z.string().min(1),
@@ -240,31 +239,34 @@ function resolveFinal(
 	const summary: ClaimsSummary = { total: 0, verbatim: 0, partial: 0, extrapolatory: 0 };
 	const replacements: Array<{ raw: string; replacement: string }> = [];
 
-	for (const match of fullText.matchAll(MARKER)) {
-		const raw = match[0];
-		const payload = markerPayloadSchema.safeParse(
-			(() => {
-				try {
-					return JSON.parse(`{${match[2]}}`);
-				} catch {
-					return undefined;
-				}
-			})()
-		);
+	for (const scan of scanMarkers(fullText)) {
+		if (!scan.braced) continue; // bare canonical [N] — scrubAnswer owns it
+		const raw = fullText.slice(scan.start, scan.end);
 
 		let resolvedCitation: ChatCitation | undefined;
-		if (payload.success) {
-			const event = events.find((e) => e.id === payload.data.eventId);
-			const res = registry.resolve(payload.data.eventId, events, payload.data.quote, event ? nodeTitleOf(event) : undefined);
-			if (res.ok && event) {
-				const gate = extractedGate(payload.data.quote, event.content);
-				resolvedCitation = {
-					...res.citation,
-					support: gate.state,
-					verified: gate.state !== 'extrapolatory',
-					status: 'resolved',
-					colorIndex: (res.citation.n - 1) % CITATION_SLOTS
-				};
+		if (scan.objectText !== null) {
+			const payload = markerPayloadSchema.safeParse(
+				(() => {
+					try {
+						return JSON.parse(scan.objectText as string);
+					} catch {
+						return undefined;
+					}
+				})()
+			);
+			if (payload.success) {
+				const event = events.find((e) => e.id === payload.data.eventId);
+				const res = registry.resolve(payload.data.eventId, events, payload.data.quote, event ? nodeTitleOf(event) : undefined);
+				if (res.ok && event) {
+					const gate = extractedGate(payload.data.quote, event.content);
+					resolvedCitation = {
+						...res.citation,
+						support: gate.state,
+						verified: gate.state !== 'extrapolatory',
+						status: 'resolved',
+						colorIndex: (res.citation.n - 1) % CITATION_SLOTS
+					};
+				}
 			}
 		}
 
@@ -275,10 +277,14 @@ function resolveFinal(
 			// Canonical renumber: the registry's stable [N], not the model's.
 			replacements.push({ raw, replacement: `[${resolvedCitation.n}]` });
 		} else {
-			// Unresolvable → drop the marker, swallowing one adjacent space so no
-			// orphan whitespace remains. Whitespace elsewhere is literal content
-			// (indent-preserved blocks, hard breaks) — never collapse globally.
-			const precededBySpace = fullText.slice(0, match.index ?? 0).endsWith(' ');
+			// Unresolvable OR malformed (parseless/unterminated braces): strip
+			// the marker entirely — swallowing one adjacent space so no orphan
+			// whitespace remains. A failed/malformed citation must leave no
+			// trace on the settled surface (user ruling 2026-09-17 — the flat-
+			// capture predecessor leaked corrupt JSON into the PQC answer).
+			// Whitespace elsewhere is literal content (indent-preserved blocks,
+			// hard breaks) — never collapse globally.
+			const precededBySpace = fullText.slice(0, scan.start).endsWith(' ');
 			replacements.push({ raw: precededBySpace ? ` ${raw}` : raw, replacement: '' });
 		}
 	}
