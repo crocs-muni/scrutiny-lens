@@ -28,18 +28,17 @@
 	/* Canned prompt pool (spec §2 rule 1 — never AI-written). Shuffle shows
 	 * three, excluding the current round so consecutive sets always differ. */
 	const POOL = [
-		'ROCA vulnerability in Infineon chips',
-		'FIPS 140-3 certificates expiring this year',
-		'Which packages still bundle OpenSSL 3.0?',
-		'Common Criteria EAL4+ certificates from BSI',
-		'JCAlgTest results for NXP JCOP cards',
-		'TPM firmware vulnerabilities with CVE records',
-		'Certificates covering Java Card 3.1 platforms',
-		'Infineon smartcards with maintained certifications'
+		'PQC algorithms on smart cards (ML-KEM, CRYSTALS)',
+		'Fastest ECDSA on JavaCard ≤ 3.0.5 cards',
+		'ROCA vulnerability in Infineon chips'
 	] as const;
 
 	function pickThree(exclude: readonly string[] = []): string[] {
-		const pool = POOL.filter((s) => !exclude.includes(s));
+		// With a pool as small as the row count (3), excluding the shown round
+		// would leave shuffle stranded with zero rows — only exclude when a
+		// full fresh trio remains.
+		const enough = POOL.length - exclude.length >= 3;
+		const pool = POOL.filter((s) => !enough || !exclude.includes(s));
 		const picks: string[] = [];
 		while (picks.length < 3 && pool.length > 0) {
 			const i = Math.floor(Math.random() * pool.length);

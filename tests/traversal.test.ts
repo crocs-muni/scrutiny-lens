@@ -27,6 +27,14 @@ import type {
 	RelayStatus,
 	Transport
 } from '$lib/net/transport';
+import { includeTestTags } from '$lib/config';
+
+/** Expected `#t` for a §8.2 type filter per the test-corpus seam
+ * (bootstrap 2026-09-16, PUBLIC_INCLUDE_TEST_TAGS): canonical alone when
+ * the flag is off (byte-identical to core); both namespaces when on. */
+function typeFilterT(canonical: string): string[] {
+	return includeTestTags() ? [canonical, `${canonical}-test`] : [canonical];
+}
 
 const URLS = ['wss://relay-a', 'wss://relay-b'];
 
@@ -120,7 +128,7 @@ describe('fetchSubjectContext (§8.2, tools #75)', () => {
 			{
 				label: 'traversal:patches',
 				urls: URLS,
-				filters: [{ kinds: [1], '#t': ['scrutiny-patch'], '#e': [subjectId] }]
+				filters: [{ kinds: [1], '#t': typeFilterT('scrutiny-patch'), '#e': [subjectId] }]
 			},
 			{
 				label: 'traversal:deletions:subject',
@@ -271,8 +279,8 @@ describe('fetchSessionContext (§8.2, lens #68 — bindings legs)', () => {
 				label: 'traversal:bindings',
 				urls: URLS,
 				filters: [
-					{ kinds: [1], '#t': ['scrutiny-binding'], '#e': [product.id] },
-					{ kinds: [1], '#t': ['scrutiny-binding'], '#e': [meta.id] }
+					{ kinds: [1], '#t': typeFilterT('scrutiny-binding'), '#e': [product.id] },
+					{ kinds: [1], '#t': typeFilterT('scrutiny-binding'), '#e': [meta.id] }
 				]
 			},
 			{

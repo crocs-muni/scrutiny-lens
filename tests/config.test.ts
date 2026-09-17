@@ -49,7 +49,7 @@ describe('isValidRelayUrl', () => {
 describe('env defaults', () => {
 	it('ships the spec §5 endpoint when no env override exists', () => {
 		// The test environment sets no PUBLIC_LLM_ENDPOINT.
-		expect(DEFAULT_ENDPOINT).toBe('https://llm.ai.e-infra.cz/v1');
+		expect(DEFAULT_ENDPOINT).toBe('https://llm.fi.muni.cz/v1');
 	});
 
 	it('DEFAULT_RELAYS carries only valid relay URLs (env entries are filtered)', () => {

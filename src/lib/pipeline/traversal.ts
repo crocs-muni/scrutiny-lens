@@ -52,6 +52,7 @@ import {
 	scrutinyEventType,
 	type CoreNostrEvent
 } from '$lib/fabric';
+import { filterWithTestTags } from '$lib/fabric/test-tags';
 import type { FetchRoute, RelayStatus, Transport } from '$lib/net/transport';
 
 /** Bound on the settle pass's second hop: ids fetched per session — a
@@ -97,7 +98,7 @@ export async function fetchSubjectContext(
 	// `as Filter`: core's EventFilter is deeply readonly, nostr-tools' Filter
 	// mutable — the same boundary cast routeSearch already makes (pipeline).
 	const roundOne: FetchRoute[] = [
-		{ label: 'traversal:patches', urls, filters: [patchesReferencing(subjectId) as Filter] },
+		{ label: 'traversal:patches', urls, filters: [filterWithTestTags(patchesReferencing(subjectId)) as Filter] },
 		{ label: 'traversal:deletions:subject', urls, filters: [deletionsFor(subjectId) as Filter] }
 	];
 	const first = await transport.fetchRouted(roundOne, () => {});
@@ -157,7 +158,7 @@ export async function fetchSessionContext(
 		roundOne.push({
 			label: 'traversal:bindings',
 			urls,
-			filters: nodeIds.map((id) => bindingsReferencing(id) as Filter)
+			filters: nodeIds.map((id) => filterWithTestTags(bindingsReferencing(id)) as Filter)
 		});
 	}
 	roundOne.push({
