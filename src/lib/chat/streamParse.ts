@@ -1,5 +1,6 @@
 /**
- * Streaming chat parser (issue #30, ruling 5 — pending-shimmer design).
+ * Streaming chat parser (issue #30, ruling 5 — pending-shimmer design;
+ * scanner cutover 2026-09-17).
  *
  * The model's raw marker syntax `[N]{"eventId":"…","quote":"…"}` must never
  * flash on screen mid-stream (citations are computed, not model-fabricated —
@@ -7,28 +8,49 @@
  * could still grow into a marker is withheld outright, so half-written JSON
  * never renders. Withholding ends as soon as one non-marker character makes
  * completion impossible — the stream only appends, so `…[1] x` can never
- * become a marker and renders as literal prose (AI-Elements' inert-marker
- * precedent).
+ * become a marker and renders as literal prose.
+ *
+ * Detection reuses $lib/chat/markers's scanMarkers (single owner): a
+ * balanced-brace, string-aware read — the flat `[^{}]*` capture that used
+ * to live here leaked nested-brace payloads onto the live surface (PQC
+ * chat, 2026-09-17). Malformed/unterminated braced runs are withheld just
+ * like partial ones; what a corrupt payload must never do is render.
  *
  * Stateless by contract: callers re-parse the whole accumulated string on
- * each delta. Settle-time resolution (verified pills or silent drops, ADR
- * 0003) happens elsewhere; this file only protects the live surface.
+ * each delta. Settle-time resolution (verified pills or STRIP, user ruling
+ * 2026-09-17) happens elsewhere; this file only protects the live surface.
  */
 
-import { MARKER } from '$lib/ai/agents/chat';
+import { scanMarkers, type MarkerScan } from './markers';
 
 export type StreamSegment =
 	| { kind: 'prose'; text: string }
 	| { kind: 'pending'; n: number | null };
 
-/** Same grammar as the agent's settle gate (one source of truth — standards
- * review P2), but an INSTANCE per consumer: a shared module-level /g regex
- * would leak lastIndex into every future exec()/test() caller. */
-const COMPLETE_MARKER = new RegExp(MARKER.source, MARKER.flags);
-
-/** A tail that could still grow into a marker: `[`, `[12`, `[1]`, `[1] `,
- * `[1] {`, `[1] {"eventId":"ev…` (partial JSON included). */
+/** A tail that could still grow into the `[N]` half of a marker: `[`,
+ * `[12`, `[1]`, `[1] `, `[1] {` — before any closing bracket. */
 const WITHHELD_TAIL = /^\[\d*(\](\s*(\{[^{}]*)?)?)?$/;
+
+/** Payload → pinned number, or null for unparseable payloads / ids the pin
+ * refuses. A malformed payload carries no trustworthy id, so its shimmer
+ * shows no number (same contract as the old parse-shim). */
+function pinOf(scan: MarkerScan, pin: (eventId: string) => number | null): number | null {
+	if (scan.objectText === null) return null;
+	try {
+		const payload: unknown = JSON.parse(scan.objectText);
+		if (
+			typeof payload === 'object' &&
+			payload !== null &&
+			typeof (payload as { eventId?: unknown }).eventId === 'string' &&
+			(payload as { eventId: string }).eventId.length > 0
+		) {
+			return pin((payload as { eventId: string }).eventId);
+		}
+	} catch {
+		// balanced but not our payload shape — numberless shimmer
+	}
+	return null;
+}
 
 /**
  * Parse accumulated raw stream text into render-safe segments.
@@ -45,27 +67,33 @@ export function parseChatStream(
 	const segments: StreamSegment[] = [];
 	let cursor = 0;
 
-	for (const match of text.matchAll(COMPLETE_MARKER)) {
-		const index = match.index ?? 0;
-		if (index > cursor) segments.push({ kind: 'prose', text: text.slice(cursor, index) });
-
-		let n: number | null = null;
-		try {
-			const payload: unknown = JSON.parse(`{${match[2]}}`);
-			if (
-				typeof payload === 'object' &&
-				payload !== null &&
-				typeof (payload as { eventId?: unknown }).eventId === 'string' &&
-				((payload as { eventId: string }).eventId as string).length > 0
-			) {
-				n = pin((payload as { eventId: string }).eventId);
+	for (const scan of scanMarkers(text)) {
+		if (!scan.braced) {
+			// Bare canonical [N]: the model echoed a number with no payload.
+			// It can still grow into a full `[N]{…}` ONLY when everything
+			// after it is whitespace (the stream appends) — withhold; any
+			// non-space character makes completion impossible and it stays
+			// inside the prose span (then settle owns its fate, never us).
+			if (text.slice(scan.end).trim() === '') {
+				if (scan.start > cursor) segments.push({ kind: 'prose', text: text.slice(cursor, scan.start) });
+				return segments;
 			}
-		} catch {
-			// Malformed payload: shimmer carries no number — the pin is never
-			// consulted because there is no trustworthy id to pin against.
+			continue;
 		}
-		segments.push({ kind: 'pending', n });
-		cursor = index + match[0].length;
+		if (scan.start > cursor) segments.push({ kind: 'prose', text: text.slice(cursor, scan.start) });
+		if (scan.objectText === null) {
+			// Two distinct hides: an UNTERMINATED run withholds silently —
+			// the stream may still complete it, and a half-written object
+			// never even shimmers. A corrupt COMPLETE run shows the
+			// numberless pending shimmer: settled shape reached, payload
+			// dead — but corrupt JSON itself must never render.
+			if (!scan.terminated) return segments;
+			segments.push({ kind: 'pending', n: pinOf(scan, pin) });
+			cursor = scan.end;
+			continue;
+		}
+		segments.push({ kind: 'pending', n: pinOf(scan, pin) });
+		cursor = scan.end;
 	}
 
 	// Tail: withhold iff it can still complete into a marker.

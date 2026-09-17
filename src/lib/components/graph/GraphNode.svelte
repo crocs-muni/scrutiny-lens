@@ -41,6 +41,7 @@
 	import type { SubjectGraphNode, HandleSide } from '$lib/graph/subject-graph';
 	import { iconForNode } from '$lib/graph/icons';
 	import PublisherChip from '../ui/PublisherChip.svelte';
+	import { firstPaintBloom } from '../ui/bloom.svelte';
 	import { formatRel } from '$lib/shell.svelte';
 
 	const props: NodeProps = $props();
@@ -75,20 +76,10 @@
 	/* Tile-settle (issue #82): the node-trickle UPGRADES this node in place —
 	 * a false→true `interpreted` flip earns one ~200ms settle-fade on title +
 	 * glyph (tile presence is deterministic membership; the flip can't lie).
-	 * First observed value is the FIRST STABLE PAINT → never blooms (a
-	 * cache-painted graph opens calm). dense full/line tiers only — the disc
-	 * tier's instant glyph pop stands by #29c ruling as of #82. */
-	let tileBloom = $state(false);
-	let tileObserved: boolean | null = null;
-	$effect(() => {
-		const now = data.interpreted;
-		if (tileObserved === null) {
-			tileObserved = now;
-			return;
-		}
-		if (now && !tileObserved) tileBloom = true;
-		tileObserved = now;
-	});
+	 * Dense full/line tiers only — the disc tier's instant glyph pop stands
+	 * by #29c ruling as of #82. First-paint contract: firstPaintBloom. */
+	const bloom = firstPaintBloom(() => data.interpreted);
+
 
 	/** Ring stack: box-shadow paints FIRST-listed TOPMOST — accent leads
 	 * (selection must survive citation-lit, Spec finding a2), the cite hue
@@ -166,8 +157,8 @@
 		<span
 			class="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border
 				{data.kind === 'product' ? 'border-[var(--accent)]/30 bg-accent-tint' : 'border-line bg-inset'}
-				{tileBloom ? 'tile-settle' : ''}"
-			onanimationend={() => (tileBloom = false)}
+				{bloom.active ? 'settle-flip' : ''}"
+			onanimationend={() => bloom.clear()}
 		>
 			<IconComponent
 				size={10}
@@ -176,7 +167,7 @@
 			/>
 		</span>
 		<span
-			class="truncate font-mono text-[10px] {data.retracted ? 'text-ink-3 line-through' : 'text-ink-2'} {tileBloom ? 'tile-settle' : ''}"
+			class="truncate font-mono text-[10px] {data.retracted ? 'text-ink-3 line-through' : 'text-ink-2'} {bloom.active ? 'settle-flip' : ''}"
 			>{data.title}</span
 		>
 	{:else}
@@ -186,8 +177,8 @@
 				class="relative flex shrink-0 items-center justify-center rounded-lg border
 					{data.kind === 'product' ? 'h-[30px] w-[30px] border-[var(--accent)]/30 bg-accent-tint' : 'h-[26px] w-[26px] border-line bg-inset'}
 					{data.retracted ? 'border-[var(--red)]' : ''}
-					{tileBloom ? 'tile-settle' : ''}"
-				onanimationend={() => (tileBloom = false)}
+					{bloom.active ? 'settle-flip' : ''}"
+				onanimationend={() => bloom.clear()}
 			>
 				<IconComponent
 					size={data.kind === 'product' ? 16 : 14}
@@ -200,7 +191,7 @@
 					class="truncate font-semibold {data.kind === 'product' ? 'text-[13.5px]' : 'text-[13px]'}
 						{data.interpreted ? 'font-sans' : 'font-mono text-[11.5px]'}
 						{data.retracted ? 'text-ink-3 line-through' : 'text-ink'}
-						{tileBloom ? 'tile-settle' : ''}"
+						{bloom.active ? 'settle-flip' : ''}"
 				>
 					{data.title}
 				</div>
@@ -263,10 +254,5 @@
 	{/each}
 </div>
 
-<style>
-	/* tile-settle rides the shared settle-fade-in keyframe (app.css, issue
-	 * #82) — the single ~200ms "graph updated" on trickle merge. */
-	.tile-settle {
-		animation: settle-fade-in 200ms var(--ease-link) both;
-	}
-</style>
+<!-- The bloom mark is the shared `.settle-flip` class (app.css, issue #82) —
+	the single ~200ms "graph updated" on trickle merge, one motion vocabulary. -->

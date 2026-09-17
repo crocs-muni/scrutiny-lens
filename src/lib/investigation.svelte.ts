@@ -56,6 +56,7 @@ import {
 } from "$lib/pipeline/cards";
 import { settings } from "$lib/settings.svelte";
 import { shell } from "$lib/shell.svelte";
+import { lensDebug } from "$lib/dev-log";
 
 /** Interval sleep that resolves early on abort — the lane-stagger's pause
  * must not outlive the run that scheduled it (spec §8 abort lifecycle). */
@@ -118,7 +119,8 @@ class Investigation {
    * interpretation this pass (issue #82): the amber-tint state. A settle
    * is only final relative to the pass — a later successful pass drains
    * its ids back out. Deliberate aborts never mark: killed ≠ failed
-   * (spec §8). TRANSIENT per run — never persisted, exactly like
+   * (§8 "abort on navigation away" lifecycle; honesty basis §2).
+   * TRANSIENT per run — never persisted, exactly like
    * `pending`: amber must remain a live claim, not a memory, or a
    * yesterday-failed endpoint would wallpaper the rail forever. */
   failed = $state<Set<string>>(new Set());
@@ -254,7 +256,7 @@ class Investigation {
   /** Start a search from the J1 composer. The transport and provider are
    * constructed per run from live settings — edits in Settings take effect
    * on the next question, never mid-run. */
-  async start(question: string): Promise<void> {
+  async start(question: string, title?: string): Promise<void> {
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
@@ -264,8 +266,11 @@ class Investigation {
 
     // The session row exists before the first slice so the rail shows the
     // investigation even if every relay hangs (spec §4: never demo data,
-    // but the question itself is real user input).
-    shell.newSession(question);
+    // but the question itself is real user input). Canned suggestions
+    // (SearchSuggestions) name the session with their human label while
+    // the run itself rides the corpus-verified probe words — the probe
+    // is what translate/routeSearch see, the label is what you read.
+    shell.newSession(title ?? question);
     this.sessionId = shell.session?.id ?? null;
     // issue #36: submit lands on the trace/results stage (spec center
     // swap search → results → session); the graph session is #29's.
@@ -302,14 +307,36 @@ class Investigation {
       // the same identity guard as the sibling writes (review P1).
       if (this.controller === controller) {
         this.result = session;
+        // §8.2 settle traversal (lens #68) runs BEFORE cards/facets
+        // assembly: a text search can admit ORPHAN metadata whose product
+        // roots arrive only via the bindings+second-hop legs (measured
+        // live 2026-09-17 on lens-demo: 'fastest ECDSA JavaCard' admits
+        // 28 metadata and zero products — cards assembled pre-context
+        // were empty and the rail honestly showed 'Nothing matched'
+        // while the corpus held the answer). Made part of the settle
+        // await so the card cohort below sees the contextual full set.
+        if (lensDebug()) {
+          console.debug(`[lens-trace] settle: admitted-before-context=${session.admitted.length}`);
+        }
+        await this.refreshSessionContext();
+        if (this.controller !== controller) return;
+        // $state proxy trap (settle.test.ts guards the same at the guard
+        // layers): this.result = session wrapped the session in a PROXY —
+        // admitContext pushes context arrivals into the PROXY's admitted
+        // (identity-checked against this.result), while our RAW local kept
+        // counting the pre-context array. Measured live: fresh=58 pushed,
+        // cards=0 assembled — the skeleton rail vanished at settle into
+        // 'Nothing matched'. Read the settled set from the proxy field.
+        const settled = this.result;
+        if (settled === null) return;
         this.cards = assembleCards(
-          resolveGraph(session.admitted),
-          session.admitted,
+          resolveGraph(settled.admitted),
+          settled.admitted,
         );
-        this.facetGroups = computeFacets(session.admitted);
-        // §8.2 settle traversal (lens #68), fire-and-forget. Parameterless
-        // on purpose — refreshSessionContext documents the $state proxy trap.
-        void this.refreshSessionContext();
+        this.facetGroups = computeFacets(settled.admitted);
+        if (lensDebug()) {
+          console.debug(`[lens-trace] settle: admitted-after-context=${settled.admitted.length} cards=${this.cards.length}`);
+        }
         if (
           provider !== undefined &&
           settings.model !== "" &&
@@ -393,8 +420,23 @@ class Investigation {
     this.selectSubject(root.id);
     // §8.2 dossier context — patches and deletions are unreachable by the
     // search's discovery filters; open them the way a card click would
-    // (fire-and-forget like openDossier, spec §8.2 lens #68).
-    void this.refreshSessionContext();
+    // (fire-and-forget like openDossier, spec §8.2 lens #68). Same $state
+    // proxy trap as start()'s settle: the context lanes append to the
+    // PROXY's admitted — the raw [root] card assembly above is frozen at
+    // the pre-context shape forever without a re-read sweep (trap-sweep
+    // 2026-09-17). Re-assemble once the settle lands, guarded for a newer
+    // open in flight.
+    {
+      const shared = this.result;
+      void this.refreshSessionContext().then(() => {
+        if (this.result !== shared || shared === null) return;
+        this.cards = assembleCards(
+          resolveGraph(shared.admitted),
+          shared.admitted,
+        );
+        this.facetGroups = computeFacets(shared.admitted);
+      });
+    }
     void this.ensureSubjectContext(root.id);
     // Cache write-through: a revisit of the same link (or a search that
     // finds the event) hits getEvent cache-first instead of re-fetching
@@ -657,8 +699,27 @@ class Investigation {
         session.admitted as unknown as FabricEvent[],
         result.events as unknown as FabricEvent[],
       );
+      if (lensDebug()) {
+        console.debug(`[lens-trace] admitContext: fetched=${result.events.length} candidates→fresh=${fresh.length} rounds=${result.rounds.length} capped=${result.capped}`);
+        for (const cand of result.events.slice(0, 10)) {
+          const tt = cand.tags.filter((t) => t[0] === 't').map((t) => t[1]).join('/');
+          const admitted = fresh.some((f) => f.id === cand.id);
+          if (!admitted) console.debug(`[lens-trace]   dropped ${cand.id.slice(0, 10)} t=${tt}`);
+        }
+      }
+      // Session invariant: admitted is unique by event id. admitBatch
+      // dedupes candidates against a SNAPSHOT of the batch, and the push
+      // loop below is the only writer — but a concurrent context leg
+      // (dossier-open re-poll racing the settle pass) writes the same
+      // array between snapshot and push. That race surfaced live as an
+      // each_key_duplicate on the results rail (product id twice at
+      // indexes 27/28, ROCA run 2026-09-17). Guard at the merge point —
+      // the invariant's home, cheap.
+      const seenIds = new Set(session.admitted.map((e) => e.id));
       for (const event of fresh) {
+        if (seenIds.has(event.id)) continue;
         session.admitted.push(event);
+        seenIds.add(event.id);
         // Cache write-through is deliberate (#68's repeat-query #28
         // contract): the next search's cache-first read sees this context.
         // Side effect, disclosed: later searches may now admit these
@@ -690,10 +751,13 @@ class Investigation {
    * FINAL admitted set once the search lands — bindingsReferencing unioned
    * per product/metadata id (Files rows / metadata deep-links), deletionsFor
    * for every cached event (DQ-2 first sight), one bounded second hop for
-   * the bindings' missing endpoints. Fire-and-forget like the dossier legs:
-   * appends to session.admitted re-derive the dossier in place; facet
-   * groups/cards/graph deliberately do not re-run (§3: those are the
-   * search's shape). Settled too early to block the fill lane. */
+   * the bindings' missing endpoints. start() awaits this pass BEFORE
+   * assembling cards/facets: a freetext search can land only ORPHAN
+   * metadata (no product touching the query words, only its records), and
+   * the second hop is the only thing that brings their roots into the
+   * session — cards assembled pre-context painted an empty rail over a
+   * populated corpus (measured on lens-demo, 2026-09-17). Dossier legs
+   * still never re-run the search shapes (§3). */
   async refreshSessionContext(): Promise<void> {
     // Reads this.result (the $state proxy), never a caller's raw session
     // object: admitContext's identity guard compares against the same
@@ -881,19 +945,21 @@ clearFacets(): void {
         this.pending = settle;
         if (this.controller !== controller) return;
         // One synchronous merge over disjoint indices — the lanes can't
-        // clobber each other's writes; UI paints per chunk.
+        // clobber each other's writes; UI paints per chunk. Amber
+        // bookkeeping (issue #82) rides the same pass: a claimed card that
+        // settled WITHOUT an interpretation marks `failed`; one the pass
+        // interpreted (live or cache-hit) drains. This runs only on the
+        // current controller's path — a deliberate abort returned above,
+        // so stopped runs never mark (killed ≠ failed — §8 abort
+        // lifecycle; §2 never-lie). */
         const merged = this.cards.slice();
-        for (let i = 0; i < filled.length; i++) merged[at + i] = filled[i];
-        this.cards = merged;
-        // Amber bookkeeping (issue #82): a claimed card that settled WITHOUT
-        // an interpretation marks `failed`; one the pass interpreted (live or
-        // cache-hit) drains. This runs only on the current controller's path
-        // — a deliberate abort returned above, so stopped runs never mark. */
         const failedSet = new Set(this.failed);
         for (let i = 0; i < filled.length; i++) {
+          merged[at + i] = filled[i];
           if (filled[i].interpreted) failedSet.delete(filled[i].id);
           else failedSet.add(filled[i].id);
         }
+        this.cards = merged;
         this.failed = failedSet;
         this.fillStats = {
           interpreted: merged.filter((c) => c.interpreted).length,

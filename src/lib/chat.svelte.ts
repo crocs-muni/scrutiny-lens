@@ -177,8 +177,17 @@ class Chat {
 		this.error = null;
 		this.grounding = ctx.events;
 		const userId = crypto.randomUUID();
-		const live: LiveTurn = { question: trimmed, userId, raw: '' };
-		this.live = live;
+		const liveSeed: LiveTurn = { question: trimmed, userId, raw: '' };
+		this.live = liveSeed;
+		// $state proxy fork (trap-sweep:RuneSemanticsScout): this.live now
+		// holds a PROXY of the raw literal — its set-trap never writes back
+		// to the raw object, so `live.raw += ...` was invisible to the
+		// chat column's proxy reads (frozen pending shimmer), and the
+		// trailing identity guard `this.live === live` compared proxy vs
+		// raw and NEVER fired, leaving the dead live bubble forever.
+		// Mutate and compare through the proxy, the canonical idiom.
+		const live = this.live;
+		if (live === null) return;
 		const controller = new AbortController();
 		this.abortCtl = controller;
 

@@ -32,6 +32,8 @@
 	import SettingsDialog from '$lib/components/shell/SettingsDialog.svelte';
 	import { chat } from '$lib/chat.svelte';
 	import type { ProviderOverrideInput } from '$lib/ai/provider';
+	import { bestIdentifier } from '$lib/ai/projector';
+	import { subjectGrounding, type NostrEvent } from '$lib/fabric';
 
 	let centerHeight = $state(0);
 
@@ -133,11 +135,23 @@
 	function askChat(question: string): void {
 		// Same identity gate as chatGrounded — the composer disables first,
 		// but the send closure must not trust the UI.
-		const events =
+		const admitted =
 			investigation.sessionId === shell.session?.id ? (investigation.result?.admitted ?? []) : [];
+		// Grounding scope (user ruling 2026-09-17): with a card open the chat
+		// answers about THAT card's cohort — the node, its one-hop neighbors,
+		// their bindings and history legs. Without a selection the session's
+		// full admitted set stays the grounding (ADR 0002).
+		const selected = investigation.selectedEventId;
+		const events = selected === null ? admitted : subjectGrounding(admitted, selected);
+		const selectedEvent =
+			selected === null ? undefined : admitted.find((e) => e.id === selected);
+		const rootSummary =
+			selectedEvent === undefined
+				? (shell.session?.title ?? '')
+				: (bestIdentifier(selectedEvent) ?? shell.session?.title ?? '');
 		void chat.send(question, {
 			events,
-			rootSummary: shell.session?.title ?? '',
+			rootSummary,
 			provider: chatProvider
 		});
 	}
@@ -185,6 +199,13 @@
 		investigation.result !== null &&
 			investigation.error === null &&
 			investigation.searches.length > 0 &&
+			// The settle traversal (refreshSessionContext) runs while `running`
+			// and can turn 0 cards into N: 'Nothing matched' must wait for the
+			// honest end of the run, not paint mid-settle (#82 acceptance:
+			// zero-results is a SETTLED fact, never an in-flight guess;
+			// measured live — ROCA chip flashed the empty pane between
+			// result-set and the 58-context arrival).
+			investigation.running === false &&
 			viewCards.length === 0
 	);
 	const anyRelayOk = $derived(
@@ -320,7 +341,7 @@
 					<div class="h-full w-full overflow-y-auto p-1">
 						<SearchHero
 							hasKey={settings.apiKey !== ''}
-							onSearch={(q) => void investigation.start(q)}
+							onSearch={(q, title) => void investigation.start(q, title)}
 							onSettings={() => shell.toggleSettings()}
 						/>
 					</div>

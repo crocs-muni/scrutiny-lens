@@ -190,7 +190,7 @@ describe("fillInChunks — per-card pending lifecycle (issue #59)", () => {
 		expect(investigation.failed.size).toBe(0);
 	});
 
-	it("a deliberate abort never marks `failed` — killed ≠ failed (§8 abort lifecycle)", async () => {
+	it("a deliberate abort never marks `failed` — killed ≠ failed (§8 abort; §2 never-lie)", async () => {
 		let callCount = 0;
 		const callLLM: CallLLM = async (args) => {
 			callCount += 1;

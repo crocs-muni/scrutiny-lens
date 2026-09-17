@@ -27,6 +27,7 @@ import type {
 import { translateQuestion, type SearchRequest } from '$lib/ai/agents/query';
 import { indexEvent, searchText } from '$lib/search';
 import { getEvent, getEventsByTag } from '$lib/db';
+import { lensDebug } from '$lib/dev-log';
 
 export type Phase = 'translate' | 'fetch' | 'done';
 
@@ -74,6 +75,32 @@ export interface RunSearchOptions {
 
 const CONTENT_START = 200;
 
+/** Probe-text safety for NIP-50 legs. Full-text engines AND-tokenize over
+ * alphanumerics, and punctuation-only or version-shaped tokens poison the
+ * index rather than narrow it — measured live on newlay 0.3.41 (2026-09-17):
+ * `3.0.5` → 500 junk, `≤ 3.0.5` → 500 junk, while `ECDSA JavaCard` ANDs
+ * honestly. Drop non-word tokens (Unicode glyphs, lone digits, version
+ * splinters); keep letter-carrying words. Narrowing only, value falsifying
+ * stays the relay's. Empty result means the query was all punctuation —
+ * fall back to the raw value (same honesty as before, no worse). */
+export function nip50ProbeValue(value: string): string {
+	return (value.match(/[a-z][a-z0-9-]*/gi) ?? []).join(' ').trim();
+}
+
+/** Client-side narrowing terms for fullscan legs: every alphanumeric token,
+ * lowercase, deduped — including pure numbers (a version token constrains a
+ * tag-scan record locally even though it would poison the NIP-50 probe). */
+export function fulltextTerms(value: string): string[] {
+	return [...new Set(value.toLowerCase().match(/[a-z0-9]+/g) ?? [])];
+}
+
+/** Client mirror of NIP-50's coarse AND for fullscan slices: substring-AND
+ * of every term over content + flattened tags. */
+export function matchesFulltext(event: NostrEvent, terms: string[]): boolean {
+	const haystack = (event.content + ' ' + event.tags.flat().join(' ')).toLowerCase();
+	return terms.every((term) => haystack.includes(term));
+}
+
 /** Per-(search, relay-group) route — one leg per relay-as-a-whole when
  * identical capability, split by NIP-50 vs fullscan. Labels carry
  * the search value so truncation counts attribute per leg (spec §2.6).
@@ -118,8 +145,18 @@ function routeSearch(
 			nip50.push(url);
 		}
 	}
-	if (nip50.length > 0) routes.push({ label: `${label}:nip50`, urls: nip50, filters: [filterWithTestTags(searchFilter(search.value)) as Filter] });
-	if (fullscan.length > 0) routes.push({ label: `${label}:fullscan`, urls: fullscan, filters: [filterWithTestTags(fullScanFilter()) as Filter] });
+	if (nip50.length > 0) {
+		const probe = nip50ProbeValue(search.value) || search.value;
+		routes.push({ label: `${label}:nip50`, urls: nip50, filters: [filterWithTestTags(searchFilter(probe)) as Filter] });
+	}
+	if (fullscan.length > 0) {
+		routes.push({
+			label: `${label}:fullscan`,
+			urls: fullscan,
+			filters: [filterWithTestTags(fullScanFilter()) as Filter],
+			fulltext: fulltextTerms(search.value)
+		});
+	}
 	return routes;
 }
 
@@ -235,16 +272,30 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	const perRouteReceived = new Map<string, number>();
 	let relays: RelayStatus[] = [];
 
+	/** Route label → client-side terms for legs the relay can't narrow
+	 * (fullscan). Populated as routes are built; closure resolves lazily. */
+	const fulltextByRoute = new Map<string, string[]>();
 	const onSlice = (slice: FetchSlice): void => {
 		const rejectedBefore = invalidSkipped;
 		perRouteReceived.set(slice.route ?? 'default', (perRouteReceived.get(slice.route ?? 'default') ?? 0) + slice.events.length);
+		// Fullscan legs must not flood the session with the whole t-bucket:
+		// admission applies the client-side text mirror before anything else
+		// (issue: tag scans from NIP-50-less relays admitted garbage en masse).
+		const terms = slice.route === undefined ? undefined : fulltextByRoute.get(slice.route);
+		const eligible = terms === undefined ? slice.events : slice.events.filter((event) => matchesFulltext(event, terms));
+		// DEV-TRACE: admission funnel per slice — lensDebug() never throws
+		if (lensDebug()) {
+			console.debug(`[lens-trace] slice route=${slice.route ?? 'default'} received=${slice.events.length} eligible=${eligible.length}`);
+		}
 		const skeletons: SkeletonCard[] = [];
-		for (const event of slice.events) {
+		let firstReject: string | null = null;
+		for (const event of eligible) {
 			if (admittedSet.has(event.id) || rejectedIds.has(event.id)) continue;
 			const verdict = admit(event);
 			if (!verdict.ok) {
 				rejectedIds.add(event.id);
 				invalidSkipped += 1;
+				firstReject ??= verdict.reason;
 				continue;
 			}
 			// Test-corpus boundary (PUBLIC_INCLUDE_TEST_TAGS): the default
@@ -258,6 +309,9 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 			// degrade contract stays silent per spec §6, and the next run's
 			// cache-first read must see these events to honor '#28 repeat-query'.
 			pendingWrites.push(indexEvent(event).catch(() => {}));
+		}
+		if (lensDebug()) {
+			console.debug(`[lens-trace] slice route=${slice.route ?? 'default'} admitted=${skeletons.length} rejectedDelta=${invalidSkipped - rejectedBefore} firstReject=${firstReject ?? 'none'}`);
 		}
 		if (skeletons.length > 0) emit({ type: 'skeleton', cards: skeletons });
 		// issue #36: per-slice admitted/rejected so the trace's Organize row
@@ -306,6 +360,9 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 		await Promise.all(opts.relays.map(async (url) => caps.set(url, await opts.transport.capability(url))));
 	}
 	const routes = searches.filter((s) => s.kind === 'text').flatMap((search) => routeSearch(search, opts.relays, caps, notices));
+	for (const route of routes) {
+		if (route.fulltext !== undefined) fulltextByRoute.set(route.label, route.fulltext);
+	}
 
 	if (routes.length > 0) {
 		// Progressive fetch: first-relayer-shared batch slices arrive in

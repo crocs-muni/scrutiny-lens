@@ -48,8 +48,82 @@ import {
 	NO_KEY_MESSAGE
 } from '../provider';
 import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
+import { scanMarkers } from '../../chat/markers';
 /** Injectable streaming transport — yields raw model text chunks as they arrive. Throws on transport failure. */
 export type StreamLLM = (args: CallLLMArgs) => AsyncIterable<string>;
+
+/* ------------------------------------------------------------------ *
+ * Grounding transport budget
+ *
+ * ADR 0002: the chat's CITABLE scope is the session's full admitted set —
+ * never shrink it by facet filtering. That contract says nothing about the
+ * wire: the model prompt is a single JSON blob, and shipping 250+ full
+ * events (often north of a megabyte) blows past any streaming provider's
+ * prompt-eval budget — on the default 30s first-byte gateway limit EVERY
+ * answer on a large session died with "The operation timed out."
+ * (2026-09-17, ROCA-run chat). The trim below is a TRANSPORT budget, not
+ * a semantic scope change: matched-first selection, count- and byte-capped,
+ * and disclosed in the system prompt so the model answers honestly ("not
+ * in the provided grounding") instead of guessing about events it never
+ * saw. Per-event content is suffix-truncated, so any quote the model emits
+ * remains a verbatim prefix-substring of the on-screen event (contract 3).
+ * ------------------------------------------------------------------ */
+/** Grounding events per prompt — enough for a multi-subject question, small
+ * enough to keep the first byte within a 30s budget on hosted providers. */
+const GROUNDING_MAX_EVENTS = 40;
+/** Hard byte ceiling for the serialized grounding block. */
+const GROUNDING_MAX_BYTES = 96 * 1024;
+/** Per-event content cap; truncation is a prefix slice (quotes stay
+ * verbatim-valid against the full on-screen event). */
+const EVENT_CONTENT_MAX_CHARS = 1500;
+
+/** matchesFulltext grammar (single owner: $lib/pipeline/index.ts) — local
+ * copy because ai/ MUST NOT import pipeline/ for a four-line predicate. */
+function eventMatches(event: NostrEvent, terms: string[]): boolean {
+	const haystack = (event.content + ' ' + event.tags.flat().join(' ')).toLowerCase();
+	return terms.every((term) => haystack.includes(term));
+}
+
+/** Question terms: lowercase alnum runs ≥3 chars, deduped, capped — a chat
+ * question is short; a pathological paste must not become a 200-term AND. */
+function questionTerms(question: string): string[] {
+	const terms: string[] = [];
+	for (const m of question.toLowerCase().matchAll(/[a-z0-9]{3,}/g)) {
+		if (!terms.includes(m[0])) terms.push(m[0]);
+		if (terms.length >= 8) break;
+	}
+	return terms;
+}
+
+/** Select the transport-bounded grounding subset: question-matched events
+ * first (all terms AND-matched, like the pipeline's own fulltext), then the
+ * remainder in session order, until either cap trips. */
+export function selectGrounding(
+	events: NostrEvent[],
+	question: string
+): { kept: NostrEvent[]; total: number; matched: number } {
+	const terms = questionTerms(question);
+	const matched = terms.length > 0 ? events.filter((e) => eventMatches(e, terms)) : [];
+	const rest = matched.length > 0 ? events.filter((e) => !matched.includes(e)) : events;
+	const ordered = [...matched, ...rest];
+	const kept: NostrEvent[] = [];
+	let bytes = 0;
+	for (const event of ordered) {
+		// Size the SHIPPED wire form (truncated content) — a single raw event
+		// larger than the byte budget must be truncated-in, never excluded:
+		// excluding a question-matched event would silently narrow the scope
+		// the disclosure line claims.
+		const size = JSON.stringify({
+			eventId: event.id,
+			tags: event.tags,
+			content: event.content.slice(0, EVENT_CONTENT_MAX_CHARS)
+		}).length;
+		if (kept.length >= GROUNDING_MAX_EVENTS || bytes + size > GROUNDING_MAX_BYTES) break;
+		kept.push(event);
+		bytes += size;
+	}
+	return { kept, total: events.length, matched: matched.length };
+}
 
 export interface ChatHistoryMessage {
 	role: 'user' | 'assistant';
@@ -105,12 +179,10 @@ function frame(payload: unknown): Uint8Array {
  * Marker protocol
  * ------------------------------------------------------------------ */
 
-/** `[N]{"eventId":"…","quote":"…"}` — one JSON object, no nested braces.
- * Single owner of the raw marker grammar: the live stream parser
- * ($lib/chat/streamParse) re-exports and matches against THIS so the
- * pending-shimmer surface and the settle gate can never silently diverge
- * (standards review P2). */
-export const MARKER = /\[(\d+)\]\s*\{([^{}]*)\}/g;
+/* Marker grammar's single owner is $lib/chat/markers.ts (scanMarkers —
+ * balanced-brace, string-aware; 2026-09-17 rework). The flat `[^{}]*`
+ * capture died when a live PQC answer nested braces inside a quote field
+ * and the corrupt JSON rendered as prose. */
 
 const markerPayloadSchema = z.object({
 	eventId: z.string().min(1),
@@ -138,7 +210,9 @@ const GROUNDING_INSTRUCTIONS = [
 	'1. Ground EVERY factual claim to a session event using the inline marker syntax: [N]{"eventId":"<event id>","quote":"<short quote>"}. N counts citations starting at 1.',
 	'2. The quote MUST be copied verbatim from the event content (a contiguous subset is acceptable). If you cannot quote it, do not make the claim.',
 	'3. Never fabricate event ids, identifiers, or quotes.',
-	`4. If the question cannot be answered from the session events, reply with EXACTLY one line: ${UNGROUNDED_SENTINEL} {"availableContext":"<what the session does contain>"} — no other text.`
+	'4. The user is looking at a single visual "card": the Graph root subject (a product) plus its bound metadata. "This card", "this product", "the subject" all mean THAT root — resolve deictic references against it, never against the literal word ("card" need not match the product\'s category).',
+	'5. Prefer answering with what the events DO say about the root subject. Declare ungrounded ONLY when neither the root nor its bound events carry an answer at all — a wording mismatch (the question\'s noun vs the product\'s category) is never grounds for refusal.',
+	`6. If the question still cannot be answered from the session events, reply with EXACTLY one line: ${UNGROUNDED_SENTINEL} {"availableContext":"<what the session does contain>"} — no other text, and never bracket raw event ids inside availableContext.`
 ].join('\n');
 
 /* ------------------------------------------------------------------ *
@@ -167,31 +241,34 @@ function resolveFinal(
 	const summary: ClaimsSummary = { total: 0, verbatim: 0, partial: 0, extrapolatory: 0 };
 	const replacements: Array<{ raw: string; replacement: string }> = [];
 
-	for (const match of fullText.matchAll(MARKER)) {
-		const raw = match[0];
-		const payload = markerPayloadSchema.safeParse(
-			(() => {
-				try {
-					return JSON.parse(`{${match[2]}}`);
-				} catch {
-					return undefined;
-				}
-			})()
-		);
+	for (const scan of scanMarkers(fullText)) {
+		if (!scan.braced) continue; // bare canonical [N] — scrubAnswer owns it
+		const raw = fullText.slice(scan.start, scan.end);
 
 		let resolvedCitation: ChatCitation | undefined;
-		if (payload.success) {
-			const event = events.find((e) => e.id === payload.data.eventId);
-			const res = registry.resolve(payload.data.eventId, events, payload.data.quote, event ? nodeTitleOf(event) : undefined);
-			if (res.ok && event) {
-				const gate = extractedGate(payload.data.quote, event.content);
-				resolvedCitation = {
-					...res.citation,
-					support: gate.state,
-					verified: gate.state !== 'extrapolatory',
-					status: 'resolved',
-					colorIndex: (res.citation.n - 1) % CITATION_SLOTS
-				};
+		if (scan.objectText !== null) {
+			const payload = markerPayloadSchema.safeParse(
+				(() => {
+					try {
+						return JSON.parse(scan.objectText as string);
+					} catch {
+						return undefined;
+					}
+				})()
+			);
+			if (payload.success) {
+				const event = events.find((e) => e.id === payload.data.eventId);
+				const res = registry.resolve(payload.data.eventId, events, payload.data.quote, event ? nodeTitleOf(event) : undefined);
+				if (res.ok && event) {
+					const gate = extractedGate(payload.data.quote, event.content);
+					resolvedCitation = {
+						...res.citation,
+						support: gate.state,
+						verified: gate.state !== 'extrapolatory',
+						status: 'resolved',
+						colorIndex: (res.citation.n - 1) % CITATION_SLOTS
+					};
+				}
 			}
 		}
 
@@ -202,10 +279,14 @@ function resolveFinal(
 			// Canonical renumber: the registry's stable [N], not the model's.
 			replacements.push({ raw, replacement: `[${resolvedCitation.n}]` });
 		} else {
-			// Unresolvable → drop the marker, swallowing one adjacent space so no
-			// orphan whitespace remains. Whitespace elsewhere is literal content
-			// (indent-preserved blocks, hard breaks) — never collapse globally.
-			const precededBySpace = fullText.slice(0, match.index ?? 0).endsWith(' ');
+			// Unresolvable OR malformed (parseless/unterminated braces): strip
+			// the marker entirely — swallowing one adjacent space so no orphan
+			// whitespace remains. A failed/malformed citation must leave no
+			// trace on the settled surface (user ruling 2026-09-17 — the flat-
+			// capture predecessor leaked corrupt JSON into the PQC answer).
+			// Whitespace elsewhere is literal content (indent-preserved blocks,
+			// hard breaks) — never collapse globally.
+			const precededBySpace = fullText.slice(0, scan.start).endsWith(' ');
 			replacements.push({ raw: precededBySpace ? ` ${raw}` : raw, replacement: '' });
 		}
 	}
@@ -226,6 +307,18 @@ const ungroundedPayloadSchema = z.object({
 	availableContext: z.string().min(1),
 });
 
+/** Models love bracketing raw event ids inside availableContext as fake
+ * citations (observed live, PQTunnel card chat 2026-09-17: two bracketed
+ * 64-hex ids rendered straight onto the screen). The UNGROUNDED lane has
+ * no citation machinery — these tokens are noise: strip them here, where
+ * the frame is written, so persisted transcripts read clean too. */
+function scrubRawIds(text: string): string {
+	return text
+		.replace(/\s*\[[0-9a-f]{64}\]/g, '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
+}
+
 function ungroundedFrame(
 	question: string,
 	fullText: string,
@@ -242,7 +335,7 @@ function ungroundedFrame(
 		})()
 	);
 	const payload = parsed.success
-		? parsed.data
+		? { availableContext: scrubRawIds(parsed.data.availableContext) || rootSummary }
 		: // Honest degrade: never fabricate context; fall back to the root summary.
 			{ availableContext: rootSummary };
 	return frame({
@@ -304,13 +397,29 @@ export function chatground(opts: ChatGroundOptions): ReadableStream<Uint8Array> 
 			const stream = opts.streamLLM ?? defaultStreamLLM;
 
 			const system = buildSystemPrompt({ profile, extra: GROUNDING_INSTRUCTIONS });
-			const nodeList = opts.groundingEvents.map((e) => ({ eventId: e.id, tags: e.tags, content: e.content }));
+			// Transport-bounded grounding (block comment above): full set stays
+			// citable ONLY when it fits; otherwise matched-first, disclosed.
+			const grounding = selectGrounding(opts.groundingEvents, opts.question);
+			const nodeList = grounding.kept.map((e) => ({
+				eventId: e.id,
+				tags: e.tags,
+				content:
+					e.content.length > EVENT_CONTENT_MAX_CHARS
+						? `${e.content.slice(0, EVENT_CONTENT_MAX_CHARS)}…[TRUNCATED]`
+						: e.content
+			}));
+			const trimmed = grounding.kept.length < grounding.total;
 			const messages: LLMMessage[] = [
 				...opts.history.map((h) => ({ role: h.role, content: h.content })),
 				{
 					role: 'user',
 					content: [
 						`Graph root: ${opts.rootSummary}`,
+						...(trimmed
+							? [
+									`Grounding scope: ${grounding.kept.length} of ${grounding.total} session events provided (question-matched first; ${grounding.matched} matched). The rest were omitted to fit the transport budget — treat anything outside the provided set as unavailable and say so when asked.`
+								]
+							: []),
 						`Session events: ${JSON.stringify(nodeList)}`,
 						`Question: ${opts.question}`
 					].join('\n')
@@ -327,7 +436,13 @@ export function chatground(opts: ChatGroundOptions): ReadableStream<Uint8Array> 
 				system,
 				messages,
 				temperature: 0.2,
-				signal: internal.signal
+				signal: internal.signal,
+				// Chat's 60s first-byte lane (user ruling 2026-09-17): hosted
+				// models on shared GPU hosts (llm.fi.muni.cz/gemma4) went
+				// silent >30s of prefill and every answer died. On fast
+				// providers the budget never binds; the inactivity arm uses
+				// the same budget (see gateway's per-call override).
+				timeoutMs: 60_000
 			});
 
 			for await (const chunk of iterable) {

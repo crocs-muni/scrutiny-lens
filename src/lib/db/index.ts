@@ -19,6 +19,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { DeadLetterEntry } from '$lib/ai/deadLetter';
 import { tTags } from '$lib/fabric';
+import { asSignedOnly } from '$lib/fabric/test-tags';
 import type { NostrEvent } from '$lib/fabric';
 
 export const DB_NAME = 'scrutiny-lens';
@@ -496,9 +497,16 @@ export async function loadDeadLetters(): Promise<DeadLetterEntry[]> {
  * stored (never the raw event), or null on a skipped write — the search
  * seam needs both to index exactly what the cache holds. */
 export async function cacheEvent(event: NostrEvent): Promise<CachedEvent | null> {
+	/* Test-corpus boundary: the cache persists the AS-SIGNED form — an
+	 * admitted event came from the wire with -test t-tags and got canonical
+	 * tags appended in admission; store that shape and its id recomputes
+	 * false on read-back, poisoning the cache (issue matches the live
+	 * observed loop where the first rerun admitted 0). asSignedOnly is
+	 * identity for the canonical/flag-off paths. */
+	const signed = asSignedOnly(event);
 	const row: CachedEvent = {
-		...event,
-		ttags: tTags(event)
+		...signed,
+		ttags: tTags(signed)
 	};
 	return attempt(async (d) => {
 		const normalized = normalize(row);
@@ -508,7 +516,14 @@ export async function cacheEvent(event: NostrEvent): Promise<CachedEvent | null>
 }
 
 export async function getEvent(id: string): Promise<CachedEvent | null> {
-	return attempt(async (d) => (await d.get('events', id)) ?? null, null);
+	// Read-side healing for rows persisted before cacheEvent wrote the
+	// as-signed form (poisoned with appended canonical twins).
+	return attempt(async (d) => {
+		const row = (await d.get('events', id)) as CachedEvent | undefined;
+		if (row === undefined) return null;
+		const signed = asSignedOnly(row);
+		return signed === row ? row : { ...signed, ttags: tTags(signed) };
+	}, null);
 }
 
 /** Event ids carrying a t-tag value — deterministic tag lookup stays out of
@@ -523,7 +538,13 @@ export async function getEventsByTag(value: string): Promise<string[]> {
 /** Every cached event oldest-first (created_at index) — the search seam
  * hydrates its engine from this list at boot (issue #27). */
 export async function listEvents(): Promise<CachedEvent[]> {
-	return attempt(async (d) => await d.getAllFromIndex('events', 'created_at'), []);
+	return attempt(async (d) => {
+		const rows = await d.getAllFromIndex('events', 'created_at');
+		return (rows as CachedEvent[]).map((row) => {
+			const signed = asSignedOnly(row);
+			return signed === row ? row : { ...signed, ttags: tTags(signed) };
+		});
+	}, []);
 }
 
 /** "Clear all local data" (spec §6). Records are cleared through our own

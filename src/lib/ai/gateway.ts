@@ -378,6 +378,13 @@ function abortError(): Error {
 	return new DOMException('The operation was aborted.', 'AbortError');
 }
 
+/** Caller-supplied abort reason, lifted verbatim so cleanup aborts inherit
+ * the caller's story instead of presenting an anonymous 'aborted without
+ * reason'. */
+function callerReason(signal: AbortSignal | undefined): unknown {
+	return signal?.aborted === true ? signal.reason : undefined;
+}
+
 function isAbort(callerSignal: AbortSignal | undefined, err: unknown): boolean {
 	return (
 		callerSignal?.aborted === true ||
@@ -504,6 +511,10 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 		// otherwise the request keeps running against the endpoint with no
 		// waiter (a capped endpoint fills its ceiling with zombies).
 		const abortCtrl = new AbortController();
+		// Abandoned-iterator hygiene (created per attempt, replaced inside
+		// the try once the iterator exists): the finally MUST see it, so it
+		// hoists above the try scope. No-op until the iterator is born.
+		let drainIterator: () => Promise<void> = async () => {};
 		try {
 			const stream = streamText({
 				model: buildModel(args),
@@ -520,12 +531,31 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 			// created ONCE per attempt; its parts are: protocol noise, one error
 			// (retry path), or text-delta (bytes flowing).
 			const events = stream.fullStream[Symbol.asyncIterator]();
+			// When a timeout makes us leave an in-flight events.next() behind,
+			// closing the iterator lets the SDK settle its internal stream
+			// BEFORE we kill the fetch — its pending promises then resolve
+			// (done) instead of rejecting unhandled as "Uncaught (in promise)
+			// AbortError". Capped to 2s: a wedged close must never hold the slot.
+			drainIterator = async (): Promise<void> => {
+				if (events.return === undefined) return;
+				const close = events.return();
+				close.catch(() => {});
+				await Promise.race([
+					close,
+					new Promise<void>((resolve) => setTimeout(resolve, 2000))
+				]).catch(() => {});
+			};
 			for (;;) {
 				let part: Awaited<ReturnType<typeof events.next>>['value'] | undefined;
 				try {
 					// First byte races the attempt timeout; after the first byte,
 					// the attempt abort fires only when this attempt exits.
-					const first = await withTimeout(events.next(), limits.timeoutMs, args.signal);
+					// Per-call first-byte budget (chat=60s, spec §5 slow lane);
+					// default stays the lane-wide 30s.
+					const firstByteMs = args.timeoutMs ?? limits.timeoutMs;
+					const firstP = events.next();
+					firstP.catch(() => {});
+					const first = await withTimeout(firstP, firstByteMs, args.signal);
 					if (first.done) {
 						release(args.provider.baseUrl);
 						return; // empty response — nothing to interpret, no lie to tell
@@ -559,7 +589,17 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 					// a consumer until its own caller-side arm fired. Kill it
 					// honestly here — the Generator's `finally` aborts the
 					// upstream fetch, and the painted bytes stay painted.
-					const next = await withTimeout(events.next(), limits.inactivityTimeoutMs, args.signal);
+					// Race-loser hygiene: on timeout the original next() promise
+					// keeps running; when the cleanup abort then kills the SDK
+					// fetch, that orphaned promise REJECTS unhandled (Chrome:
+					// "Uncaught (in promise) AbortError: signal is aborted
+					// without reason", 2026-09-17). Observe-and-swallow.
+					// The per-call budget doubles as the mid-stream-no-progress
+					// arm: a provider silent for 60s on first byte stalls the same
+					// way between deltas (same shared-GPU physics, chat 60s).
+					const nextP = events.next();
+					nextP.catch(() => {});
+					const next = await withTimeout(nextP, args.timeoutMs ?? limits.inactivityTimeoutMs, args.signal);
 					if (next.done) return;
 					if (next.value.type === 'text-delta') yield next.value.text;
 					else if (next.value.type === 'error') {
@@ -574,7 +614,13 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 				}
 			}
 		} finally {
-			abortCtrl.abort(); // never leave a first-byte-timeout stream in flight
+			// Settle the abandoned iterator first (its pending next() resolves
+			// done — silence; decision 2026-09-17), THEN kill the fetch.
+			// Reason-carrying cleanup: the kill that ends a first-byte-timeout
+			// or mid-stream-silence fetch must not read as an anonymous reason —
+			// downstream listeners and DevTools show signal.reason verbatim.
+			await drainIterator();
+			abortCtrl.abort(callerReason(args.signal) ?? new DOMException('stream cleaned up (first-byte timeout, retry, or consumer exit)', 'AbortError')); // never leave a first-byte-timeout stream in flight
 		}
 	}
 };

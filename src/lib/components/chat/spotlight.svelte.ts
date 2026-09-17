@@ -9,6 +9,16 @@
 
 let active = $state<number[]>([]);
 
+/* Hover-bridge grace (chat-output rework T3, 2026-09-17): clearing the
+ * spotlight the INSTANT a mouseleave fires makes the gap between pill and
+ * hover-card impossible to cross — the card closed before the cursor could
+ * reach it (live complaint). Leaving is now grace-deferred; any new hover
+ * (trigger, sibling surface, the card itself) cancels the pending clear.
+ * One canonical timer: pill, claim span, source chip and graph ring all
+ * cross gaps the same way. */
+const CLEAR_GRACE_MS = 180;
+let clearTimer: ReturnType<typeof setTimeout> | undefined;
+
 export const spotlight = {
 	/** The citations currently under the cursor. */
 	get active(): number[] {
@@ -23,11 +33,21 @@ export const spotlight = {
 		return active.length > 0 && marks.some((n) => active.includes(n));
 	},
 	hover(ns: number[] | null): void {
-		active = ns ?? [];
+		clearTimeout(clearTimer);
+		clearTimer = undefined;
+		if (ns !== null) {
+			active = ns;
+		} else if (active.length > 0) {
+			clearTimer = setTimeout(() => {
+				active = [];
+			}, CLEAR_GRACE_MS);
+		}
 	}
 };
 
 /** Test seam — the singleton survives across spec files. */
 export function resetSpotlight(): void {
+	clearTimeout(clearTimer);
+	clearTimer = undefined;
 	active = [];
 }

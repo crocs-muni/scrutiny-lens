@@ -41,6 +41,12 @@ export interface CallLLMArgs {
   messages: LLMMessage[];
   temperature: number;
   signal?: AbortSignal;
+  /** Per-call first-byte budget override (gateway streams only; default
+   * limits.timeoutMs = 30s). Chat opts into 60s: hosted models on shared
+   * GPU hosts (llm.fi.muni.cz/gemma4) routinely need >30s of prefill on
+   * card-scoped prompts — spec §5's degrade threshold follows ("AI slow
+   * >60s chat"). Records/node-fill lanes keep 30s. */
+  timeoutMs?: number;
 }
 
 /** Injectable transport — returns the raw model text. Throws on transport failure. */

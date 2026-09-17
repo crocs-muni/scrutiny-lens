@@ -14,7 +14,7 @@
 	interface Props {
 		hasKey: boolean;
 		relayCaution?: string;
-		onSearch: (question: string) => void;
+		onSearch: (question: string, title?: string) => void;
 		onSettings: () => void;
 	}
 

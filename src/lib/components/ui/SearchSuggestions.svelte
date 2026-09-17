@@ -20,26 +20,35 @@
 
 	interface Props {
 		relayCaution?: string;
-		onPick: (question: string) => void;
+		onPick: (question: string, label?: string) => void;
 	}
 
 	let { relayCaution, onPick }: Props = $props();
 
 	/* Canned prompt pool (spec §2 rule 1 — never AI-written). Shuffle shows
-	 * three, excluding the current round so consecutive sets always differ. */
+	 * three, excluding the current round so consecutive sets always differ.
+	 *
+	 * A row carries a human LABEL and a PROBE: relay full-text (NIP-50)
+	 * AND-tokenizes against a word index measured to miss the prose words
+	 * ('vulnerability', 'on', 'cards' → 0 hits on every suggestion phrased
+	 * as a sentence), so the chip can't run its label like a typed
+	 * question — the probe strings are the corpus-verified word sets
+	 * ('fastest ECDSA JavaCard'→28, 'ROCA Infineon'→30, 'ML-KEM
+	 * CRYSTALS'→29 against the JCAlgTest/sec-certs bootstrap corpus on
+	 * lens-demo). The label names the session; the probe proves it. */
 	const POOL = [
-		'PQC algorithms on smart cards (ML-KEM, CRYSTALS)',
-		'Fastest ECDSA on JavaCard ≤ 3.0.5 cards',
-		'ROCA vulnerability in Infineon chips'
+		{ label: 'PQC algorithms on smart cards (ML-KEM, CRYSTALS)', probe: 'ML-KEM CRYSTALS' },
+		{ label: 'Fastest ECDSA on JavaCard ≤ 3.0.5 cards', probe: 'fastest ECDSA JavaCard' },
+		{ label: 'ROCA vulnerability in Infineon chips', probe: 'ROCA Infineon' }
 	] as const;
 
-	function pickThree(exclude: readonly string[] = []): string[] {
+	function pickThree(exclude: readonly string[] = []): typeof POOL[number][] {
 		// With a pool as small as the row count (3), excluding the shown round
 		// would leave shuffle stranded with zero rows — only exclude when a
 		// full fresh trio remains.
 		const enough = POOL.length - exclude.length >= 3;
-		const pool = POOL.filter((s) => !enough || !exclude.includes(s));
-		const picks: string[] = [];
+		const pool = POOL.filter((s) => !enough || !exclude.includes(s.label));
+		const picks: typeof POOL[number][] = [];
 		while (picks.length < 3 && pool.length > 0) {
 			const i = Math.floor(Math.random() * pool.length);
 			picks.push(pool.splice(i, 1)[0]);
@@ -47,25 +56,25 @@
 		return picks;
 	}
 
-	let suggestions = $state<string[]>(pickThree());
+	let suggestions = $state<typeof POOL[number][]>(pickThree());
 
 	function onShuffle(): void {
-		suggestions = pickThree(suggestions);
+		suggestions = pickThree(suggestions.map((s) => s.label));
 	}
 </script>
 
 <div class="flex flex-col gap-0.5">
 	<GlideHighlight class="flex flex-col gap-0.5" highlightClass="inset-x-0 rounded-control bg-hover">
-		{#each suggestions as suggestion (suggestion)}
+		{#each suggestions as suggestion (suggestion.label)}
 			<button
 				data-menu-row
 				type="button"
 				class="relative z-10 flex min-h-9 w-full items-center gap-2.5 rounded-control px-2 py-1.5 text-left text-[14px] text-ink"
 				style:animation="fade-in 200ms ease-out both"
-				onclick={() => onPick(suggestion)}
+				onclick={() => onPick(suggestion.probe, suggestion.label)}
 			>
 				<IconSearch size={15} stroke={1.9} class="shrink-0 text-ink-2" />
-				{suggestion}
+				{suggestion.label}
 			</button>
 		{/each}
 	</GlideHighlight>

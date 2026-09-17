@@ -19,11 +19,13 @@
 	import KeyHint from './KeyHint.svelte';
 	import { COLLAPSE } from '../ui/motion';
 	import AnswerText from '../chat/AnswerText.svelte';
-	import SourceChips from '../chat/SourceChips.svelte';
+	import ChatMessageFooter from '../chat/ChatMessageFooter.svelte';
+	import LoadingState from '../chat/LoadingState.svelte';
 	import ChatComposer from '../chat/ChatComposer.svelte';
 	import { chat } from '$lib/chat.svelte';
 	import { settings } from '$lib/settings.svelte';
 	import { parseChatStream } from '$lib/chat/streamParse';
+	import ChatRichText, { type RichPart } from '../chat/ChatRichText.svelte';
 
 	interface Props {
 		collapsed: boolean;
@@ -60,7 +62,15 @@
 	const pinShimmer = (eventId: string): number | null =>
 		chat.grounding.some((e) => e.id === eventId) ? chat.registry.next(eventId) : null;
 
-	const streamSegments = $derived(chat.live === null ? [] : parseChatStream(chat.live.raw, pinShimmer));
+	/* Live parts = the same RichPart vocabulary as the settled path: prose
+	 * becomes markdown-able text runs, pending markers become shimmer. */
+	const liveParts: RichPart[] = $derived(
+		chat.live === null
+			? []
+			: parseChatStream(chat.live.raw, pinShimmer).map((s): RichPart =>
+					s.kind === 'prose' ? { kind: 'text', text: s.text, marks: [] } : { kind: 'pending', n: s.n }
+				)
+	);
 
 	let scrollEl = $state<HTMLDivElement | null>(null);
 	$effect(() => {
@@ -112,7 +122,11 @@
 							citations={message.citations ?? []}
 							{onOpenDossier}
 						/>
-						<SourceChips citations={message.citations ?? []} {onOpenDossier} />
+						<ChatMessageFooter
+							content={message.content}
+							citations={message.citations ?? []}
+							{onOpenDossier}
+						/>
 					</div>
 				{/if}
 			{/each}
@@ -121,19 +135,14 @@
 				<div class="user-bubble">{chat.live.question}</div>
 				<div class="assistant">
 					{#if chat.live.raw === ''}
-						<!-- thinking state: canon ThinkingState's shimmer vocabulary —
-							the honest >30s degrade (ruling 6) is simply this state lasting. -->
-						<span class="pending-pill" aria-label="Thinking…"></span>
+						<!-- thinking lane: vendored LoadingState (beautiful-ui, MIT)
+							— grid loader + shimmer label + elapsed timer; the honest
+							>30s degrade (ruling 6) is simply this state lasting. -->
+						<LoadingState label="Thinking" />
 					{:else}
-						{#each streamSegments as segment, i (i)}
-							{#if segment.kind === 'pending'}
-								<span class="pending-pill" aria-label="Verifying citation {segment.n ?? ''}…"
-									>{segment.n ?? ''}</span
-								>
-							{:else}
-								{segment.text}
-							{/if}
-						{/each}
+						<!-- Same renderer as the settled path (chat-output T2): markdown
+							from the FIRST delta, pending shimmer for unverified markers. -->
+						<ChatRichText parts={liveParts} {onOpenDossier} />
 					{/if}
 				</div>
 			{/if}

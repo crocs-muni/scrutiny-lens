@@ -623,6 +623,18 @@ describe('streamLLM', () => {
 		for await (const c of streamLLM(args())) chunks.push(c);
 		expect(chunks.join('')).toBe('hello');
 	});
+
+	it('per-call timeoutMs overrides the lane budget (the chat=60s ruling transport)', async () => {
+		// Lane budget cranked so tight the default would have died in the
+		// prefill; the per-call override (chat=60s vs records=30s, user
+		// ruling 2026-09-17) rescues exactly this call.
+		setLimits({ timeoutMs: 80 });
+		const { fetch: f } = scriptedFetch([{ stream: ['ok'], delayMs: 120 }]);
+		setBaseFetch(f);
+		const chunks: string[] = [];
+		for await (const c of streamLLM(args({ timeoutMs: 500 }))) chunks.push(c);
+		expect(chunks.join('')).toBe('ok');
+	});
 });
 
 /* ------------------------------------------------------------------ *
