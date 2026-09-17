@@ -56,6 +56,7 @@ import {
 } from "$lib/pipeline/cards";
 import { settings } from "$lib/settings.svelte";
 import { shell } from "$lib/shell.svelte";
+import { lensDebug } from "$lib/dev-log";
 
 /** Interval sleep that resolves early on abort — the lane-stagger's pause
  * must not outlive the run that scheduled it (spec §8 abort lifecycle). */
@@ -314,13 +315,28 @@ class Investigation {
         // were empty and the rail honestly showed 'Nothing matched'
         // while the corpus held the answer). Made part of the settle
         // await so the card cohort below sees the contextual full set.
+        if (lensDebug()) {
+          console.debug(`[lens-trace] settle: admitted-before-context=${session.admitted.length}`);
+        }
         await this.refreshSessionContext();
         if (this.controller !== controller) return;
+        // $state proxy trap (settle.test.ts guards the same at the guard
+        // layers): this.result = session wrapped the session in a PROXY —
+        // admitContext pushes context arrivals into the PROXY's admitted
+        // (identity-checked against this.result), while our RAW local kept
+        // counting the pre-context array. Measured live: fresh=58 pushed,
+        // cards=0 assembled — the skeleton rail vanished at settle into
+        // 'Nothing matched'. Read the settled set from the proxy field.
+        const settled = this.result;
+        if (settled === null) return;
         this.cards = assembleCards(
-          resolveGraph(session.admitted),
-          session.admitted,
+          resolveGraph(settled.admitted),
+          settled.admitted,
         );
-        this.facetGroups = computeFacets(session.admitted);
+        this.facetGroups = computeFacets(settled.admitted);
+        if (lensDebug()) {
+          console.debug(`[lens-trace] settle: admitted-after-context=${settled.admitted.length} cards=${this.cards.length}`);
+        }
         if (
           provider !== undefined &&
           settings.model !== "" &&
@@ -404,8 +420,23 @@ class Investigation {
     this.selectSubject(root.id);
     // §8.2 dossier context — patches and deletions are unreachable by the
     // search's discovery filters; open them the way a card click would
-    // (fire-and-forget like openDossier, spec §8.2 lens #68).
-    void this.refreshSessionContext();
+    // (fire-and-forget like openDossier, spec §8.2 lens #68). Same $state
+    // proxy trap as start()'s settle: the context lanes append to the
+    // PROXY's admitted — the raw [root] card assembly above is frozen at
+    // the pre-context shape forever without a re-read sweep (trap-sweep
+    // 2026-09-17). Re-assemble once the settle lands, guarded for a newer
+    // open in flight.
+    {
+      const shared = this.result;
+      void this.refreshSessionContext().then(() => {
+        if (this.result !== shared || shared === null) return;
+        this.cards = assembleCards(
+          resolveGraph(shared.admitted),
+          shared.admitted,
+        );
+        this.facetGroups = computeFacets(shared.admitted);
+      });
+    }
     void this.ensureSubjectContext(root.id);
     // Cache write-through: a revisit of the same link (or a search that
     // finds the event) hits getEvent cache-first instead of re-fetching
@@ -668,8 +699,27 @@ class Investigation {
         session.admitted as unknown as FabricEvent[],
         result.events as unknown as FabricEvent[],
       );
+      if (lensDebug()) {
+        console.debug(`[lens-trace] admitContext: fetched=${result.events.length} candidates→fresh=${fresh.length} rounds=${result.rounds.length} capped=${result.capped}`);
+        for (const cand of result.events.slice(0, 10)) {
+          const tt = cand.tags.filter((t) => t[0] === 't').map((t) => t[1]).join('/');
+          const admitted = fresh.some((f) => f.id === cand.id);
+          if (!admitted) console.debug(`[lens-trace]   dropped ${cand.id.slice(0, 10)} t=${tt}`);
+        }
+      }
+      // Session invariant: admitted is unique by event id. admitBatch
+      // dedupes candidates against a SNAPSHOT of the batch, and the push
+      // loop below is the only writer — but a concurrent context leg
+      // (dossier-open re-poll racing the settle pass) writes the same
+      // array between snapshot and push. That race surfaced live as an
+      // each_key_duplicate on the results rail (product id twice at
+      // indexes 27/28, ROCA run 2026-09-17). Guard at the merge point —
+      // the invariant's home, cheap.
+      const seenIds = new Set(session.admitted.map((e) => e.id));
       for (const event of fresh) {
+        if (seenIds.has(event.id)) continue;
         session.admitted.push(event);
+        seenIds.add(event.id);
         // Cache write-through is deliberate (#68's repeat-query #28
         // contract): the next search's cache-first read sees this context.
         // Side effect, disclosed: later searches may now admit these

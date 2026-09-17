@@ -27,6 +27,7 @@ import type {
 import { translateQuestion, type SearchRequest } from '$lib/ai/agents/query';
 import { indexEvent, searchText } from '$lib/search';
 import { getEvent, getEventsByTag } from '$lib/db';
+import { lensDebug } from '$lib/dev-log';
 
 export type Phase = 'translate' | 'fetch' | 'done';
 
@@ -282,13 +283,19 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 		// (issue: tag scans from NIP-50-less relays admitted garbage en masse).
 		const terms = slice.route === undefined ? undefined : fulltextByRoute.get(slice.route);
 		const eligible = terms === undefined ? slice.events : slice.events.filter((event) => matchesFulltext(event, terms));
+		// DEV-TRACE: admission funnel per slice — lensDebug() never throws
+		if (lensDebug()) {
+			console.debug(`[lens-trace] slice route=${slice.route ?? 'default'} received=${slice.events.length} eligible=${eligible.length}`);
+		}
 		const skeletons: SkeletonCard[] = [];
+		let firstReject: string | null = null;
 		for (const event of eligible) {
 			if (admittedSet.has(event.id) || rejectedIds.has(event.id)) continue;
 			const verdict = admit(event);
 			if (!verdict.ok) {
 				rejectedIds.add(event.id);
 				invalidSkipped += 1;
+				firstReject ??= verdict.reason;
 				continue;
 			}
 			// Test-corpus boundary (PUBLIC_INCLUDE_TEST_TAGS): the default
@@ -302,6 +309,9 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 			// degrade contract stays silent per spec §6, and the next run's
 			// cache-first read must see these events to honor '#28 repeat-query'.
 			pendingWrites.push(indexEvent(event).catch(() => {}));
+		}
+		if (lensDebug()) {
+			console.debug(`[lens-trace] slice route=${slice.route ?? 'default'} admitted=${skeletons.length} rejectedDelta=${invalidSkipped - rejectedBefore} firstReject=${firstReject ?? 'none'}`);
 		}
 		if (skeletons.length > 0) emit({ type: 'skeleton', cards: skeletons });
 		// issue #36: per-slice admitted/rejected so the trace's Organize row

@@ -185,6 +185,13 @@
 		investigation.result !== null &&
 			investigation.error === null &&
 			investigation.searches.length > 0 &&
+			// The settle traversal (refreshSessionContext) runs while `running`
+			// and can turn 0 cards into N: 'Nothing matched' must wait for the
+			// honest end of the run, not paint mid-settle (#82 acceptance:
+			// zero-results is a SETTLED fact, never an in-flight guess;
+			// measured live — ROCA chip flashed the empty pane between
+			// result-set and the 58-context arrival).
+			investigation.running === false &&
 			viewCards.length === 0
 	);
 	const anyRelayOk = $derived(
