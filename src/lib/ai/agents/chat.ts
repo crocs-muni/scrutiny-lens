@@ -436,7 +436,13 @@ export function chatground(opts: ChatGroundOptions): ReadableStream<Uint8Array> 
 				system,
 				messages,
 				temperature: 0.2,
-				signal: internal.signal
+				signal: internal.signal,
+				// Chat's 60s first-byte lane (user ruling 2026-09-17): hosted
+				// models on shared GPU hosts (llm.fi.muni.cz/gemma4) went
+				// silent >30s of prefill and every answer died. On fast
+				// providers the budget never binds; the inactivity arm uses
+				// the same budget (see gateway's per-call override).
+				timeoutMs: 60_000
 			});
 
 			for await (const chunk of iterable) {
