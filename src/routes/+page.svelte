@@ -320,7 +320,7 @@
 					<div class="h-full w-full overflow-y-auto p-1">
 						<SearchHero
 							hasKey={settings.apiKey !== ''}
-							onSearch={(q) => void investigation.start(q)}
+							onSearch={(q, title) => void investigation.start(q, title)}
 							onSettings={() => shell.toggleSettings()}
 						/>
 					</div>

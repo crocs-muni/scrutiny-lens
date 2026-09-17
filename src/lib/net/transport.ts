@@ -117,6 +117,13 @@ export interface FetchRoute {
 	label: string;
 	urls: string[];
 	filters: Filter[];
+	/** Client-side text terms for legs with no server-side narrowing
+	 * (fullScanFilter on relays that lack NIP-50): the relay answers the
+	 * entire event-type t-bucket, so admission applies a lowercase
+	 * substring-AND of these terms over content + tags before a record may
+	 * enter the session. NIP-50 legs leave this undefined — the relay
+	 * already narrowed server-side. */
+	fulltext?: string[];
 }
 
 /** NIP-50 capability from the relay information document (NIP-11): 'unknown'

@@ -95,3 +95,25 @@ export function rewriteIncomingTags(event: NostrEvent): NostrEvent {
 	if (additions.length > 0) event.tags.push(...additions);
 	return event;
 }
+
+/**
+ * The cache-boundary inverse: returns a copy of the event with each
+ * ADMIT-added canonical twin REMOVED — tags whose -test counterpart is
+ * present. The cache persists the as-signed form: an admitted event's id
+ * was computed over the test-only tag list, and a normalized event stored
+ * as-is re-enters later runs as a tamper (NIP-01 recompute mismatch — the
+ * self-poisoning cache measured live 2026-09-17: poisoned cache-first
+ * reads rejected every event and even blocked their relay-deduped twins).
+ * Read-back strips identically, healing rows persisted before this fix.
+ */
+export function asSignedOnly(event: NostrEvent): NostrEvent {
+	if (!includeTestTags()) return event;
+	const present = new Set(event.tags.filter((tag) => tag[0] === 't').map((tag) => tag[1]));
+	const tags = event.tags.filter((tag) => {
+		if (tag[0] !== 't') return true;
+		const value = tag[1];
+		return !(isMirroredCanonical(value) && present.has(`${value}${TEST_TAG_SUFFIX}`));
+	});
+	if (tags.length === event.tags.length) return event;
+	return { ...event, tags };
+}

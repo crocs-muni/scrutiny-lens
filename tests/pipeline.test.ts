@@ -11,7 +11,7 @@ import type { CallLLM } from '$lib/ai/output';
 import type { Transport, RelayCapability, FetchSlice } from '$lib/net/transport';
 import { _closeForTests, clearAllLocalData, initPersistence } from '$lib/db';
 import { resetSearchEngine, searchText } from '$lib/search';
-import { runSearch, type PipelineEvent } from '../src/lib/pipeline';
+import { runSearch, nip50ProbeValue, fulltextTerms, matchesFulltext, type PipelineEvent } from '../src/lib/pipeline';
 
 const PROVIDER = { baseUrl: 'https://llm.example.com/v1', model: 'test-model', apiKey: 'test-key' };
 
@@ -111,7 +111,17 @@ afterEach(() => {
 describe('runSearch — capability-aware routing (spec §3)', () => {
 	it('text searches use NIP-50 on capable relays and fullScanFilter on relay-declared-lacks', async () => {
 		const transport = new FakeTransport(
-			{ 'wss://capable': { events: [event('a1')] }, 'wss://sparse': { events: [event('a2')] } },
+			{
+				'wss://capable': { events: [event('a1')] },
+				'wss://sparse': {
+					events: [
+						event('a2', { content: 'ROCA on Infineon chips — matching tag-scan record' }),
+						// The tag scan's whole-t-bucket junk MUST NOT flood the
+						// session: fullscan legs admit only client-side matches.
+						event('a3', { content: 'unrelated certificate reference edge' })
+					]
+				}
+			},
 			{ 'wss://capable': 'supports', 'wss://sparse': 'lacks' }
 		);
 		const session = await runSearch({
@@ -397,5 +407,29 @@ describe('runSearch — truncation honesty (spec §3: "fetched N, relays may hol
 			admit: () => ({ ok: true })
 		});
 		expect(session.notices.some((n) => n.kind === 'truncated')).toBe(false);
+	});
+});
+
+describe('probe text hygiene (NIP-50 token semantics measured on newlay 0.3.41)', () => {
+	it('nip50ProbeValue drops punctuation/unicode/version splinters, keeps words', () => {
+		expect(nip50ProbeValue('Fastest ECDSA on JavaCard ≤ 3.0.5 cards')).toBe(
+			'Fastest ECDSA on JavaCard cards'
+		);
+		expect(nip50ProbeValue('ML-KEM, CRYSTALS')).toBe('ML-KEM CRYSTALS');
+	});
+
+	it('nip50ProbeValue empty for punctuation-only input (caller falls back)', () => {
+		expect(nip50ProbeValue('≤ 3.0.5 - 42')).toBe('');
+	});
+
+	it('fulltextTerms keeps numeric tokens (client-side constraint, no probe)', () => {
+		expect(fulltextTerms('ECDSA 3.0.5')).toEqual(['ecdsa', '3', '0', '5']);
+	});
+
+	it('matchesFulltext is substring-AND over content + tags', () => {
+		const hit = event('x1', { content: 'ROCA vulnerability in Infineon chips' });
+		const miss = event('x2', { content: 'reference edge' });
+		expect(matchesFulltext(hit, ['roca', 'infineon'])).toBe(true);
+		expect(matchesFulltext(miss, ['roca', 'infineon'])).toBe(false);
 	});
 });

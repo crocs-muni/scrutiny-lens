@@ -255,7 +255,7 @@ class Investigation {
   /** Start a search from the J1 composer. The transport and provider are
    * constructed per run from live settings — edits in Settings take effect
    * on the next question, never mid-run. */
-  async start(question: string): Promise<void> {
+  async start(question: string, title?: string): Promise<void> {
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
@@ -265,8 +265,11 @@ class Investigation {
 
     // The session row exists before the first slice so the rail shows the
     // investigation even if every relay hangs (spec §4: never demo data,
-    // but the question itself is real user input).
-    shell.newSession(question);
+    // but the question itself is real user input). Canned suggestions
+    // (SearchSuggestions) name the session with their human label while
+    // the run itself rides the corpus-verified probe words — the probe
+    // is what translate/routeSearch see, the label is what you read.
+    shell.newSession(title ?? question);
     this.sessionId = shell.session?.id ?? null;
     // issue #36: submit lands on the trace/results stage (spec center
     // swap search → results → session); the graph session is #29's.
@@ -303,14 +306,21 @@ class Investigation {
       // the same identity guard as the sibling writes (review P1).
       if (this.controller === controller) {
         this.result = session;
+        // §8.2 settle traversal (lens #68) runs BEFORE cards/facets
+        // assembly: a text search can admit ORPHAN metadata whose product
+        // roots arrive only via the bindings+second-hop legs (measured
+        // live 2026-09-17 on lens-demo: 'fastest ECDSA JavaCard' admits
+        // 28 metadata and zero products — cards assembled pre-context
+        // were empty and the rail honestly showed 'Nothing matched'
+        // while the corpus held the answer). Made part of the settle
+        // await so the card cohort below sees the contextual full set.
+        await this.refreshSessionContext();
+        if (this.controller !== controller) return;
         this.cards = assembleCards(
           resolveGraph(session.admitted),
           session.admitted,
         );
         this.facetGroups = computeFacets(session.admitted);
-        // §8.2 settle traversal (lens #68), fire-and-forget. Parameterless
-        // on purpose — refreshSessionContext documents the $state proxy trap.
-        void this.refreshSessionContext();
         if (
           provider !== undefined &&
           settings.model !== "" &&
@@ -691,10 +701,13 @@ class Investigation {
    * FINAL admitted set once the search lands — bindingsReferencing unioned
    * per product/metadata id (Files rows / metadata deep-links), deletionsFor
    * for every cached event (DQ-2 first sight), one bounded second hop for
-   * the bindings' missing endpoints. Fire-and-forget like the dossier legs:
-   * appends to session.admitted re-derive the dossier in place; facet
-   * groups/cards/graph deliberately do not re-run (§3: those are the
-   * search's shape). Settled too early to block the fill lane. */
+   * the bindings' missing endpoints. start() awaits this pass BEFORE
+   * assembling cards/facets: a freetext search can land only ORPHAN
+   * metadata (no product touching the query words, only its records), and
+   * the second hop is the only thing that brings their roots into the
+   * session — cards assembled pre-context painted an empty rail over a
+   * populated corpus (measured on lens-demo, 2026-09-17). Dossier legs
+   * still never re-run the search shapes (§3). */
   async refreshSessionContext(): Promise<void> {
     // Reads this.result (the $state proxy), never a caller's raw session
     // object: admitContext's identity guard compares against the same

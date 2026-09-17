@@ -52,7 +52,7 @@ import {
 	scrutinyEventType,
 	type CoreNostrEvent
 } from '$lib/fabric';
-import { filterWithTestTags } from '$lib/fabric/test-tags';
+import { filterWithTestTags, rewriteIncomingTags } from '$lib/fabric/test-tags';
 import type { FetchRoute, RelayStatus, Transport } from '$lib/net/transport';
 
 /** Bound on the settle pass's second hop: ids fetched per session — a
@@ -75,6 +75,20 @@ export interface SessionContextResult {
 	events: NostrEvent[];
 	rounds: TraversalRound[];
 	capped: number;
+}
+
+/** Classification happens on NORMALIZED CLONES: relay answers under the
+ * test corpus arrive -test-namespaced and core classifiers judge only
+ * canonical vocabularies — while admission's tamper gate recomputes the
+ * NIP-01 id over the as-signed wire tags, so an in-place rewrite BEFORE
+ * admission rewrites the id assumption and drops the whole delivery
+ * (measured live 2026-09-17: normalized binding+root both refused by
+ * admitBatch's tamperReason). Cloning keeps the classifier happy AND the
+ * wire shape intact. Idempotent, no-op when the flag is off. */
+function classifyClone(event: NostrEvent): NostrEvent {
+	const clone: NostrEvent = { ...event, tags: event.tags.map((tag) => [...tag]) };
+	rewriteIncomingTags(clone);
+	return clone;
 }
 
 /** Union one round's events into the accumulator by id — the transport
@@ -105,10 +119,9 @@ export async function fetchSubjectContext(
 	const events = [...first.events];
 	const rounds: TraversalRound[] = [{ label: 'traversal:round1', relays: first.relays }];
 
-	// Deletion polls target only patches bound to THIS subject: expected
-	// type plus a marked e-tag naming it (DQ-4 via core's classifyByRole —
-	// relay answers are untrusted).
-	const patches = classifyByRole(first.events as unknown as CoreNostrEvent[], subjectId, 'patch');
+	// Wire-side classification only on normalized clones (admission still
+	// sees the as-signed array — see classifyClone).
+	const patches = classifyByRole(first.events.map((e) => classifyClone(e)) as CoreNostrEvent[], subjectId, 'patch');
 	if (patches.length === 0) return { events, rounds, capped: 0 };
 
 	const roundTwo: FetchRoute[] = patches.map(({ event }) => ({
@@ -171,6 +184,9 @@ export async function fetchSessionContext(
 	const events = [...first.events];
 	const rounds: TraversalRound[] = [{ label: 'traversal:round1', relays: first.relays }];
 
+	// Wire-side classification on normalized clones only (see classifyClone).
+	const classTwin = new Map(first.events.map((event) => [event.id, classifyClone(event) as CoreNostrEvent]));
+
 	// DQ-4 on every kind-1 answer (core helpers only — never hand-rolled):
 	// the `scrutiny-binding` type tag, exactly-one-root/one-link markers via
 	// bindingEndpoints, and a marked endpoint naming one of OUR nodes. A
@@ -185,7 +201,7 @@ export async function fetchSessionContext(
 	const deliveredCounterparties = new Set<string>();
 	for (const event of events) {
 		if (event.kind !== 1) continue;
-		const core = event as unknown as CoreNostrEvent;
+		const core = classTwin.get(event.id) ?? (event as unknown as CoreNostrEvent);
 		if (scrutinyEventType(core) !== 'binding') continue;
 		const endpoints = bindingEndpoints(core);
 		if (endpoints === undefined) continue;
