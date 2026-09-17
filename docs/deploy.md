@@ -48,11 +48,12 @@ later. After that, every green push to `main` redeploys itself.
 ## Configuration baked at build
 
 - `PUBLIC_RELAY_URLS` — the first-run relay pool (spec: 1–4, user-editable in
-  Settings afterwards). Currently `wss://relay.damus.io,wss://nos.lol` — `wss`
-  only, because an HTTPS page cannot open `ws://`. When the canonical demo
-  corpus targets a firm pool, change the one line in `pages.yml` and re-run
-  the workflow. The corpus itself is published out-of-band (owner, in
-  progress) — the app holds no data.
+  Settings afterwards). Currently
+  `wss://lens-demo.feeds.relay.tools,wss://relay.damus.io,wss://nos.lol` —
+  `wss` only, because an HTTPS page cannot open `ws://`. The demo corpus
+  relay leads: a fresh visitor must land on the seeded corpus (published
+  out-of-band 2026-09-17), the public pair follows for anything else. To
+  retarget, change the one line in `pages.yml` and re-run the workflow.
 - `PUBLIC_LLM_ENDPOINT` — unset; falls back to the spec §5 default.
 
 No deployment secrets exist at all; the app itself is secretless by design

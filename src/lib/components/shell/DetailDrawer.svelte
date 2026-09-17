@@ -30,7 +30,7 @@
 	import { formatRel, shell, type DrawerSection } from '$lib/shell.svelte';
 	import { VERB_CLIP, type Dossier, type HistoryRow } from '$lib/dossier';
 	import { artifactIcon, artifactName, formatBytes } from '$lib/artifacts';
-	import { IconExternalLink } from '@tabler/icons-svelte';
+	import { IconArrowUpRight } from '@tabler/icons-svelte';
 	import { clipMiddle } from '$lib/text';
 
 	interface Section {
@@ -406,81 +406,95 @@
 				<div class="flex flex-col gap-1">
 					{#each dossier.files as row (row.id)}
 						{@const RowIcon = artifactIcon(row.artifact)}
+						<!-- Full hash lives on the name tooltip (design review: the
+							10px pill was the loudest non-action element in the row and
+							decides nothing) -->
+						{@const rowTitle =
+							artifactName(row.artifact) +
+							' · ' +
+							row.artifact.url +
+							(row.artifact.sha256 !== undefined ? ' · SHA-256 ' + row.artifact.sha256 : '')}
 						<div
-							class="flex items-start gap-2 rounded-[8px] px-1.5 py-1 transition-colors duration-100 hover:bg-hover"
+							class="group/row rounded-[8px] px-1.5 py-1.5 transition-colors duration-100 hover:bg-hover"
 						>
-							<RowIcon size={15} stroke={1.7} class="mt-[3px] shrink-0 text-ink-2" />
-							<div class="min-w-0 flex-1">
-								<!-- The file itself is the anchor: icon + name + size, the
-									URL spelled out below — clicking anywhere here opens the
-									artifact (noopener,noreferrer; ruling 2026-09-17: the row
-									is the link, not a 13px affordance inside it). -->
+							<!-- Discoverability ruler (design review 2026-09-17): a 32px
+								bordered ICON TILE + a real bordered OPEN chip — both button
+								vocabulary at rest, never hover-revealed affordances. The
+								13px trailing icon whispered and was missed (owner). -->
+							<div class="flex items-center gap-2.5">
+								<div
+									class="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-line bg-surface text-ink-2 shadow-[var(--shadow-hairline)]"
+								>
+									<RowIcon size={17} stroke={1.7} />
+								</div>
+								<!-- Name+url block is one anchor: alt, else the URL's own
+									basename — never a hash (human name beats machine id). -->
 								<a
 									href={row.artifact.url}
 									target="_blank"
 									rel="noopener noreferrer"
-									class="group/file block min-w-0 rounded-[6px] decoration-accent-ink/60 outline-offset-2 focus-visible:outline-accent-ink/60"
-									title="Open artifact: {row.artifact.url}"
+									class="block min-w-0 flex-1 rounded-[6px] outline-offset-2 focus-visible:outline-2 focus-visible:outline-accent"
+									title={rowTitle}
 								>
-									<div class="flex items-center gap-2">
-										<!-- mono: machine-derived label/basename (§9 writing rule) -->
-										<span
-											class="truncate font-mono text-[12px] font-medium text-ink underline-offset-2 group-hover/file:text-accent-ink group-hover/file:underline"
-										>
-											{artifactName(row.artifact)}
-										</span>
-										{#if row.artifact.sizeBytes !== undefined}
-											<span class="shrink-0 font-mono text-[10.5px] text-ink-3">{formatBytes(row.artifact.sizeBytes)}</span>
-										{/if}
-										{#if row.artifact.sha256 !== undefined}
-											<span
-												class="shrink-0 rounded-[5px] border border-line bg-inset px-1.5 py-px font-mono text-[10px] text-ink-3"
-												title="SHA-256: {row.artifact.sha256}"
-											>
-												{clipMiddle(row.artifact.sha256, 17)}
-											</span>
-										{/if}
-										<IconExternalLink size={13} stroke={2} class="ml-auto shrink-0 text-ink-3 transition-colors group-hover/file:text-accent-ink" />
+									<div class="truncate text-[13px] font-medium text-ink group-hover/row:text-accent-ink">
+										{artifactName(row.artifact)}
 									</div>
-									<!-- The link, honestly spelled out (mono, mid-clipped);
-										the full URL stays on the row's hover title. -->
-									<div class="mt-0.5 truncate font-mono text-[10.5px] text-ink-3">
-										{clipMiddle(row.artifact.url, 68)}
+									<div class="truncate font-mono text-[10.5px] text-ink-3">
+										{clipMiddle(row.artifact.url, 72)}
 									</div>
 								</a>
-								<button
-									type="button"
-									class="mt-0.5 flex min-w-0 items-center gap-1.5 text-left"
-									title="{row.destination === 'subject' ? 'root' : 'link'} endpoint · {row.recordId}"
-									onclick={() => onSelect?.(row.recordId)}
+								<!-- Size is decision context for a download — honest
+									placeholder when the descriptor never stated one. -->
+								<span
+									class="shrink-0 self-center font-mono tabular-nums text-[11px] {row.artifact.sizeBytes === undefined
+										? 'italic text-ink-3'
+										: 'text-ink-2'}"
 								>
-									<span class="shrink-0 font-mono text-[10.5px] text-ink-3">
-										{row.destination === 'subject' && row.verb !== null ? '←' : row.verb !== null ? '→' : '·'}
-									</span>
-									{#if row.verb !== null && row.verb !== ''}
-										<!-- corpus bindings carry machine sentences, not
-											four-letter verbs — the chip clips (full text on
-											hover + in Content); the count is untouched. -->
-										<span
-											class="shrink-0 rounded-[6px] border border-line bg-inset px-1.5 py-px font-mono text-[10px] text-ink-2"
-											title={clipMiddle(row.verb, VERB_CLIP) !== row.verb ? row.verb : undefined}
-										>
-											{clipMiddle(row.verb, VERB_CLIP)}
-										</span>
-									{/if}
-									{#if row.recordTitle !== null}
-										<span
-											class="truncate {row.recordTitle.interpreted
-												? 'text-[12px] font-medium text-ink'
-												: 'font-mono text-[11px] text-ink-2'}"
-										>
-											{row.recordTitle.text}
-										</span>
-									{:else}
-										<span class="shrink-0 font-mono text-[10.5px] text-ink-3">this record</span>
-									{/if}
-								</button>
+									{row.artifact.sizeBytes !== undefined ? formatBytes(row.artifact.sizeBytes) : 'size unknown'}
+								</span>
+								<a
+									href={row.artifact.url}
+									target="_blank"
+									rel="noopener noreferrer"
+									class="flex h-[30px] shrink-0 items-center gap-1.5 rounded-[8px] border border-line-strong bg-surface px-2.5 text-[12px] font-medium text-ink shadow-[var(--shadow-btn)] transition-colors duration-100 hover:bg-ink hover:text-surface outline-offset-2 focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.99]"
+									title="Open file: {artifactName(row.artifact)}"
+								>
+									<IconArrowUpRight size={14} stroke={2} />
+									<span>Open</span>
+								</a>
 							</div>
+							<button
+								type="button"
+								class="mt-0.5 flex min-w-0 items-center gap-1.5 text-left"
+								title="{row.destination === 'subject' ? 'root' : 'link'} endpoint · {row.recordId}"
+								onclick={() => onSelect?.(row.recordId)}
+							>
+								<span class="shrink-0 font-mono text-[10.5px] text-ink-3">
+									{row.destination === 'subject' && row.verb !== null ? '←' : row.verb !== null ? '→' : '·'}
+								</span>
+								{#if row.verb !== null && row.verb !== ''}
+									<!-- corpus bindings carry machine sentences, not
+										four-letter verbs — the chip clips (full text on
+										hover + in Content); the count is untouched. -->
+									<span
+										class="shrink-0 rounded-[6px] border border-line bg-inset px-1.5 py-px font-mono text-[10px] text-ink-2"
+										title={clipMiddle(row.verb, VERB_CLIP) !== row.verb ? row.verb : undefined}
+									>
+										{clipMiddle(row.verb, VERB_CLIP)}
+									</span>
+								{/if}
+								{#if row.recordTitle !== null}
+									<span
+										class="truncate {row.recordTitle.interpreted
+											? 'text-[12px] font-medium text-ink'
+											: 'font-mono text-[11px] text-ink-2'}"
+									>
+										{row.recordTitle.text}
+									</span>
+								{:else}
+									<span class="shrink-0 font-mono text-[10.5px] text-ink-3">this record</span>
+								{/if}
+							</button>
 						</div>
 					{/each}
 				</div>

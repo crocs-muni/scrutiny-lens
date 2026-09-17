@@ -19,8 +19,10 @@ jobs:
   gate-and-build:
     runs-on: ubuntu-latest
     env:
-      # HTTPS host → wss relays only. Corpus pool target per docs/deploy.md.
-      PUBLIC_RELAY_URLS: wss://relay.damus.io,wss://nos.lol
+      # HTTPS host → wss relays only. Pool per docs/deploy.md: the seeded
+      # demo corpus relay FIRST (a fresh visitor must land on data), the
+      # public pair after it (3 ≤ the 1–4 spec window).
+      PUBLIC_RELAY_URLS: wss://lens-demo.feeds.relay.tools,wss://relay.damus.io,wss://nos.lol
       BASE_PATH: /scrutiny-lens
     steps:
       - name: Check out lens
