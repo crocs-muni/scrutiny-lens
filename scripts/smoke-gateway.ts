@@ -148,6 +148,32 @@ function recordCorpus(model: string, res: ScriptedResponse): void {
 }
 
 /**
+ * OpenAI-style SSE frames for one assistant message: role chunk, ~5 content
+ * deltas, a stop chunk, then [DONE]. The smoke-ui fill lane streams so the
+ * browser exercises the app's real streamText path with visible latency.
+ */
+function sseFrames(content: string): string {
+  const frame = (delta: Record<string, string>, finishReason: string | null) =>
+    `data: ${JSON.stringify({
+      id: "chatcmpl-smoke",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: "smoke",
+      choices: [{ index: 0, delta, finish_reason: finishReason }],
+    })}\n\n`;
+  const chunks: string[] = [];
+  const size = Math.max(1, Math.ceil(content.length / 5));
+  for (let i = 0; i < content.length; i += size) chunks.push(content.slice(i, i + size));
+  if (chunks.length === 0) chunks.push("");
+  return (
+    frame({ role: "assistant" }, null) +
+    chunks.map((chunk) => frame({ content: chunk }, null)).join("") +
+    frame({}, "stop") +
+    "data: [DONE]\n\n"
+  );
+}
+
+/**
  * The dev middleware. Falls through to Vite for non-gateway requests.
  */
 export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
@@ -156,6 +182,9 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
   // throttle happened (issue #54: the "429 retried away" lane must be able
   // to fail if the 429 never fired). Resettable via DELETE /smoke/status.
   const served429: Array<{ model: string; at: number }> = [];
+  /** smoke-ui lanes: first call = translate, later calls = fill chunks —
+   * tracked per model so repeat UI sessions can suffix a nonce. */
+  const uiCursors = new Map<string, number>();
   return (req, res, next) => {
     const url =
       (req as { originalUrl?: string; url?: string }).originalUrl ??
@@ -175,7 +204,7 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
       res.end(
         JSON.stringify({
           object: "list",
-          data: Object.keys(BUCKETS).map((id) => ({ id })),
+          data: [...Object.keys(BUCKETS), "smoke-ui", "smoke-ui-fail"].map((id) => ({ id })),
         }),
       );
       return;
@@ -196,6 +225,94 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
         return;
       }
       const model = body.model ?? "";
+      // UI-visual lanes (issue #82): drive the REAL app UI against this
+      // gateway so the fill grammar is browser-verified, not just unit-tested.
+      // `smoke-ui`: first call translates (a tag search guaranteed to hit the
+      // seeded corpus); later calls are fill chunks answered by ECHOING the
+      // requested ids as KV records — delayed ~1.2s so the pending sweep is
+      // visible — streamed as SSE when the lane asks for streamText.
+      // `smoke-ui-fail`: same translate, then 500 on fills (the amber lane).
+      if (model.startsWith("smoke-ui")) {
+        const n = uiCursors.get(model) ?? 0;
+        uiCursors.set(model, n + 1);
+        // The request's last user message (narrowed, never cast at access).
+        let lastUser = "";
+        if (
+          body !== null &&
+          typeof body === "object" &&
+          "messages" in body &&
+          Array.isArray(body.messages)
+        ) {
+          const last = body.messages.at(-1) as unknown;
+          if (last !== null && typeof last === "object" && "content" in last) {
+            lastUser = String(last.content);
+          }
+        }
+        if (n === 0) {
+          // Translate: one seeded-corpus tag search + the question itself as
+          // a NIP-50 free-text search (echo, clipped — the smoke MUST see
+          // results even if only one route answers).
+          const question =
+            lastUser
+              .split("\n")
+              .filter((line) => line.trim() !== "")
+              .at(-1)
+              ?.slice(0, 60) ?? "";
+          const answer = `kind: tag\nvalue: cc:LENS29-ROCA\n\nkind: text\nvalue: ${question}`;
+          recordCorpus(model, {
+            status: 200,
+            body: { choices: [{ message: { role: "assistant", content: answer } }] },
+          });
+          res.statusCode = 200;
+          res.setHeader("content-type", "application/json");
+          res.end(
+            JSON.stringify({
+              choices: [{ message: { role: "assistant", content: answer } }],
+            }),
+          );
+          return;
+        }
+        if (model.startsWith("smoke-ui-fail")) {
+          res.statusCode = 500;
+          res.setHeader("content-type", "application/json");
+          res.end(
+            JSON.stringify({
+              error: { message: "smoke-ui-fail: scripted gateway failure", type: "server_error", code: 500 },
+            }),
+          );
+          return;
+        }
+        let asked: Array<{ id: string }> = [];
+        try {
+          const parsed = JSON.parse(lastUser) as unknown;
+          if (Array.isArray(parsed)) asked = parsed as Array<{ id: string }>;
+        } catch {
+          // node-fill lanes send a different prompt shape — the echo reads
+          // nothing; an empty KV answer is the honest failure for that call.
+        }
+        const kv = asked
+          .map(
+            (a, i) =>
+              `id: ${a.id}\ntitle: Smoke-interpreted card ${i + 1}\nsnippet: The fake gateway's whole-record interpretation for visual grammar verification — read, summarized, and painted as one record.`,
+          )
+          .join("\n\n");
+        const wantsStream =
+          body !== null && typeof body === "object" && "stream" in body && body.stream === true;
+        // A beat of latency per fill chunk so the pending sweep reads on screen.
+        setTimeout(() => {
+          if (wantsStream) {
+            res.statusCode = 200;
+            res.setHeader("content-type", "text/event-stream");
+            res.setHeader("cache-control", "no-cache");
+            res.end(sseFrames(kv));
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: kv } }] }));
+        }, 1200);
+        return;
+      }
       // Prefix match: a run may suffix the lane with a nonce (`smoke-translate-abc1`)
       // so bucket cursors stay fresh across reruns (issue #54: the smoke must
       // be rerunnable without IndexedDB interference; keyed-by-model caches

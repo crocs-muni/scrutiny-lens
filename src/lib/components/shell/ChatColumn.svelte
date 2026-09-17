@@ -320,6 +320,8 @@
 		overflow: hidden;
 		position: relative;
 	}
+	/* pending-shimmer is the shared keyframe in app.css (issue #82 extraction —
+	 * one motion vocabulary, one global reduced-motion floor owns it). */
 	.pending-pill::after {
 		content: '';
 		position: absolute;
@@ -329,13 +331,5 @@
 	}
 	:global(.dark) .pending-pill::after {
 		background: linear-gradient(90deg, transparent, oklch(1 0 0 / 0.14), transparent);
-	}
-	@keyframes pending-shimmer {
-		from {
-			transform: translateX(-100%);
-		}
-		to {
-			transform: translateX(100%);
-		}
 	}
 </style>

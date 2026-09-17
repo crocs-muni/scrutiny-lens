@@ -259,15 +259,5 @@
 	{/if}
 </div>
 
-<style>
-	/* Reduced-motion guard (spec §2): freeze the ring spin, kill entrance
-	 * fades and the fold grid — instant swaps. `!important` beats the
-	 * inline `style:animation` / `style:transition` above. */
-	@media (prefers-reduced-motion: reduce) {
-		:global(.trace-capsule),
-		:global(.trace-capsule *) {
-			animation: none !important;
-			transition: none !important;
-		}
-	}
-</style>
+<!-- Reduced-motion note: the ONE global floor in app.css (issue #82) now
+	owns this — the old trace-local guard is subsumed, not duplicated. -->

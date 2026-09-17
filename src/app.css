@@ -126,3 +126,104 @@ select:focus-visible,
 		transform: rotate(360deg);
 	}
 }
+
+/* ============================================================
+   Interpretation-in-motion (issue #82) — the shared fill grammar.
+   Pending is NEUTRAL motion sitting on top of the true rule-5 face
+   (spec §2 rule 5), never carrying a color it hasn't earned; settle
+   is a whole-face crossfade; failure is amber (the degraded
+   vocabulary), a color state — never motion-dependent, so the
+   reduced-motion floor below can kill every animation honestly.
+
+   The grammar lives as shared keyframes + the `.fill-sweep` overlay
+   class instead of a mounted <Shimmer> component: canon (beautiful-
+   ui-svelte, spec §9 L95) has no Shimmer component to port, and a
+   wrapper div would fight the surfaces' own positioning. ChatColumn's
+   pill and the card sweep ride the same two keyframes.
+   ============================================================ */
+
+/* the citation pill's neutral sweep — 1.4s is the seeded habit
+ * (extraction from ChatColumn, the value is the language). */
+@keyframes pending-shimmer {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(100%);
+	}
+}
+
+/* whole-card diagonal wash crossing every ~1.7s — the pending claim. */
+@keyframes fill-sweep {
+	from {
+		background-position: -60% 0;
+	}
+	to {
+		background-position: 180% 0;
+	}
+}
+.fill-sweep {
+	background:
+		linear-gradient(
+			105deg,
+			transparent 30%,
+			oklch(0.7 0.01 258 / 0.28) 50%,
+			transparent 70%
+		)
+		no-repeat;
+	background-size: 55% 130%;
+	animation: fill-sweep 1.7s var(--ease-link) infinite;
+}
+.dark .fill-sweep {
+	background-image: linear-gradient(
+		105deg,
+		transparent 30%,
+		oklch(1 0 0 / 0.07) 50%,
+		transparent 70%
+	);
+}
+
+/* settle bloom — the two faces cross as ONE unit; pairing halves for
+ * the overlay (out) and the arriving face (in). ~260ms is the seeded
+ * habit from the ruling board (motion-grammar.dc.html, lane A). */
+@keyframes settle-fade-out {
+	to {
+		opacity: 0;
+	}
+}
+@keyframes settle-fade-in {
+	from {
+		opacity: 0;
+	}
+}
+
+/* the border's dashed→solid flip holds 130ms so it lands at the
+ * crossfade midpoint instead of teleporting at merge time. */
+@keyframes settle-border {
+	0%,
+	49.9% {
+		border-style: dashed;
+		border-color: var(--line-strong);
+	}
+	50%,
+	100% {
+		border-style: solid;
+		border-color: var(--line);
+	}
+}
+
+/* The ONE global reduced-motion floor (issue #82): this subsumes
+ * PhaseRow's old card-local guard and closes the hole where the chat
+ * pending-shimmer and PublisherChip's animate-pulse ignored reduced
+ * motion entirely. Everything animated collapses to instant swaps;
+ * state colors (amber, retracted red) are untouched on purpose. */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		transition-delay: 0ms !important;
+	}
+}

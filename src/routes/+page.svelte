@@ -53,8 +53,8 @@
 	const viewEvents = $derived(semanticFiltered.events);
 	// Cards render while the fill lands (issue #59): the per-chunk paint
 	// needs the product surface live DURING fillInChunks, and a mid-fill
-	// card's badge (`interpreting…`, driven by investigation.pending) has
-	// no meaning on the skeleton surface this gate used to keep up. */
+	// card's sweep (driven by investigation.pending, issue #82) has no
+	// meaning on the skeleton surface this gate used to keep up. */
 	const showCards = $derived(investigation.result !== null);
 	const railGroups = $derived.by(() => {
 		if (investigation.result === null) return investigation.facetGroups;
@@ -439,6 +439,7 @@
 													<ResultCard
 														{card}
 														pending={investigation.pending.has(card.id)}
+														failed={investigation.failed.has(card.id)}
 														selected={card.id === investigation.selectedEventId}
 														onOpen={showCards ? () => openDossier(card.id) : undefined}
 													/>

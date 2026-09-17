@@ -37,6 +37,23 @@
 		label: string;
 	}
 
+	/* Title-settle (issue #82): the drawer's two-face title (mono rule-5 ⇄
+	 * sans interpreted) flips when the card merge lands while the drawer is
+	 * open. One ~200ms settle-fade marks the change; the first observed
+	 * value is the subject's first stable paint here → never blooms (cache
+	 * calm). */
+	let titleBloom = $state(false);
+	let titleObserved: boolean | null = null;
+	$effect(() => {
+		const now = dossier !== null && dossier.title.interpreted;
+		if (titleObserved === null) {
+			titleObserved = now;
+			return;
+		}
+		if (now && !titleObserved) titleBloom = true;
+		titleObserved = now;
+	});
+
 	interface Props {
 		open: boolean;
 		/** Open height in px. */
@@ -198,7 +215,8 @@
 			<span
 				class="ml-2 min-w-0 truncate {dossier.title.interpreted
 					? 'text-[12px] font-medium text-ink'
-					: 'font-mono text-[11px] text-ink-2'}"
+					: 'font-mono text-[11px] text-ink-2'} {titleBloom ? 'title-settle' : ''}"
+				onanimationend={() => (titleBloom = false)}
 			>
 				{dossier.title.text}
 			</span>
@@ -270,7 +288,8 @@
 				<span
 					class="min-w-0 truncate {dossier.title.interpreted
 						? 'text-[14px] font-semibold text-ink'
-						: 'font-mono text-[12px] font-medium text-ink-2'}"
+						: 'font-mono text-[12px] font-medium text-ink-2'} {titleBloom ? 'title-settle' : ''}"
+					onanimationend={() => (titleBloom = false)}
 				>
 					{dossier.title.text}
 				</span>
@@ -472,5 +491,9 @@
 	 * choreography as the column collapses (issue #10). */
 	[data-drawer-collapsed='true'] .drawer-copy {
 		opacity: 0;
+	}
+	/* tile-settle shared language — the title crossfade (issue #82). */
+	.title-settle {
+		animation: settle-fade-in 200ms var(--ease-link) both;
 	}
 </style>

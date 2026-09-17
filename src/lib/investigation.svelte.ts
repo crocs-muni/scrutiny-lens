@@ -114,6 +114,14 @@ class Investigation {
    * has actually fired (spec §2). New Set identity per claim/merge so the
    * badge re-fires; in-place mutation would pin the first snapshot. */
   pending = $state<Set<string>>(new Set());
+  /** Cards that were claimed by a fill lane but settled WITHOUT an
+   * interpretation this pass (issue #82): the amber-tint state. A settle
+   * is only final relative to the pass — a later successful pass drains
+   * its ids back out. Deliberate aborts never mark: killed ≠ failed
+   * (spec §8). TRANSIENT per run — never persisted, exactly like
+   * `pending`: amber must remain a live claim, not a memory, or a
+   * yesterday-failed endpoint would wallpaper the rail forever. */
+  failed = $state<Set<string>>(new Set());
   fillStats = $state<{ interpreted: number; total: number }>({
     interpreted: 0,
     total: 0,
@@ -226,6 +234,7 @@ class Investigation {
     this.selections = {};
     this.filling = false;
     this.pending = new Set();
+    this.failed = new Set();
     this.fillStats = { interpreted: 0, total: 0 };
     this.fillFailure = null;
     this.fillErrorMessage = null;
@@ -876,6 +885,16 @@ clearFacets(): void {
         const merged = this.cards.slice();
         for (let i = 0; i < filled.length; i++) merged[at + i] = filled[i];
         this.cards = merged;
+        // Amber bookkeeping (issue #82): a claimed card that settled WITHOUT
+        // an interpretation marks `failed`; one the pass interpreted (live or
+        // cache-hit) drains. This runs only on the current controller's path
+        // — a deliberate abort returned above, so stopped runs never mark. */
+        const failedSet = new Set(this.failed);
+        for (let i = 0; i < filled.length; i++) {
+          if (filled[i].interpreted) failedSet.delete(filled[i].id);
+          else failedSet.add(filled[i].id);
+        }
+        this.failed = failedSet;
         this.fillStats = {
           interpreted: merged.filter((c) => c.interpreted).length,
           total,
@@ -930,6 +949,7 @@ export function resetInvestigation(): void {
   investigation.selections = {};
   investigation.filling = false;
   investigation.pending = new Set();
+  investigation.failed = new Set();
   investigation.fillStats = { interpreted: 0, total: 0 };
   investigation.fillFailure = null;
   investigation.fillErrorMessage = null;

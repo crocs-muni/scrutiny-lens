@@ -154,6 +154,54 @@ describe("fillInChunks — per-card pending lifecycle (issue #59)", () => {
 		expect(investigation.fillStats).toEqual({ interpreted: 3, total: 6 });
 	});
 
+	it("a failed chunk's ids land in `failed` — the amber-tint claim (#82): claimed, never interpreted", async () => {
+		const callLLM: CallLLM = async (args) => {
+			const asked = JSON.parse(args.messages[0].content as string) as { id: string }[];
+			if (asked.some((a) => a.id === "c-1")) throw new TypeError("network down");
+			return kvAnswer(args);
+		};
+		const cards = Array.from({ length: 6 }, (_, i) => card(`c-${i}`));
+		await investigation._fillInChunksForTests(cards, PROVIDER, callLLM);
+
+		// The failed set is the visible-retraction source: a card that was
+		// claimed but settles uninterpreted must read amber, never silently
+		// identical to a never-claimed one (spec §2). Interpreted chunk lays no claim.
+		expect([...investigation.failed].sort()).toEqual(["c-0", "c-1", "c-2"]);
+	});
+
+	it("a later successful pass clears the id from `failed` — the retry's crossfade", async () => {
+		const failing: CallLLM = async (args) => {
+			const asked = JSON.parse(args.messages[0].content as string) as { id: string }[];
+			if (asked.some((a) => a.id === "c-1")) throw new TypeError("network down");
+			return kvAnswer(args);
+		};
+		const cards = Array.from({ length: 6 }, (_, i) => card(`c-${i}`));
+		await investigation._fillInChunksForTests(cards, PROVIDER, failing);
+		expect(investigation.failed.size).toBe(3);
+
+		// Second pass, healthy endpoint (the two interpreted chunks now hit
+		// the cache; only the failed chunk re-pays the LLM): the recovered
+		// ids MUST drain — amber is a claimed-failure state, not a memory.
+		await investigation._fillInChunksForTests(
+			investigation.cards.slice(),
+			PROVIDER,
+			async (args) => kvAnswer(args),
+		);
+		expect(investigation.failed.size).toBe(0);
+	});
+
+	it("a deliberate abort never marks `failed` — killed ≠ failed (§8 abort lifecycle)", async () => {
+		let callCount = 0;
+		const callLLM: CallLLM = async (args) => {
+			callCount += 1;
+			if (callCount === 1) investigation.stop();
+			return kvAnswer(args);
+		};
+		const cards = Array.from({ length: 6 }, (_, i) => card(`c-${i}`));
+		await investigation._fillInChunksForTests(cards, PROVIDER, callLLM);
+		expect(investigation.failed.size).toBe(0);
+	});
+
 	it("an aborted run never leaks ids — pending drains on the abort path", async () => {
 		let callCount = 0;
 		const callLLM: CallLLM = async (args) => {
