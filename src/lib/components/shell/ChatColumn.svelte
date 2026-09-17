@@ -308,37 +308,6 @@
 		background: none;
 		padding: 0;
 	}
-
-	/* Pending-shimmer pill (ruling 5): a complete-but-unverified marker
-	 * renders as neutral motion, never carrying a color it hasn't earned —
-	 * the paired color arrives only with the verified pill at settle. */
-	.pending-pill {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 22px;
-		height: 16px;
-		padding: 0 5px;
-		border-radius: 5px;
-		vertical-align: -2px;
-		background: var(--hover);
-		font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
-		font-size: 11px;
-		line-height: 1;
-		color: var(--ink-3);
-		overflow: hidden;
-		position: relative;
-	}
-	/* pending-shimmer is the shared keyframe in app.css (issue #82 extraction —
-	 * one motion vocabulary, one global reduced-motion floor owns it). */
-	.pending-pill::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-		background: linear-gradient(90deg, transparent, oklch(1 0 0 / 0.55), transparent);
-		animation: pending-shimmer 1.4s ease-in-out infinite;
-	}
-	:global(.dark) .pending-pill::after {
-		background: linear-gradient(90deg, transparent, oklch(1 0 0 / 0.14), transparent);
-	}
+	/* The pending-shimmer pill's styles and keyframes live in ChatRichText
+	 * (chat-output T2 cutover — one renderer owns one vocabulary). */
 </style>

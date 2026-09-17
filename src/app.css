@@ -173,17 +173,6 @@ select:focus-visible,
 	}
 }
 
-/* the citation pill's neutral sweep — 1.4s is the seeded habit
- * (extraction from ChatColumn, the value is the language). */
-@keyframes pending-shimmer {
-	from {
-		transform: translateX(-100%);
-	}
-	to {
-		transform: translateX(100%);
-	}
-}
-
 /* whole-card diagonal wash crossing every ~1.7s — the pending claim. */
 @keyframes fill-sweep {
 	from {

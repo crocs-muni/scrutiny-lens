@@ -67,8 +67,10 @@ export interface RunSearchOptions {
 	provider?: ProviderOverrideInput;
 	callLLM: CallLLM;
 	transport: Transport;
-	/** Admission seam — production default is the fabric admit; tests inject. */
-	admit?: (event: NostrEvent) => { ok: boolean };
+	/** Admission seam — production default is the fabric admit; tests inject.
+	 * Honest return shape: reason optional so the test injects
+	 * ({ ok: boolean }) stay assignable while production can tell the log WHY. */
+	admit?: (event: NostrEvent) => { ok: boolean; reason?: string };
 	signal?: AbortSignal;
 	emit?: (event: PipelineEvent) => void;
 }
@@ -295,7 +297,7 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 			if (!verdict.ok) {
 				rejectedIds.add(event.id);
 				invalidSkipped += 1;
-				firstReject ??= verdict.reason;
+				firstReject ??= verdict.reason ?? 'rejected';
 				continue;
 			}
 			// Test-corpus boundary (PUBLIC_INCLUDE_TEST_TAGS): the default
