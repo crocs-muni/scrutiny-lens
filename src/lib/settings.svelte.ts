@@ -23,6 +23,22 @@ export const defaultSettings = {
 	appearance: DEFAULT_APPEARANCE as Appearance
 };
 
+/** Single-model auto-select (spec §5): when the live model list resolves to
+ * exactly one model and the current model is empty or is the value this rule
+ * last filled, follow it. Any other current value — a user pick or a
+ * persisted choice — is never clobbered. Returns the model to select, or
+ * null for "no change". */
+export function nextAutoModel(
+	models: readonly string[],
+	current: string,
+	previousAuto: string | null
+): string | null {
+	if (models.length !== 1) return null;
+	const only = models[0];
+	if (current !== '' && current !== previousAuto) return null;
+	return only;
+}
+
 class Settings {
 	endpoint = $state(defaultSettings.endpoint);
 	model = $state(defaultSettings.model);

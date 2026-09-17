@@ -5,7 +5,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { _closeForTests, clearAllLocalData, dumpAllForTests, initPersistence, loadSettings, putSession } from '$lib/db';
-import { defaultSettings, settings, resetSettings } from '../src/lib/settings.svelte';
+import { defaultSettings, nextAutoModel, settings, resetSettings } from '../src/lib/settings.svelte';
 import { RELAY_MAX, RELAY_MIN } from '../src/lib/config';
 
 const KEY = 'sk-test-1234567890abcdef';
@@ -115,5 +115,31 @@ describe('API key (spec §6: memory-only, strip armed)', () => {
 		expect(settings.apiKey).toBe('');
 		await putSession({ id: 's1', title: `investigation ${KEY} note`, createdAt: 1 });
 		expect(JSON.stringify(await dumpAllForTests())).not.toContain(KEY);
+	});
+});
+
+describe('single-model auto-select (spec §5)', () => {
+	it('fills an empty model when the live list has exactly one entry', () => {
+		expect(nextAutoModel(['a'], '', null)).toBe('a');
+	});
+
+	it('re-follows when the single model changes and nothing overrode it', () => {
+		expect(nextAutoModel(['b'], 'a', 'a')).toBe('b');
+	});
+
+	it('leaves the model untouched when the list has no models', () => {
+		expect(nextAutoModel([], '', null)).toBeNull();
+	});
+
+	it('leaves the model untouched when the list has multiple models', () => {
+		expect(nextAutoModel(['a', 'b'], '', null)).toBeNull();
+	});
+
+	it('a user pick or stale persisted value is never clobbered by a later fetch', () => {
+		// User pick (no auto chain) — and even a chain broken by an override.
+		expect(nextAutoModel(['y'], 'x', null)).toBeNull();
+		expect(nextAutoModel(['y'], 'x', 'z')).toBeNull();
+		// Stale persisted model from a previous session.
+		expect(nextAutoModel(['y'], 'old-persisted', null)).toBeNull();
 	});
 });

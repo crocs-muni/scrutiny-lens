@@ -23,7 +23,7 @@
 	import KeyField from '$lib/components/ui/KeyField.svelte';
 	import { RELAY_MAX, RELAY_MIN, type Appearance } from '$lib/config';
 	import { clearAllLocalData } from '$lib/db';
-	import { settings } from '$lib/settings.svelte';
+	import { nextAutoModel, settings } from '$lib/settings.svelte';
 
 	interface Props {
 		onClose: () => void;
@@ -59,6 +59,8 @@
 	let models = $state<string[]>([]);
 	let modelError = $state('');
 	let modelInput = $state(settings.model);
+	// Value last auto-selected by the single-model rule (spec §5); a user pick clears it.
+	let autoSelected = $state<string | null>(null);
 
 	const filteredModels = $derived(
 		models
@@ -84,6 +86,12 @@
 					if (result.ok) {
 						models = result.models;
 						modelState = 'ready';
+						const fill = nextAutoModel(result.models, settings.model, autoSelected);
+						if (fill !== null) {
+							autoSelected = fill;
+							void settings.setModel(fill);
+							modelInput = fill;
+						}
 					} else {
 						models = [];
 						modelError =
@@ -234,6 +242,7 @@
 					value={settings.model}
 					allowDeselect={false}
 					onValueChange={(value) => {
+						autoSelected = null;
 						void settings.setModel(value);
 						// bits-ui mirrors the picked label into its internal input
 						// text; keep the local filter in the same state.
