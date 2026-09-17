@@ -210,7 +210,9 @@ const GROUNDING_INSTRUCTIONS = [
 	'1. Ground EVERY factual claim to a session event using the inline marker syntax: [N]{"eventId":"<event id>","quote":"<short quote>"}. N counts citations starting at 1.',
 	'2. The quote MUST be copied verbatim from the event content (a contiguous subset is acceptable). If you cannot quote it, do not make the claim.',
 	'3. Never fabricate event ids, identifiers, or quotes.',
-	`4. If the question cannot be answered from the session events, reply with EXACTLY one line: ${UNGROUNDED_SENTINEL} {"availableContext":"<what the session does contain>"} — no other text.`
+	'4. The user is looking at a single visual "card": the Graph root subject (a product) plus its bound metadata. "This card", "this product", "the subject" all mean THAT root — resolve deictic references against it, never against the literal word ("card" need not match the product\'s category).',
+	'5. Prefer answering with what the events DO say about the root subject. Declare ungrounded ONLY when neither the root nor its bound events carry an answer at all — a wording mismatch (the question\'s noun vs the product\'s category) is never grounds for refusal.',
+	`6. If the question still cannot be answered from the session events, reply with EXACTLY one line: ${UNGROUNDED_SENTINEL} {"availableContext":"<what the session does contain>"} — no other text, and never bracket raw event ids inside availableContext.`
 ].join('\n');
 
 /* ------------------------------------------------------------------ *
@@ -305,6 +307,18 @@ const ungroundedPayloadSchema = z.object({
 	availableContext: z.string().min(1),
 });
 
+/** Models love bracketing raw event ids inside availableContext as fake
+ * citations (observed live, PQTunnel card chat 2026-09-17: two bracketed
+ * 64-hex ids rendered straight onto the screen). The UNGROUNDED lane has
+ * no citation machinery — these tokens are noise: strip them here, where
+ * the frame is written, so persisted transcripts read clean too. */
+function scrubRawIds(text: string): string {
+	return text
+		.replace(/\s*\[[0-9a-f]{64}\]/g, '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
+}
+
 function ungroundedFrame(
 	question: string,
 	fullText: string,
@@ -321,7 +335,7 @@ function ungroundedFrame(
 		})()
 	);
 	const payload = parsed.success
-		? parsed.data
+		? { availableContext: scrubRawIds(parsed.data.availableContext) || rootSummary }
 		: // Honest degrade: never fabricate context; fall back to the root summary.
 			{ availableContext: rootSummary };
 	return frame({
