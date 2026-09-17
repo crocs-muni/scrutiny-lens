@@ -60,6 +60,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { z } from 'zod';
 import { tTags, indexerFilter, searchFilter, fullScanFilter } from '@scrutiny-fabric/core';
 import { bindingsReferencing, deletionsFor, patchesReferencing } from '@scrutiny-fabric/core';
+import { rewriteIncomingTags } from './test-tags';
 
 /** Every value of the `t` tag on the event — core's derivation, never
  * hand-rolled, per AGENTS.md's "all protocol work via @scrutiny-fabric/core". */
@@ -181,14 +182,19 @@ export interface Classification {
  * absent come back 'pending' (named ids in the reason) rather than 'invalid'.
  */
 export function validateAndClassify(events: NostrEvent[]): Classification {
-	const batch = new Map(events.map((event) => [event.id, event]));
+	// Test-corpus boundary (config PUBLIC_INCLUDE_TEST_TAGS): normalise
+	// `scrutiny-*-test` t-tags to canonical BEFORE core validation — the
+	// batch map below must hold canonical events so BD/PT reference checks
+	// see the right types. In-place and idempotent; untouched when off.
+	const normalized = events.map(rewriteIncomingTags);
+	const batch = new Map(normalized.map((event) => [event.id, event]));
 	const lookupEvent = (id: string): CoreNostrEvent | undefined => {
 		const found = batch.get(id);
 		return found ? asCore(found) : undefined;
 	};
 	const valid: NostrEvent[] = [];
 	const invalid: { event: NostrEvent; reason: string }[] = [];
-	for (const event of events) {
+	for (const event of normalized) {
 		const structural = structuralError(event);
 		if (structural !== undefined) {
 			invalid.push({ event, reason: structural });
@@ -230,7 +236,11 @@ function tamperReason(event: NostrEvent): string | undefined {
 export function admitEvent(event: NostrEvent): AdmitResult {
 	const tampered = tamperReason(event);
 	if (tampered !== undefined) return { ok: false, reason: tampered };
-	const verdict = validateEvent(asCore(event));
+	// Test-corpus boundary (config PUBLIC_INCLUDE_TEST_TAGS): the tamper
+	// check above ran on the AS-SIGNED tags (relay-verified ids are computed
+	// over the -test namespace); normalize now so core's protocol validity
+	// sees the canonical event. In-place and idempotent; untouched when off.
+	const verdict = validateEvent(asCore(rewriteIncomingTags(event)));
 	if (verdict.status === 'valid') return { ok: true, type: verdict.type };
 	return {
 		ok: false,
@@ -265,7 +275,9 @@ export function admitDeletion(event: NostrEvent): { ok: true } | { ok: false; re
  * route through admitDeletion's gate. Candidates already in the batch are
  * excluded; returns the admissible subset in candidate order (dropped
  * events are the caller's silence by design — traversal context is
- * best-effort).
+ * best-effort). Test-corpus boundary (PUBLIC_INCLUDE_TEST_TAGS): the
+ * normalise-before-validate happens inside validateAndClassify, so the
+ * returned subset carries canonical + -test t-tags on each admitted event.
  */
 export function admitBatch(batch: NostrEvent[], candidates: NostrEvent[]): NostrEvent[] {
 	const batchIds = new Set(batch.map((event) => event.id));

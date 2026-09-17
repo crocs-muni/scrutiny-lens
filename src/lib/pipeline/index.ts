@@ -14,6 +14,7 @@ import type { CallLLM } from '$lib/ai/output';
 import type { ProviderOverrideInput } from '$lib/ai/provider';
 import { admitEvent } from '$lib/fabric';
 import { indexerFilter, searchFilter, fullScanFilter, tTags, tagValues } from '$lib/fabric';
+import { filterWithTestTags, rewriteIncomingTags } from '$lib/fabric/test-tags';
 import type { NostrEvent as FabricEvent } from '$lib/fabric';
 import type {
 	Transport,
@@ -85,8 +86,10 @@ function routeSearch(
 ): FetchRoute[] {
 	const label = `${search.kind}:${search.value}`;
 	if (search.kind === 'tag') {
-		// i-tag filters are NIP-01: every relay answers them (spec §3).
-		return [{ label, urls: relays, filters: [indexerFilter(search.value) as Filter] }];
+		// i-tag filters are NIP-01: every relay answers them (spec §3). The
+		// filterWithTestTags spread spans the full-mirror -test namespace too
+		// (PUBLIC_INCLUDE_TEST_TAGS; NIP-01 `#t` ORs the array).
+		return [{ label, urls: relays, filters: [filterWithTestTags(indexerFilter(search.value)) as Filter] }];
 	}
 	// freetext routing per relay group, leg labels UNIQUE — truncation COUNT
 	// math borrows across legs when two legs share 'text:value' (review R2).
@@ -115,8 +118,8 @@ function routeSearch(
 			nip50.push(url);
 		}
 	}
-	if (nip50.length > 0) routes.push({ label: `${label}:nip50`, urls: nip50, filters: [searchFilter(search.value) as Filter] });
-	if (fullscan.length > 0) routes.push({ label: `${label}:fullscan`, urls: fullscan, filters: [fullScanFilter() as Filter] });
+	if (nip50.length > 0) routes.push({ label: `${label}:nip50`, urls: nip50, filters: [filterWithTestTags(searchFilter(search.value)) as Filter] });
+	if (fullscan.length > 0) routes.push({ label: `${label}:fullscan`, urls: fullscan, filters: [filterWithTestTags(fullScanFilter()) as Filter] });
 	return routes;
 }
 
@@ -244,6 +247,11 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 				invalidSkipped += 1;
 				continue;
 			}
+			// Test-corpus boundary (PUBLIC_INCLUDE_TEST_TAGS): the default
+			// admitEvent already normalized in place; a custom `opts.admit` may
+			// not — normalize here so every cached/skeletoned event carries both
+			// tag namespaces. Idempotent, no-op when the flag is off.
+			rewriteIncomingTags(event);
 			admittedSet.set(event.id, event);
 			skeletons.push(skeletonOf(event));
 			// Cache write settles by session end (pendingWrites below) — the
