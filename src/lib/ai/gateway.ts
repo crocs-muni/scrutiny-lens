@@ -378,6 +378,13 @@ function abortError(): Error {
 	return new DOMException('The operation was aborted.', 'AbortError');
 }
 
+/** Caller-supplied abort reason, lifted verbatim so cleanup aborts inherit
+ * the caller's story instead of presenting an anonymous 'aborted without
+ * reason'. */
+function callerReason(signal: AbortSignal | undefined): unknown {
+	return signal?.aborted === true ? signal.reason : undefined;
+}
+
 function isAbort(callerSignal: AbortSignal | undefined, err: unknown): boolean {
 	return (
 		callerSignal?.aborted === true ||
@@ -525,7 +532,9 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 				try {
 					// First byte races the attempt timeout; after the first byte,
 					// the attempt abort fires only when this attempt exits.
-					const first = await withTimeout(events.next(), limits.timeoutMs, args.signal);
+					const firstP = events.next();
+					firstP.catch(() => {});
+					const first = await withTimeout(firstP, limits.timeoutMs, args.signal);
 					if (first.done) {
 						release(args.provider.baseUrl);
 						return; // empty response — nothing to interpret, no lie to tell
@@ -559,7 +568,14 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 					// a consumer until its own caller-side arm fired. Kill it
 					// honestly here — the Generator's `finally` aborts the
 					// upstream fetch, and the painted bytes stay painted.
-					const next = await withTimeout(events.next(), limits.inactivityTimeoutMs, args.signal);
+					// Race-loser hygiene: on timeout the original next() promise
+					// keeps running; when the cleanup abort then kills the SDK
+					// fetch, that orphaned promise REJECTS unhandled (Chrome:
+					// "Uncaught (in promise) AbortError: signal is aborted
+					// without reason", 2026-09-17). Observe-and-swallow.
+					const nextP = events.next();
+					nextP.catch(() => {});
+					const next = await withTimeout(nextP, limits.inactivityTimeoutMs, args.signal);
 					if (next.done) return;
 					if (next.value.type === 'text-delta') yield next.value.text;
 					else if (next.value.type === 'error') {
@@ -574,7 +590,10 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 				}
 			}
 		} finally {
-			abortCtrl.abort(); // never leave a first-byte-timeout stream in flight
+			// Reason-carrying cleanup: the kill that ends a first-byte-timeout
+			// or mid-stream-silence fetch must not read as an anonymous reason —
+			// downstream listeners and DevTools show signal.reason verbatim.
+			abortCtrl.abort(callerReason(args.signal) ?? new DOMException('stream cleaned up (first-byte timeout, retry, or consumer exit)', 'AbortError')); // never leave a first-byte-timeout stream in flight
 		}
 	}
 };

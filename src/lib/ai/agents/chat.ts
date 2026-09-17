@@ -51,6 +51,79 @@ import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
 /** Injectable streaming transport — yields raw model text chunks as they arrive. Throws on transport failure. */
 export type StreamLLM = (args: CallLLMArgs) => AsyncIterable<string>;
 
+/* ------------------------------------------------------------------ *
+ * Grounding transport budget
+ *
+ * ADR 0002: the chat's CITABLE scope is the session's full admitted set —
+ * never shrink it by facet filtering. That contract says nothing about the
+ * wire: the model prompt is a single JSON blob, and shipping 250+ full
+ * events (often north of a megabyte) blows past any streaming provider's
+ * prompt-eval budget — on the default 30s first-byte gateway limit EVERY
+ * answer on a large session died with "The operation timed out."
+ * (2026-09-17, ROCA-run chat). The trim below is a TRANSPORT budget, not
+ * a semantic scope change: matched-first selection, count- and byte-capped,
+ * and disclosed in the system prompt so the model answers honestly ("not
+ * in the provided grounding") instead of guessing about events it never
+ * saw. Per-event content is suffix-truncated, so any quote the model emits
+ * remains a verbatim prefix-substring of the on-screen event (contract 3).
+ * ------------------------------------------------------------------ */
+/** Grounding events per prompt — enough for a multi-subject question, small
+ * enough to keep the first byte within a 30s budget on hosted providers. */
+const GROUNDING_MAX_EVENTS = 40;
+/** Hard byte ceiling for the serialized grounding block. */
+const GROUNDING_MAX_BYTES = 96 * 1024;
+/** Per-event content cap; truncation is a prefix slice (quotes stay
+ * verbatim-valid against the full on-screen event). */
+const EVENT_CONTENT_MAX_CHARS = 1500;
+
+/** matchesFulltext grammar (single owner: $lib/pipeline/index.ts) — local
+ * copy because ai/ MUST NOT import pipeline/ for a four-line predicate. */
+function eventMatches(event: NostrEvent, terms: string[]): boolean {
+	const haystack = (event.content + ' ' + event.tags.flat().join(' ')).toLowerCase();
+	return terms.every((term) => haystack.includes(term));
+}
+
+/** Question terms: lowercase alnum runs ≥3 chars, deduped, capped — a chat
+ * question is short; a pathological paste must not become a 200-term AND. */
+function questionTerms(question: string): string[] {
+	const terms: string[] = [];
+	for (const m of question.toLowerCase().matchAll(/[a-z0-9]{3,}/g)) {
+		if (!terms.includes(m[0])) terms.push(m[0]);
+		if (terms.length >= 8) break;
+	}
+	return terms;
+}
+
+/** Select the transport-bounded grounding subset: question-matched events
+ * first (all terms AND-matched, like the pipeline's own fulltext), then the
+ * remainder in session order, until either cap trips. */
+export function selectGrounding(
+	events: NostrEvent[],
+	question: string
+): { kept: NostrEvent[]; total: number; matched: number } {
+	const terms = questionTerms(question);
+	const matched = terms.length > 0 ? events.filter((e) => eventMatches(e, terms)) : [];
+	const rest = matched.length > 0 ? events.filter((e) => !matched.includes(e)) : events;
+	const ordered = [...matched, ...rest];
+	const kept: NostrEvent[] = [];
+	let bytes = 0;
+	for (const event of ordered) {
+		// Size the SHIPPED wire form (truncated content) — a single raw event
+		// larger than the byte budget must be truncated-in, never excluded:
+		// excluding a question-matched event would silently narrow the scope
+		// the disclosure line claims.
+		const size = JSON.stringify({
+			eventId: event.id,
+			tags: event.tags,
+			content: event.content.slice(0, EVENT_CONTENT_MAX_CHARS)
+		}).length;
+		if (kept.length >= GROUNDING_MAX_EVENTS || bytes + size > GROUNDING_MAX_BYTES) break;
+		kept.push(event);
+		bytes += size;
+	}
+	return { kept, total: events.length, matched: matched.length };
+}
+
 export interface ChatHistoryMessage {
 	role: 'user' | 'assistant';
 	content: string;
@@ -304,13 +377,29 @@ export function chatground(opts: ChatGroundOptions): ReadableStream<Uint8Array> 
 			const stream = opts.streamLLM ?? defaultStreamLLM;
 
 			const system = buildSystemPrompt({ profile, extra: GROUNDING_INSTRUCTIONS });
-			const nodeList = opts.groundingEvents.map((e) => ({ eventId: e.id, tags: e.tags, content: e.content }));
+			// Transport-bounded grounding (block comment above): full set stays
+			// citable ONLY when it fits; otherwise matched-first, disclosed.
+			const grounding = selectGrounding(opts.groundingEvents, opts.question);
+			const nodeList = grounding.kept.map((e) => ({
+				eventId: e.id,
+				tags: e.tags,
+				content:
+					e.content.length > EVENT_CONTENT_MAX_CHARS
+						? `${e.content.slice(0, EVENT_CONTENT_MAX_CHARS)}…[TRUNCATED]`
+						: e.content
+			}));
+			const trimmed = grounding.kept.length < grounding.total;
 			const messages: LLMMessage[] = [
 				...opts.history.map((h) => ({ role: h.role, content: h.content })),
 				{
 					role: 'user',
 					content: [
 						`Graph root: ${opts.rootSummary}`,
+						...(trimmed
+							? [
+									`Grounding scope: ${grounding.kept.length} of ${grounding.total} session events provided (question-matched first; ${grounding.matched} matched). The rest were omitted to fit the transport budget — treat anything outside the provided set as unavailable and say so when asked.`
+								]
+							: []),
 						`Session events: ${JSON.stringify(nodeList)}`,
 						`Question: ${opts.question}`
 					].join('\n')
