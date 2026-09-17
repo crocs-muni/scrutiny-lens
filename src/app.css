@@ -144,6 +144,35 @@ select:focus-visible,
    sweep ride the same two keyframes.
    ============================================================ */
 
+/* Vendored keyframes (chat-output rework T4, 2026-09-17) — from
+ * aykoooo/beautiful-ui-svelte@main / beautiful-ui by Shane Levine (both
+ * MIT), riding with the vendored LoadingState component. */
+
+/* pixel-grid loader — brighten plateau, staggered per cell */
+@keyframes pixel-on {
+	0%,
+	100% {
+		opacity: 0.15;
+	}
+	18%,
+	42% {
+		opacity: 1;
+	}
+	62% {
+		opacity: 0.15;
+	}
+}
+
+/* label sweep — the gradient itself moves across the glyphs */
+@keyframes shimmer-text {
+	from {
+		background-position: 150% center;
+	}
+	to {
+		background-position: -50% center;
+	}
+}
+
 /* the citation pill's neutral sweep — 1.4s is the seeded habit
  * (extraction from ChatColumn, the value is the language). */
 @keyframes pending-shimmer {
