@@ -247,10 +247,10 @@ describe('files rows mirror the seam edge semantics', () => {
 					['t', 'scrutiny-fabric'],
 					['t', 'scrutiny-v0.8.1'],
 					['t', 'scrutiny-metadata'],
-					['i', 'cert:BSI-1']
+					['i', 'cert:BSI-1'],
+					['imeta', 'url https://x.test/r.pdf', 'alt Certification Report']
 				],
-				// Legacy descriptor grammar (#77): labeled line, whole-line anchored.
-				content: 'Certification Report\nPDF: https://x.test/r.pdf'
+				content: 'Certification Report'
 			},
 			AUTHOR,
 			'meta1'
@@ -269,7 +269,7 @@ describe('files rows mirror the seam edge semantics', () => {
 			recordTitle: null,
 			verb: null,
 			destination: 'subject',
-			artifact: { url: 'https://x.test/st.pdf', label: 'Security Target', provenance: 'imeta' }
+			artifact: { url: 'https://x.test/st.pdf', label: 'Security Target' }
 		});
 		expect(d.files[1]).toMatchObject({
 			verb: 'documents',
@@ -278,8 +278,7 @@ describe('files rows mirror the seam edge semantics', () => {
 		});
 		expect(d.files[1].artifact).toMatchObject({
 			url: 'https://x.test/r.pdf',
-			label: 'PDF',
-			provenance: 'content'
+			label: 'Certification Report'
 		});
 		expect(d.counts.files).toBe(2);
 

@@ -298,8 +298,8 @@ function historyRows(
 	return rows;
 }
 
-/** Files = the record's ARTIFACTS (issue #77 ruling): imeta-first with
- * parsed legacy fallback, via artifactsOf — never "any URL in content".
+/** Files = the record's ARTIFACTS (issue #77 ruling): imeta descriptors
+ * ONLY (2026-09-17 ruling), via artifactsOf — never "any URL in content".
  * Subject-own artifacts list first ("this record", verb-free); provenance
  * rows follow per (binding × artifact) scanned over ADMITTED bindings —
  * deliberately NOT graph.edges (resolveGraph drops bindings whose other end

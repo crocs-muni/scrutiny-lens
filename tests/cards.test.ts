@@ -143,10 +143,13 @@ describe("assembleCards (issue #28)", () => {
     expect(cards[0].updates).toBe(2);
   });
 
-  it("counts files via the artifact seam (#77): a labeled PDF descriptor is a file; a prose-only record stays at zero (never a mere url, spec §2 deterministic)", () => {
+  it("counts files via the artifact seam (#77): an imeta descriptor is a file; a prose URL is NOT (2026-09-17 ruling, spec §2 deterministic)", () => {
     const prod = event("prod-1");
     const metaWithLink = event("meta-1", {
+      // prose URL deliberately present: under the imeta-only ruling it
+      // contributes NOTHING — the imeta tag is the file.
       content: "Maintenance report #1.\nPDF: https://commoncriteriaportal.org/maint.pdf",
+      tags: [["imeta", "url https://commoncriteriaportal.org/maint.pdf", "alt Maintenance Report", "size 500000"]],
     });
     const metaPlain = event("meta-2", {
       content: "keywords: EAL5, smart card, TOC https://example.com/",

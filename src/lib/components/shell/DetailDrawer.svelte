@@ -29,7 +29,7 @@
 	import { COLLAPSE } from '../ui/motion';
 	import { formatRel, shell, type DrawerSection } from '$lib/shell.svelte';
 	import { VERB_CLIP, type Dossier, type HistoryRow } from '$lib/dossier';
-	import { artifactIcon } from '$lib/artifacts';
+	import { artifactIcon, artifactName, formatBytes } from '$lib/artifacts';
 	import { IconExternalLink } from '@tabler/icons-svelte';
 	import { clipMiddle } from '$lib/text';
 
@@ -393,11 +393,12 @@
 				{/each}
 			</div>
 		{:else}
-			<!-- Files: the record's ARTIFACTS (#77) — one row per artifact
-				(imeta-first + parsed legacy, artifacts.ts); subject-own rows
-				first ("this record"), then per (binding × record) with verb
-				chip and counterparty/story deep-link preserved (BIBLE-678).
-				open↗ is the EXTERNAL affordance (noopener,noreferrer); the
+			<!-- Files: the record's ARTIFACTS (#77) — one row per imeta
+				descriptor (imeta ONLY, ruling 2026-09-17; content URLs are
+				never files, artifacts.ts); subject-own rows first ("this
+				record"), then per (binding × record) with verb chip and
+				counterparty/story deep-link preserved (BIBLE-678). The file
+				row itself is the external anchor (noopener,noreferrer); the
 				record chip swaps the dossier in place. -->
 			{#if dossier.files.length === 0}
 				<p class="font-mono text-[11.5px] text-ink-3">no artifacts in this record or its bound references</p>
@@ -410,33 +411,43 @@
 						>
 							<RowIcon size={15} stroke={1.7} class="mt-[3px] shrink-0 text-ink-2" />
 							<div class="min-w-0 flex-1">
-								<div class="flex items-center gap-2">
-									<!-- mono: machine-derived label/basename (§9 writing rule) -->
-									<span class="truncate font-mono text-[12px] font-medium text-ink">
-										{row.artifact.label ?? clipMiddle(row.artifact.url, 44)}
-									</span>
-									{#if row.artifact.sizeText !== undefined}
-										<span class="shrink-0 font-mono text-[10.5px] text-ink-3">{row.artifact.sizeText}</span>
-									{/if}
-									{#if row.artifact.sha256 !== undefined}
+								<!-- The file itself is the anchor: icon + name + size, the
+									URL spelled out below — clicking anywhere here opens the
+									artifact (noopener,noreferrer; ruling 2026-09-17: the row
+									is the link, not a 13px affordance inside it). -->
+								<a
+									href={row.artifact.url}
+									target="_blank"
+									rel="noopener noreferrer"
+									class="group/file block min-w-0 rounded-[6px] decoration-accent-ink/60 outline-offset-2 focus-visible:outline-accent-ink/60"
+									title="Open artifact: {row.artifact.url}"
+								>
+									<div class="flex items-center gap-2">
+										<!-- mono: machine-derived label/basename (§9 writing rule) -->
 										<span
-											class="shrink-0 rounded-[5px] border border-line bg-inset px-1.5 py-px font-mono text-[10px] text-ink-3"
-											title="SHA-256: {row.artifact.sha256}"
+											class="truncate font-mono text-[12px] font-medium text-ink underline-offset-2 group-hover/file:text-accent-ink group-hover/file:underline"
 										>
-											{clipMiddle(row.artifact.sha256, 17)}
+											{artifactName(row.artifact)}
 										</span>
-									{/if}
-									<a
-										href={row.artifact.url}
-										target="_blank"
-										rel="noopener noreferrer"
-										class="ml-auto shrink-0 rounded-[6px] p-1 text-ink-3 transition-colors hover:text-accent-ink"
-										title="Open artifact: {row.artifact.url}"
-										onclick={(e) => e.stopPropagation()}
-									>
-										<IconExternalLink size={13} stroke={2} />
-									</a>
-								</div>
+										{#if row.artifact.sizeBytes !== undefined}
+											<span class="shrink-0 font-mono text-[10.5px] text-ink-3">{formatBytes(row.artifact.sizeBytes)}</span>
+										{/if}
+										{#if row.artifact.sha256 !== undefined}
+											<span
+												class="shrink-0 rounded-[5px] border border-line bg-inset px-1.5 py-px font-mono text-[10px] text-ink-3"
+												title="SHA-256: {row.artifact.sha256}"
+											>
+												{clipMiddle(row.artifact.sha256, 17)}
+											</span>
+										{/if}
+										<IconExternalLink size={13} stroke={2} class="ml-auto shrink-0 text-ink-3 transition-colors group-hover/file:text-accent-ink" />
+									</div>
+									<!-- The link, honestly spelled out (mono, mid-clipped);
+										the full URL stays on the row's hover title. -->
+									<div class="mt-0.5 truncate font-mono text-[10.5px] text-ink-3">
+										{clipMiddle(row.artifact.url, 68)}
+									</div>
+								</a>
 								<button
 									type="button"
 									class="mt-0.5 flex min-w-0 items-center gap-1.5 text-left"

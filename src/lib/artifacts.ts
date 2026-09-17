@@ -1,34 +1,19 @@
 /**
- * Artifacts (issue #77, ruling 2026-09-16): a record's FILES — the PDF /
- * CSV / archive descriptors it carries. "Files" was three independent
- * guesses ("any URL in content" counted an advisory's homepage as a
- * deliverable; the binding ledger counted every binding as one).
+ * Artifacts (issue #77 + owner ruling 2026-09-17): a record's FILES are its
+ * `imeta` descriptors. Only imeta. Content URLs are NOT files — an advisory
+ * citing its homepage, a certificate registry link, a prose reference, none
+ * of those are deliverables (the #77 bug was "any URL in content"; the
+ * interim legacy parse tier was retired by the 2026-09-17 ruling).
  *
- * One seam, two tiers, MERGED — imeta-first with parsed legacy fallback:
- *
- *  - imeta tier (nostr tags): ["imeta", "url <https>", "m <mime>",
- *    "x <hex-64>", "size <digits>", "alt <label>"]. Core-owned parsing
- *    tracked on scrutiny-fabric-tools#79; until it lands this file owns
- *    the same grammar (multi-entry tags, first `url` wins).
- *  - content-legacy tier: records that spell the descriptor as prose
- *    lines ("PDF: https://…) — the owner's BSI security-target shape.
- *    Conservative by construction: whole-line anchored, stripped of
- *    CRLF/BOM/zero-width chars/quotes/trailing punctuation; bare URLs
- *    need an artifact-extension whitelist; a labeled line containing
- *    TWO urls is rejected whole (never guess which was meant); sibling
- *    descriptors (SHA-256:, Size:, Pages:) attach ONLY to a sole
- *    artifact in their paragraph — a shared paragraph leaves them
- *    unattributed rather than wrong (one-artifact rule).
- *
- * Never-lie (spec §2): no fetches, no inference, no AI. Scheme allowlist
- * `http(s)` is enforced AT PARSE TIME (a `javascript:`/`data:` URL can
- * never reach render, on either tier). Every optional field that fails
- * validation is OMITTED, not defaulted (truncated labels would lie).
- * Malformed-but-uintelligible input yields zero artifacts — an honest
- * empty Files count, never an error row.
+ * imeta grammar (NIP-92 family): `"key value"` entries, split on FIRST
+ * space. `url` required and http(s); unknown keys ignored; malformed
+ * decorate-or-omit fields (bad `x`, non-numeric `size`, overlong `alt`)
+ * fall away instead of poisoning the row — malformed-but-unintelligible
+ * input yields zero artifacts, an honest empty Files count, never an
+ * error row.
  *
  * Surface rule: every one of node's files-count, drawer Files rows, and
- * card footer come from `artifactsOf` — no third judgement of "URL in
+ * card footer come from `artifactsOf` — no second judgement of "URL in
  * content" is allowed to live anywhere else (the #77 root cause).
  */
 
@@ -51,25 +36,23 @@ export interface ArtifactRef {
 	 * char position (review: ordinal ids were refetch-fragile). */
 	id: string;
 	url: string;
-	/** Descriptor label — ≤40 chars (legacy) / ≤60 (`alt`); longer labels
-	 * are DROPPED, never truncated (a cropped name lies harder). Mono. */
+	/** `alt` descriptor — ≤60 chars; longer labels are DROPPED, never
+	 * truncated (a cropped name lies harder). */
 	label: string | undefined;
 	/** `m` value, vocabulary-only: drives the icon bucket. */
 	mime: string | undefined;
-	/** Composed from descriptor siblings, verbatim: "59 pages · 897440 bytes"—
-	 * only what the record literally stated; missing parts stay out. */
-	sizeText: string | undefined;
+	/** `size` value as a byte number. Formatting is the SURFACE's job
+	 * (formatBytes) — the descriptor stores facts, never prose. */
+	sizeBytes: number | undefined;
 	/** Validated 64-hex sha-256 (rendering mid-clips it, never alters it). */
 	sha256: string | undefined;
-	provenance: 'imeta' | 'content';
 }
 
-/** Bare-URL legacy lines need an artifact extension, or an advisory's
- * every citation becomes a "file" (the bug the owner caught). */
+/** Known file extensions for the icon bucket — extension beats MIME
+ * (MIME is a vocabulary token, extension is the file's own name). */
 const ARTIFACT_EXT = /\.(pdf|csv|zip|docx?|xlsx?|json|xml|txt)(?:[?#].*)?$/i;
 
-/** Classifier for the icon bucket: extension beats MIME (MIME is a
- * vocabulary token, extension is the file's own name). */
+/** Classifier for the icon bucket. */
 export function artifactIcon(a: Pick<ArtifactRef, 'url' | 'mime'>): Icon {
 	const ext = a.url.match(ARTIFACT_EXT)?.[1]?.toLowerCase();
 	const mime = a.mime?.toLowerCase() ?? '';
@@ -83,6 +66,28 @@ export function artifactIcon(a: Pick<ArtifactRef, 'url' | 'mime'>): Icon {
 	return IconFileUnknown;
 }
 
+/** Human byte sizes (2026-09-17 ruling — nobody reads "2104942 bytes"):
+ * SI like a download manager — B exact, KB whole, MB/GB one decimal. */
+export function formatBytes(n: number): string {
+	if (!Number.isFinite(n) || n < 0) return '';
+	if (n < 1000) return `${n} B`;
+	if (n < 1_000_000) return `${Math.round(n / 1000)} KB`;
+	if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)} MB`;
+	return `${(n / 1_000_000_000).toFixed(1)} GB`;
+}
+
+/** Display name for an artifact row: the `alt` the record declared, else
+ * the file's own basename from the URL (percent-decoded), else the URL
+ * itself (the renderer mid-clips). A name the file carries beats a hash. */
+export function artifactName(a: Pick<ArtifactRef, 'url' | 'label'>): string {
+	if (a.label !== undefined) return a.label;
+	try {
+		const base = new URL(a.url).pathname.split('/').filter(Boolean).pop();
+		if (base !== undefined && base.length > 0) return decodeURIComponent(base);
+	} catch { /* url was validated http(s) at parse; defensive only */ }
+	return a.url;
+}
+
 /** fnv-1a 32-bit, hex8 — URL-stable artifact id portion. */
 function fnv1a(s: string): string {
 	let h = 0x811c9dc5;
@@ -94,7 +99,8 @@ function fnv1a(s: string): string {
 }
 
 /** Dedupe key: same descriptor may travel with/without fragment, case, or a
- * trailing `/`. Identity does NOT strip query params — they name the file. */
+ * trailing `/`. Identity does NOT strip query params — they name the file
+ * (NIP-92 mirrors: same file at several URLs is ONE file). */
 function normalizeUrl(url: string): string {
 	const u = new URL(url);
 	u.hash = '';
@@ -104,7 +110,7 @@ function normalizeUrl(url: string): string {
 	return s.endsWith('/') ? s.slice(0, -1) : s;
 }
 
-/** http(s) ONLY — the allowlist at parse time, so no tier can hand a
+/** http(s) ONLY — the allowlist at parse time, so no descriptor can hand a
  * javascript:/data: string to a render path (review finding, HIGH). */
 function httpUrl(raw: string): URL | null {
 	try {
@@ -113,16 +119,6 @@ function httpUrl(raw: string): URL | null {
 	} catch {
 		return null;
 	}
-}
-
-/** Lines arrive hostile: CRLF, BOM, zero-width internals, surrounding
- * quotes, trailing sentence punctuation on the URL. */
-function cleanLine(line: string): string {
-	return line
-		.replace(/[\uFEFF\u200B\u200C\u200D]/g, '')
-		.trim()
-		.replace(/^["'“”(\[«]+/, '')
-		.replace(/["'“”)\]»]+$/, '');
 }
 
 function stripUrlPunct(url: string): string {
@@ -135,13 +131,12 @@ interface Draft {
 	url: string;
 	label?: string;
 	mime?: string;
-	sizeText?: string;
+	sizeBytes?: number;
 	sha256?: string;
-	provenance: 'imeta' | 'content';
 }
 
-/** imeta grammar (NIP-92 family): `"key value"` entries, split on FIRST
- * space. url required and http(s); everything else decorate-or-omit. */
+/** imeta grammar: `"key value"` entries, split on FIRST space. url required
+ * and http(s); everything else decorate-or-omit. */
 function imetaTier(event: NostrEvent): Draft[] {
 	const drafts: Draft[] = [];
 	for (const tag of event.tags) {
@@ -157,7 +152,7 @@ function imetaTier(event: NostrEvent): Draft[] {
 			else if (!kv.has(key)) kv.set(key, value);
 		}
 		if (urlRaw === undefined) continue;
-		const url = httpUrl(stripUrlPunct(urlRaw.trim())) ;
+		const url = httpUrl(stripUrlPunct(urlRaw.trim()));
 		if (url === null) continue; // no valid url → the tag contributes NOTHING
 		const size = kv.get('size');
 		const sha = kv.get('x');
@@ -166,98 +161,29 @@ function imetaTier(event: NostrEvent): Draft[] {
 			url: url.href,
 			label: alt !== undefined && alt.length > 0 && alt.length <= 60 ? alt : undefined,
 			mime: kv.get('m'),
-			sizeText: size !== undefined && /^\d+$/.test(size) ? `${size} bytes` : undefined,
-			sha256: sha !== undefined && VALID_SHA.test(sha) ? sha : undefined,
-			provenance: 'imeta'
+			sizeBytes: size !== undefined && /^\d+$/.test(size) ? Number(size) : undefined,
+			sha256: sha !== undefined && VALID_SHA.test(sha) ? sha : undefined
 		});
 	}
 	return drafts;
 }
 
-const LABELED_URL = /^([^\n:;]{1,40}):\s*(https?:\/\/\S+)\s*$/;
-const TWO_URLS = /https?:\/\/\S+.*https?:\/\/\S+/;
-const SIBLING = {
-	sha: /^(?:SHA-?256)\s*:\s*([0-9a-f]{64})\b/i,
-	size: /^(?:Size)\s*:\s*([\d,]+)\s*bytes?\b/i,
-	pages: /^(?:Pages)\s*:\s*(\d+)\b/i
-};
-
-/** Content-legacy tier: prose descriptor paragraphs. Conservative rules
- * (review): exactly-one-artifact-per-paragraph for sibling attach, whole-
- * line anchoring, 2-URL labeled lines rejected, scheme allowlist. */
-function contentTier(event: NostrEvent): Draft[] {
-	const drafts: Draft[] = [];
-	const paragraphs = event.content.split(/\n{2,}/);
-	for (const para of paragraphs) {
-		const lines = para.split('\n').map(cleanLine).filter((l) => l.length > 0);
-		const here: Draft[] = [];
-		const siblings: { sha: string[]; size: string[]; pages: string[] } = { sha: [], size: [], pages: [] };
-		for (const line of lines) {
-			if (TWO_URLS.test(line)) continue; // ambiguous by construction — drop the whole line
-			const labeled = line.match(LABELED_URL);
-			if (labeled !== null) {
-				const url = httpUrl(stripUrlPunct(labeled[2]));
-				if (url !== null) {
-					here.push({ url: url.href, label: labeled[1].trim() || undefined, provenance: 'content' });
-					continue;
-				}
-			}
-			// Bare URL line: only if it names an artifact by extension.
-			const bare = httpUrl(stripUrlPunct(line));
-			if (bare !== null && ARTIFACT_EXT.test(bare.pathname)) {
-				here.push({ url: bare.href, provenance: 'content' });
-				continue;
-			}
-			// Sibling descriptors, only meaningfully attachable below.
-			const sha = line.match(SIBLING.sha);
-			if (sha !== null) { siblings.sha.push(sha[1]); continue; }
-			const size = line.match(SIBLING.size);
-			if (size !== null) { siblings.size.push(size[1].replaceAll(',', '')); continue; }
-			const pages = line.match(SIBLING.pages);
-			if (pages !== null) { siblings.pages.push(pages[1]); }
-		}
-		// One-artifact paragraph rule: only a sole artifact may inherit the
-		// paragraph's siblings — a shared paragraph leaves them unattributed
-		// (never guess which file a hash belongs to).
-		if (here.length === 1) {
-			const composed = [
-				siblings.pages.length > 0 ? `${siblings.pages[0]} pages` : undefined,
-				siblings.size.length > 0 ? `${siblings.size[0]} bytes` : undefined
-			].filter(Boolean) as string[];
-			here[0].sizeText = composed.length > 0 ? composed.join(' · ') : undefined;
-			here[0].sha256 = siblings.sha.length > 0 ? siblings.sha[0] : undefined;
-		}
-		drafts.push(...here);
-	}
-	return drafts;
-}
-
-/** A record's artifacts, merged across tiers: imeta tags first (their
- * fields win on a URL collision), legacy text filling any URL imeta
- * never named; colliding legacy descriptors keep contributing the
- * fields imeta didn't state. Nothing invented; dedupe by normalized URL. */
+/** A record's artifacts: its imeta descriptors, deduped by normalized URL
+ * (document order wins the identity — deterministic across relay fetches).
+ * Nothing invented; content never contributes. */
 export function artifactsOf(event: NostrEvent): ArtifactRef[] {
 	const byUrl = new Map<string, Draft>();
-	for (const d of imetaTier(event)) byUrl.set(normalizeUrl(d.url), d);
-	for (const d of contentTier(event)) {
+	for (const d of imetaTier(event)) {
 		const key = normalizeUrl(d.url);
-		const existing = byUrl.get(key);
-		// imeta wins the identity; legacy fills only what imeta left open.
-		if (existing === undefined) byUrl.set(key, d);
-		else {
-			existing.label ??= d.label;
-			existing.sizeText ??= d.sizeText;
-			existing.sha256 ??= d.sha256;
-		}
+		if (!byUrl.has(key)) byUrl.set(key, d);
 	}
 	return [...byUrl.values()].map((d) => ({
 		id: `${event.id}#${fnv1a(normalizeUrl(d.url))}`,
 		url: d.url,
 		label: d.label,
 		mime: d.mime,
-		sizeText: d.sizeText,
-		sha256: d.sha256,
-		provenance: d.provenance
+		sizeBytes: d.sizeBytes,
+		sha256: d.sha256
 	}));
 }
 
