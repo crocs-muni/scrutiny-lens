@@ -136,10 +136,12 @@ select:focus-visible,
    reduced-motion floor below can kill every animation honestly.
 
    The grammar lives as shared keyframes + the `.fill-sweep` overlay
-   class instead of a mounted <Shimmer> component: canon (beautiful-
-   ui-svelte, spec §9 L95) has no Shimmer component to port, and a
-   wrapper div would fight the surfaces' own positioning. ChatColumn's
-   pill and the card sweep ride the same two keyframes.
+   class instead of a mounted <Shimmer> component: spec §9 L95 lists
+   Shimmer among the atoms to port, but canon ships no standalone
+   Shimmer (the word appears only inside ThinkingState/LoadingState),
+   and even a vendored wrapper couldn't paint a surface's own overlay
+   without fighting its positioning. ChatColumn's pill and the card
+   sweep ride the same two keyframes.
    ============================================================ */
 
 /* the citation pill's neutral sweep — 1.4s is the seeded habit

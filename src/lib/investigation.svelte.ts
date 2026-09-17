@@ -118,7 +118,8 @@ class Investigation {
    * interpretation this pass (issue #82): the amber-tint state. A settle
    * is only final relative to the pass — a later successful pass drains
    * its ids back out. Deliberate aborts never mark: killed ≠ failed
-   * (spec §8). TRANSIENT per run — never persisted, exactly like
+   * (§8 "abort on navigation away" lifecycle; honesty basis §2).
+   * TRANSIENT per run — never persisted, exactly like
    * `pending`: amber must remain a live claim, not a memory, or a
    * yesterday-failed endpoint would wallpaper the rail forever. */
   failed = $state<Set<string>>(new Set());
@@ -886,7 +887,8 @@ clearFacets(): void {
         // settled WITHOUT an interpretation marks `failed`; one the pass
         // interpreted (live or cache-hit) drains. This runs only on the
         // current controller's path — a deliberate abort returned above,
-        // so stopped runs never mark (killed ≠ failed, spec §8). */
+        // so stopped runs never mark (killed ≠ failed — §8 abort
+        // lifecycle; §2 never-lie). */
         const merged = this.cards.slice();
         const failedSet = new Set(this.failed);
         for (let i = 0; i < filled.length; i++) {

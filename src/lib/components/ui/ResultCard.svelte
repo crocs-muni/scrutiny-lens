@@ -20,8 +20,11 @@
 	 *   fill failed     — claimed by a lane but settled uninterpreted this
 	 *                     pass: persistent amber-tint background (the shared
 	 *                     "degraded" vocabulary — trace warn cells,
-	 *                     NoticeBanner). Amber is a COLOR state, so the
-	 *                     reduced-motion floor costs honesty nothing.
+	 *                     NoticeBanner) on the DASHED face only — the
+	 *                     interpreted face never wears it, even while the
+	 *                     failed set drains mid-settle. Amber is a COLOR
+	 *                     state, so the reduced-motion floor costs honesty
+	 *                     nothing.
 	 *   retracted       — either variant + red warning pill (protocol kind-5,
 	 *                     never presentational, spec §2 rule 2); retracted
 	 *                     interpreted cards name their provenance ("as relays
@@ -37,6 +40,7 @@
 	import type { SkeletonCard } from '$lib/pipeline';
 	import { formatRel } from '$lib/shell.svelte';
 	import PublisherChip from './PublisherChip.svelte';
+	import { firstPaintBloom } from './bloom.svelte';
 	import { IconClock, IconFile, IconLink, IconPencil } from '@tabler/icons-svelte';
 
 interface Props {
@@ -49,7 +53,8 @@ interface Props {
 	/** True when a fill lane claimed this card but settled it uninterpreted
 	 * this pass (issue #82) — the persistent amber-tint state. Sourced from
 	 * the transient investigation.failed set: a later successful pass drains
-	 * it; deliberate aborts never mark (killed ≠ failed, spec §8). */
+	 * it; deliberate aborts never mark (killed ≠ failed — §8 abort
+	 * lifecycle; §2 never-lie). */
 	failed?: boolean;
 	/** The drawer's current subject (issue #29a ruling 2): the G1:1063 accent
 	 * ring marks selection on this surface — color + halo via box-shadow only,
@@ -63,21 +68,10 @@ let { card, pending = false, failed = false, onOpen, selected = false }: Props =
 const product: ProductCard | null = $derived('identifiers' in card ? card : null);
 const dashed = $derived(product === null || !product.interpreted);
 
-	/* Settle bloom (issue #82): flip detection with a null-triad — the first
-	 * observed value is the card's FIRST STABLE PAINT and never blooms
-	 * (cache-hit calm; motion marks change, not provenance). Only a genuine
-	 * false→true flip mid-life earns the ~260ms whole-face crossfade. */
-	let blooming = $state(false);
-	let observed: boolean | null = null;
-	$effect(() => {
-		const now = product !== null && product.interpreted;
-		if (observed === null) {
-			observed = now;
-			return;
-		}
-		if (now && !observed) blooming = true;
-		observed = now;
-	});
+	/* Settle bloom (issue #82): only a genuine false→true flip mid-life
+	 * earns the ~260ms whole-face crossfade; first stable paint never
+	 * blooms (cache-hit calm) — the contract lives in firstPaintBloom. */
+	const bloom = firstPaintBloom(() => product !== null && product.interpreted);
 
 	// Rule-5 fallback title/body — machine vocabulary only (mono).
 	const fallbackTitle = $derived(
@@ -132,9 +126,9 @@ const dashed = $derived(product === null || !product.interpreted);
 	onkeydown={keyOpen}
 	aria-busy={pending ? true : undefined}
 	class="relative rounded-[12px] border px-4 py-3.5 transition-shadow duration-150
-		{failed ? 'bg-orange-tint' : 'bg-surface'}
+		{failed && dashed ? 'bg-orange-tint' : 'bg-surface'}
 		{selected ? 'border-accent' : dashed ? 'border-dashed border-line-strong' : 'border-line'}
-		{blooming && !selected ? 'settle-border' : ''}
+		{bloom.active && !selected ? 'settle-border' : ''}
 		{selected
 			? 'shadow-[0_0_0_4px_var(--accent-tint),0_8px_20px_-8px_rgba(15,23,42,0.2)]'
 			: 'shadow-[0_1px_2px_rgba(15,23,42,0.05)]'}
@@ -142,13 +136,16 @@ const dashed = $derived(product === null || !product.interpreted);
 		{onOpen !== undefined && !selected ? 'hover:shadow-raised' : ''}
 		[content-visibility:auto] [contain-intrinsic-size:auto_150px]"
 >
-	{#if blooming && product !== null}
+	{#if bloom.active && product !== null}
 		<!-- whole-face crossfade (issue #82): the interpreted face mounts
 			underneath immediately; the DASHED face floats on top and fades out
 			over its background — the card honestly reads as a replacement,
-			never a transformation of the machine text into the AI text. -->
+			never a transformation of the machine text into the AI text.
+			Selected cards are exempt from the settle-border keyframe (the
+			accent ring owns their border — dashed→solid is moot there) but
+			the face crossfade still marks the fill. -->
 		{@render liveFace(product)}
-		<div class="settle-face-over" onanimationend={() => (blooming = false)}>
+		<div class="settle-face-over" onanimationend={() => bloom.clear()}>
 			{@render dashedFace()}
 		</div>
 	{:else if dashed}
@@ -181,18 +178,16 @@ const dashed = $derived(product === null || !product.interpreted);
 				retracted
 			</span>
 		{/if}
-		{#if failed}
-			<!-- amber = the lane CLAIMED this card and lost it this pass
-				(issue #82) — visibly distinct from the never-claimed raw state,
-				earned vocabulary, never decoration. -->
+		{#if !pending}
+			<!-- Pills claim SETTLED outcomes only (spec §2 never-lie): the
+				ruling's pending state carries NO badge, and failed's amber pill
+				—— the lane CLAIMED this card and lost it, earned vocabulary,
+				never decoration — waits for its pass to settle like the gray one.
+				While a retry is in flight the surface sweeps badge-free. -->
 			<span
-				class="shrink-0 rounded-full border border-orange-line px-2 py-0.5 font-mono text-[10.5px] text-orange"
-			>
-				not interpreted
-			</span>
-		{:else if !pending}
-			<span
-				class="shrink-0 rounded-full border border-line px-2 py-0.5 font-mono text-[10.5px] text-ink-3"
+				class="shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10.5px] {failed
+					? 'border-orange-line text-orange'
+					: 'border-line text-ink-3'}"
 			>
 				not interpreted
 			</span>
@@ -224,15 +219,17 @@ const dashed = $derived(product === null || !product.interpreted);
 	{#if p.snippet !== undefined}
 		<p class="mt-1 text-[13.5px] leading-relaxed text-ink-2">{p.snippet}</p>
 	{/if}
-	{#if shownIdentifiers.length > 0}
+		{#if shownIdentifiers.length > 0}
 		<div class="mt-2.5 flex flex-wrap items-center gap-1.5">
 			{#each shownIdentifiers as id (id)}
-				<span class="rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-ink-2">
+				<span
+					class="rounded-[6px] border border-line bg-inset px-2 py-[3px] font-mono text-[11px] text-ink-2"
+				>
 					{id}
 				</span>
 			{/each}
 			{#if extraIdentifiers > 0}
-				<span class="font-mono text-[10px] text-ink-3">+{extraIdentifiers}</span>
+				<span class="font-mono text-[11px] text-ink-3">+{extraIdentifiers}</span>
 			{/if}
 		</div>
 	{/if}

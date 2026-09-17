@@ -25,6 +25,7 @@
 	import KeyHint from './KeyHint.svelte';
 	import SharePopover from './SharePopover.svelte';
 	import PublisherChip from '../ui/PublisherChip.svelte';
+	import { firstPaintBloom } from '../ui/bloom.svelte';
 	import { COLLAPSE } from '../ui/motion';
 	import { formatRel, shell, type DrawerSection } from '$lib/shell.svelte';
 	import { VERB_CLIP, type Dossier, type HistoryRow } from '$lib/dossier';
@@ -39,30 +40,15 @@
 
 	/* Title-settle (issue #82): the drawer's two-face title (mono rule-5 ⇄
 	 * sans interpreted) flips when the card merge lands while the drawer is
-	 * open. One ~200ms settle-fade marks the change; the first observed
-	 * value is the subject's first stable paint here → never blooms (cache
-	 * calm). The baseline is SUBJECT-scoped, not component-scoped: the
-	 * drawer swaps dossiers in place (record deep-links), and without the
-	 * reset subject B's first view would bloom off subject A's baseline —
-	 * motion asserting provenance instead of change. */
-	let titleBloom = $state(false);
-	let titleObserved: boolean | null = null;
-	let titleObservedId: string | null = null;
-	$effect(() => {
-		const id = dossier?.subject.id ?? null;
-		if (id !== titleObservedId) {
-			titleObservedId = id;
-			titleObserved = null;
-			titleBloom = false;
-		}
-		const now = dossier !== null && dossier.title.interpreted;
-		if (titleObserved === null) {
-			titleObserved = now;
-			return;
-		}
-		if (now && !titleObserved) titleBloom = true;
-		titleObserved = now;
-	});
+	 * open — one ~200ms settle-flip marks the change. The baseline is
+	 * SUBJECT-keyed because the drawer swaps dossiers in place (record
+	 * deep-links); without it subject B's first view would bloom off
+	 * subject A's baseline — motion asserting provenance instead of
+	 * change. Contract lives in firstPaintBloom. */
+	const bloom = firstPaintBloom(
+		() => dossier !== null && dossier.title.interpreted,
+		() => dossier?.subject.id ?? null,
+	);
 
 	interface Props {
 		open: boolean;
@@ -225,8 +211,8 @@
 			<span
 				class="ml-2 min-w-0 truncate {dossier.title.interpreted
 					? 'text-[12px] font-medium text-ink'
-					: 'font-mono text-[11px] text-ink-2'} {titleBloom ? 'settle-flip' : ''}"
-				onanimationend={() => (titleBloom = false)}
+					: 'font-mono text-[11px] text-ink-2'} {bloom.active ? 'settle-flip' : ''}"
+				onanimationend={() => bloom.clear()}
 			>
 				{dossier.title.text}
 			</span>
@@ -298,8 +284,8 @@
 				<span
 					class="min-w-0 truncate {dossier.title.interpreted
 						? 'text-[14px] font-semibold text-ink'
-						: 'font-mono text-[12px] font-medium text-ink-2'} {titleBloom ? 'settle-flip' : ''}"
-					onanimationend={() => (titleBloom = false)}
+						: 'font-mono text-[12px] font-medium text-ink-2'} {bloom.active ? 'settle-flip' : ''}"
+					onanimationend={() => bloom.clear()}
 				>
 					{dossier.title.text}
 				</span>
