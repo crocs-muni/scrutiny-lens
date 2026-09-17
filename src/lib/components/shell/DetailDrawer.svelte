@@ -41,10 +41,20 @@
 	 * sans interpreted) flips when the card merge lands while the drawer is
 	 * open. One ~200ms settle-fade marks the change; the first observed
 	 * value is the subject's first stable paint here → never blooms (cache
-	 * calm). */
+	 * calm). The baseline is SUBJECT-scoped, not component-scoped: the
+	 * drawer swaps dossiers in place (record deep-links), and without the
+	 * reset subject B's first view would bloom off subject A's baseline —
+	 * motion asserting provenance instead of change. */
 	let titleBloom = $state(false);
 	let titleObserved: boolean | null = null;
+	let titleObservedId: string | null = null;
 	$effect(() => {
+		const id = dossier?.subject.id ?? null;
+		if (id !== titleObservedId) {
+			titleObservedId = id;
+			titleObserved = null;
+			titleBloom = false;
+		}
 		const now = dossier !== null && dossier.title.interpreted;
 		if (titleObserved === null) {
 			titleObserved = now;
@@ -215,7 +225,7 @@
 			<span
 				class="ml-2 min-w-0 truncate {dossier.title.interpreted
 					? 'text-[12px] font-medium text-ink'
-					: 'font-mono text-[11px] text-ink-2'} {titleBloom ? 'title-settle' : ''}"
+					: 'font-mono text-[11px] text-ink-2'} {titleBloom ? 'settle-flip' : ''}"
 				onanimationend={() => (titleBloom = false)}
 			>
 				{dossier.title.text}
@@ -288,7 +298,7 @@
 				<span
 					class="min-w-0 truncate {dossier.title.interpreted
 						? 'text-[14px] font-semibold text-ink'
-						: 'font-mono text-[12px] font-medium text-ink-2'} {titleBloom ? 'title-settle' : ''}"
+						: 'font-mono text-[12px] font-medium text-ink-2'} {titleBloom ? 'settle-flip' : ''}"
 					onanimationend={() => (titleBloom = false)}
 				>
 					{dossier.title.text}
@@ -492,8 +502,6 @@
 	[data-drawer-collapsed='true'] .drawer-copy {
 		opacity: 0;
 	}
-	/* tile-settle shared language — the title crossfade (issue #82). */
-	.title-settle {
-		animation: settle-fade-in 200ms var(--ease-link) both;
-	}
+	/* Note: the title's settle mark is the shared `.settle-flip` class in
+	 * app.css (issue #82) — one motion vocabulary, no local copies. */
 </style>

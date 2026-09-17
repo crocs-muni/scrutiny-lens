@@ -166,7 +166,7 @@
 		<span
 			class="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border
 				{data.kind === 'product' ? 'border-[var(--accent)]/30 bg-accent-tint' : 'border-line bg-inset'}
-				{tileBloom ? 'tile-settle' : ''}"
+				{tileBloom ? 'settle-flip' : ''}"
 			onanimationend={() => (tileBloom = false)}
 		>
 			<IconComponent
@@ -176,7 +176,7 @@
 			/>
 		</span>
 		<span
-			class="truncate font-mono text-[10px] {data.retracted ? 'text-ink-3 line-through' : 'text-ink-2'} {tileBloom ? 'tile-settle' : ''}"
+			class="truncate font-mono text-[10px] {data.retracted ? 'text-ink-3 line-through' : 'text-ink-2'} {tileBloom ? 'settle-flip' : ''}"
 			>{data.title}</span
 		>
 	{:else}
@@ -186,7 +186,7 @@
 				class="relative flex shrink-0 items-center justify-center rounded-lg border
 					{data.kind === 'product' ? 'h-[30px] w-[30px] border-[var(--accent)]/30 bg-accent-tint' : 'h-[26px] w-[26px] border-line bg-inset'}
 					{data.retracted ? 'border-[var(--red)]' : ''}
-					{tileBloom ? 'tile-settle' : ''}"
+					{tileBloom ? 'settle-flip' : ''}"
 				onanimationend={() => (tileBloom = false)}
 			>
 				<IconComponent
@@ -200,7 +200,7 @@
 					class="truncate font-semibold {data.kind === 'product' ? 'text-[13.5px]' : 'text-[13px]'}
 						{data.interpreted ? 'font-sans' : 'font-mono text-[11.5px]'}
 						{data.retracted ? 'text-ink-3 line-through' : 'text-ink'}
-						{tileBloom ? 'tile-settle' : ''}"
+						{tileBloom ? 'settle-flip' : ''}"
 				>
 					{data.title}
 				</div>
@@ -263,10 +263,5 @@
 	{/each}
 </div>
 
-<style>
-	/* tile-settle rides the shared settle-fade-in keyframe (app.css, issue
-	 * #82) — the single ~200ms "graph updated" on trickle merge. */
-	.tile-settle {
-		animation: settle-fade-in 200ms var(--ease-link) both;
-	}
-</style>
+<!-- The bloom mark is the shared `.settle-flip` class (app.css, issue #82) —
+	the single ~200ms "graph updated" on trickle merge, one motion vocabulary. -->

@@ -881,19 +881,20 @@ clearFacets(): void {
         this.pending = settle;
         if (this.controller !== controller) return;
         // One synchronous merge over disjoint indices — the lanes can't
-        // clobber each other's writes; UI paints per chunk.
+        // clobber each other's writes; UI paints per chunk. Amber
+        // bookkeeping (issue #82) rides the same pass: a claimed card that
+        // settled WITHOUT an interpretation marks `failed`; one the pass
+        // interpreted (live or cache-hit) drains. This runs only on the
+        // current controller's path — a deliberate abort returned above,
+        // so stopped runs never mark (killed ≠ failed, spec §8). */
         const merged = this.cards.slice();
-        for (let i = 0; i < filled.length; i++) merged[at + i] = filled[i];
-        this.cards = merged;
-        // Amber bookkeeping (issue #82): a claimed card that settled WITHOUT
-        // an interpretation marks `failed`; one the pass interpreted (live or
-        // cache-hit) drains. This runs only on the current controller's path
-        // — a deliberate abort returned above, so stopped runs never mark. */
         const failedSet = new Set(this.failed);
         for (let i = 0; i < filled.length; i++) {
+          merged[at + i] = filled[i];
           if (filled[i].interpreted) failedSet.delete(filled[i].id);
           else failedSet.add(filled[i].id);
         }
+        this.cards = merged;
         this.failed = failedSet;
         this.fillStats = {
           interpreted: merged.filter((c) => c.interpreted).length,

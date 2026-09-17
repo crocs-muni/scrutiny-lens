@@ -156,11 +156,15 @@ const dashed = $derived(product === null || !product.interpreted);
 	{:else if product !== null}
 		{@render liveFace(product)}
 	{/if}
-	{#if pending}
+	{#if pending && dashed}
 		<!-- pending = the whole card sweeps (issue #82 ruling): a NEUTRAL
 			diagonal wash on top of the true fallback face — the claim carries
 			no color it hasn't earned, and no badge text is needed when the
-			surface itself says "enrichment in flight". -->
+			surface itself says "enrichment in flight". Gated to the dashed
+			face: streamed fills paint a card's interpreted face via onPaint
+			WHILE the chunk's other records are still in flight (pending spans
+			the full chunk), and the sweep's contract covers only the rule-5
+			face it will replace — never the live face. -->
 		<div class="fill-sweep pointer-events-none absolute inset-0 rounded-[12px]" aria-hidden="true"></div>
 	{/if}
 </article>
@@ -278,6 +282,8 @@ const dashed = $derived(product === null || !product.interpreted);
 	.settle-face-over {
 		position: absolute;
 		inset: 0;
+		/* mirrors the article's own px-4 py-3.5 so the departing face sits
+		 * on identical pixels — change one, change the other. */
 		padding: 14px 16px;
 		border-radius: 12px;
 		background: var(--surface);

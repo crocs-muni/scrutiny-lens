@@ -197,6 +197,13 @@ select:focus-visible,
 	}
 }
 
+/* the ~200ms "a value flipped to interpreted" mark — graph icon tiles,
+ * graph titles, drawer titles. One shared class so the vocabulary is
+ * literally one selector, never a per-component copy. */
+.settle-flip {
+	animation: settle-fade-in 200ms var(--ease-link) both;
+}
+
 /* the border's dashed→solid flip holds 130ms so it lands at the
  * crossfade midpoint instead of teleporting at merge time. */
 @keyframes settle-border {
