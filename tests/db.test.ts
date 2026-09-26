@@ -28,6 +28,7 @@ import {
 	saveInterpretation,
 	saveSettings,
 	type PersistedChatMessage,
+	type PersistedSessionRun,
 	type PersistedSettings
 } from '$lib/db';
 import { clearDeadLetters, deadLetters, hydrateDeadLetters, writeDeadLetter } from '$lib/ai/deadLetter';
@@ -146,9 +147,9 @@ describe('sessions store', () => {
 });
 
 describe('sessionRuns store (issue #83, v7)', () => {
-	const run = {
+	const run: PersistedSessionRun = {
 		sessionId: 's1',
-		searches: [{ kind: 'tag', value: 'cve:CVE-2017-15361', source: 'ai' as const }],
+		searches: [{ kind: 'tag', value: 'cve:CVE-2017-15361', source: 'ai' }],
 		admittedIds: ['a1', 'a2', 'a3'],
 		settledAt: 1_700_000_001_000,
 		elapsedMs: 4200

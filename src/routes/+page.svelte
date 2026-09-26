@@ -115,6 +115,11 @@
 	$effect(() => {
 		if (shell.chatOpen) chat.unseen = false;
 	});
+	// #84's late-key refill is deliberately NOT an $effect: a condition that
+	// spends user tokens is caused, not derived. Two explicit call sites own
+	// it — restore()'s post-commit tail, and the SettingsDialog close below.
+	// (Review H1: an ambient effect on this condition loops failed fills
+	// forever — fill ends → filling flips → condition re-fires → re-fill.)
 	// Asking needs THE OPEN SESSION's admitted set in memory (ADR 0002
 	// grounding set) — sessionIdentity matters: an old session reopened while
 	// a different run is live must never cite that run's events.
@@ -206,6 +211,10 @@
 			// measured live — ROCA chip flashed the empty pane between
 			// result-set and the 58-context arrival).
 			investigation.running === false &&
+			// A RESTORED session with evicted products is data loss, not a
+			// zero-result search (spec §4 conflation): 'Nothing matched' would
+			// lie about a partial frontier — the evicted footer line says it.
+			(investigation.restoredEvicted === null || investigation.restoredEvicted === 0) &&
 			viewCards.length === 0
 	);
 	const anyRelayOk = $derived(
@@ -257,8 +266,21 @@
 				? `relay ${degradedLegs[0].url} ${degradedLegs[0].status} — showing results from the rest`
 				: `${degradedLegs.length} relays degraded (${degradedLegs.map((l) => l.status).join(' · ')}) — showing results from the rest`
 	);
+	// #83 (spec §2 never-lie): a restored session must read as fetched from
+	// local storage, never as a fresh network replay; evicted ids got no
+	// bytes at all and are counted honestly.
 	const footerNotes = $derived(
-		degradedLegs.map((l) => `relay ${l.url} ${l.status}`)
+		[
+			...(investigation.restoredEvicted === null
+				? []
+				: investigation.restoredEvicted === 0
+					? ['restored from local storage']
+					: [
+							'restored from local storage',
+							`${investigation.restoredEvicted} evicted from local storage`
+						]),
+			...degradedLegs.map((l) => `relay ${l.url} ${l.status}`)
+		]
 	);
 	// §4 honesty lane: every notice class surfaces as ONE roll-up banner —
 	// verbatim per-notice facts live in the trace's ticks. Must be invoked
@@ -314,12 +336,21 @@
 			onHome={() => shell.home()}
 			onPick={(id) => {
 				shell.openSession(id);
-				// The current run IS its session's results — reopening it from
-				// the rail returns to the results surface instead of stranding
-				// on the #29 placeholder (older sessions stay placeholders).
+				// The current run IS its session's results — reopening it from the rail
+				// returns to the results surface instead of stranding on the placeholder.
 				if (id === investigation.sessionId && (investigation.running || investigation.result !== null)) {
 					shell.view = 'results';
+					return;
 				}
+				// #83: a session evicted from memory by a reload rebuilds from local
+				// storage and lands on the same results surface. Restores that decline
+				// (no run row / fully evicted frontier) leave the honest placeholder.
+				void investigation.restore(id).then((ok) => {
+					// Identity guard (review H2): a start()/openShared() since the
+					// click already own the rail — a late restore resolve must
+					// never yank the view back.
+					if (ok && shell.session?.id === id) shell.view = 'results';
+				});
 			}}
 			onClose={(id) => {
 			// spec §8: closing the active session aborts its run — the
@@ -503,10 +534,35 @@
 							{/key}
 						</div>
 					{:else}
-						<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
-							This session's evidence isn't in memory — older sessions aren't replayable
-							yet. Run a new search to bring it back.
-						</p>
+						{#if investigation.restoreMissId === shell.session?.id}
+							<!-- #83 relic: the session's run record is missing or its whole
+								frontier was evicted — only a re-run brings the data back. -->
+							<div class="m-auto flex max-w-64 flex-col items-center gap-3 text-center">
+								<p class="text-[12.5px] leading-relaxed text-ink-3">
+									This session's evidence is gone from local storage. Re-run the search to bring it back.
+								</p>
+								{#if !shell.session?.title.startsWith('Shared ')}
+									<button
+										class="rounded-control border border-line px-3 py-1.5 text-[12.5px] text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+										onclick={() => void investigation.start(shell.session?.title ?? '')}
+									>
+										Re-run this search
+									</button>
+								{:else}
+									<!-- Cold-open share sessions (shareTitle, 'Shared ' prefix) carry
+										no question — the title is a noun phrase; re-running it would
+										search literal nonsense. -->
+									<p class="text-[12.5px] leading-relaxed text-ink-3">
+										Reopen it via the shared link instead.
+									</p>
+								{/if}
+							</div>
+						{:else}
+							<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
+								This session's evidence isn't in memory — older sessions aren't replayable
+								yet. Run a new search to bring it back.
+							</p>
+						{/if}
 					{/if}
 				{/if}
 			</div>
@@ -539,7 +595,15 @@
 	</div>
 
 	{#if shell.settingsOpen}
-		<SettingsDialog onClose={() => shell.toggleSettings()} />
+		<SettingsDialog
+			onClose={() => {
+				shell.toggleSettings();
+				// #84: key edits COMMIT at dialog close (the field writes per
+				// keystroke — firing there would spend a doomed fill on a partial
+				// key). Guards inside keyArrived own every non-fill case.
+				void investigation.keyArrived();
+			}}
+		/>
 	{/if}
 </Tooltip.Provider>
 

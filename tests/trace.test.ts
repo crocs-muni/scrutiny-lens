@@ -75,6 +75,39 @@ describe('derivePhaseRows — counters are arithmetic over slices', () => {
 		expect(refusedTick?.text).toContain('refused');
 	});
 
+	it('a restored run names the cache instead of lying "0 of N answered" (issue #83, spec §2 rule 6)', () => {
+		// The relays were never asked — the whole frontier arrived from the
+		// cache, so "0 of 3 answered" would pretend the run queried and came
+		// up empty. The done line still counts the cache leg as its source,
+		// exactly like a live run's cache slice.
+		const restored: TraceInput = {
+			...base,
+			phase: 'done',
+			slices: [{ url: 'local-cache', received: 2, route: 'cache', rejected: 0, status: 'ok' }],
+			skeletons: [{ typeTag: 'scrutiny-product' }, { typeTag: 'scrutiny-metadata' }]
+		};
+		const rows = derivePhaseRows(restored);
+		expect(rows[1].counter).toBe('restored from local cache');
+		expect(doneLine(restored)).toBe('Done. 1 product · 1 metadata · 1 source');
+	});
+
+	it('a LIVE cache-assisted run with all relays refused keeps its true "0 of N answered"', () => {
+		// Guard for the every() condition: the cache leg + a refused relay leg
+		// is a live run that asked and failed — NOT a restore. Only an
+		// all-cache slice list must ever read "restored from local cache".
+		const liveRefused: TraceInput = {
+			...base,
+			phase: 'done',
+			relayCount: 2,
+			slices: [
+				{ url: 'local-cache', received: 4, route: 'cache', rejected: 0, status: 'ok' },
+				{ url: 'wss://a', received: 0, route: 'tag:x', rejected: 0, status: 'refused' }
+			]
+		};
+		const rows = derivePhaseRows(liveRefused);
+		expect(rows[1].counter).toBe('0 of 2 answered');
+	});
+
 	it('decouple admits/rejects live, and receipts the raw-event total once', () => {
 		const rows = derivePhaseRows(slicing);
 		expect(rows[2].status).toBe('running');

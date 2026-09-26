@@ -144,12 +144,22 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 			id: 'sources',
 			label: LABELS.sources,
 			status: done ? 'completed' : failed ? 'skipped' : phase === 'fetch' ? 'running' : 'pending',
+			// Restored sessions (issue #83): the relays were never asked —
+			// "0 of N answered" would be a deterministic lie about a run that
+			// painted its whole frontier from the cache (spec §2 rule 6).
+			// every(), not some(): a LIVE cache-assisted run whose relays all
+			// refused keeps refusing-relay truths ("0 of N answered" verbatim).
 			counter:
 				relayCount === 0
 					? ''
-					: done || phase === 'fetch'
-						? `${answered} of ${relayCount} answered`
-						: '',
+					: done &&
+							answered === 0 &&
+							slices.length > 0 &&
+							slices.every((s) => s.url === 'local-cache')
+						? 'restored from local cache'
+						: done || phase === 'fetch'
+							? `${answered} of ${relayCount} answered`
+							: '',
 			ticks,
 			progress: null
 		},

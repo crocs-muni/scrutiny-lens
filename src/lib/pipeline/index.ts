@@ -163,8 +163,10 @@ function routeSearch(
 }
 
 /** Skeleton source — deterministic, interprets nothing (spec §2 rule 5):
- * i-tags + type tag + the first ~200 chars. */
-function skeletonOf(event: NostrEvent): SkeletonCard {
+ * i-tags + type tag + the first ~200 chars. Exported for the reload-restore
+ * seam (issue #83): restoring a session re-derives the same skeleton set a
+ * live settle painted, so the trace's literal layer stays honest. */
+export function skeletonOf(event: NostrEvent): SkeletonCard {
 	const ttags = [...new Set(tTags(event as unknown as FabricEvent))];
 	return {
 		id: event.id,
