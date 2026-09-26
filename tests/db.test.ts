@@ -23,6 +23,8 @@ import {
 	putChatPins,
 	putChatTurn,
 	putSession,
+	putSessionRun,
+	getSessionRun,
 	saveInterpretation,
 	saveSettings,
 	type PersistedChatMessage,
@@ -140,6 +142,40 @@ describe('sessions store', () => {
 		await putSession({ id: 's1', title: 'one', createdAt: 100, unseen: true });
 		await putSession({ id: 's1', title: 'one', createdAt: 100 });
 		expect(await listSessions()).toEqual([{ id: 's1', title: 'one', createdAt: 100 }]);
+	});
+});
+
+describe('sessionRuns store (issue #83, v7)', () => {
+	const run = {
+		sessionId: 's1',
+		searches: [{ kind: 'tag', value: 'cve:CVE-2017-15361', source: 'ai' as const }],
+		admittedIds: ['a1', 'a2', 'a3'],
+		settledAt: 1_700_000_001_000,
+		elapsedMs: 4200
+	};
+
+	it('round-trips a settled run record', async () => {
+		await putSessionRun(run);
+		expect(await getSessionRun('s1')).toEqual(run);
+	});
+
+	it('returns null for sessions that never settled a run (relic rows)', async () => {
+		expect(await getSessionRun('nope')).toBeNull();
+	});
+
+	it('deleteSession cascades the run row with the rest of the teardown', async () => {
+		await putSession({ id: 's1', title: 'old run', createdAt: 100 });
+		await putSessionRun(run);
+		await deleteSession('s1');
+		expect(await getSessionRun('s1')).toBeNull();
+		expect(await listSessions()).toEqual([]);
+	});
+
+	it('clear-all covers the run store', async () => {
+		await putSessionRun(run);
+		await clearAllLocalData();
+		expect(await getSessionRun('s1')).toBeNull();
+		expect((await dumpAllForTests()).sessionRuns).toEqual([]);
 	});
 });
 
@@ -490,6 +526,46 @@ describe('schema upgrade (v1 → v2 convergence)', () => {
 		// Pre-fix this logged the owner's NotFoundError and returned [].
 		expect((await listEvents()).map((e) => e.id)).toEqual(['e1']);
 		expect(await getEventsByTag('nostr')).toEqual(['e1']);
+	});
+
+	it('a live v6 database gains the sessionRuns store without losing rows (issue #83)', async () => {
+		// v7 is the v4/v5/v6 lesson restated: the store-set change is a no-op on
+		// a database that predates it UNLESS the requested version exceeds the
+		// live one — the bump to 7 is what fires the upgrade, the guarded
+		// create below adds the store, and existing rows (sessions, events)
+		// must survive untouched.
+		await seedLegacy(
+			(db) => {
+				db.createObjectStore('settings', { keyPath: 'key' });
+				db.createObjectStore('interpretations', { keyPath: ['eventId', 'model'] });
+				const sessions = db.createObjectStore('sessions', { keyPath: 'id' });
+				sessions.createIndex('createdAt', 'createdAt');
+				db.createObjectStore('deadLetters', { keyPath: 'id', autoIncrement: true });
+				const events = db.createObjectStore('events', { keyPath: 'id' });
+				events.createIndex('ttags', 'ttags', { multiEntry: true });
+				events.createIndex('created_at', 'created_at');
+				const chatMessages = db.createObjectStore('chatMessages', { keyPath: 'id' });
+				chatMessages.createIndex('sessionId', 'sessionId');
+				db.createObjectStore('chatPins', { keyPath: 'sessionId' });
+				db.createObjectStore('relayHints', { keyPath: 'eventId' });
+			},
+			async (db) => {
+				await db.put('sessions', { id: 's-old', title: 'pre-v7 run', createdAt: 123 });
+			},
+			6
+		);
+		// Post-upgrade the new store works and the old rows ride along.
+		expect(await getSessionRun('s-old')).toBeNull(); // relic: never had a run row
+		await putSessionRun({
+			sessionId: 's-old',
+			searches: [],
+			admittedIds: ['a1'],
+			settledAt: 1,
+			elapsedMs: null
+		});
+		expect((await getSessionRun('s-old'))?.admittedIds).toEqual(['a1']);
+		expect(await listSessions()).toEqual([{ id: 's-old', title: 'pre-v7 run', createdAt: 123 }]);
+		await clearAllLocalData();
 	});
 
 	it('yields its connection on versionchange so a newer tab can upgrade (issue #46)', async () => {
