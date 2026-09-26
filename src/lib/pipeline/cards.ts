@@ -212,17 +212,18 @@ import { clip } from '$lib/text';
 
 const CLIP_LIMIT = { title: 120, snippet: 300 };
 
-export async function fillCards(
+/** Cache-hit pass (spec §6, (eventId, model)): one slot per input card,
+ * null where the same model never interpreted this event — only those
+ * misses reach the endpoint. Clipped to the same limits the LLM path
+ * enforces so a poisoned row can't sneak longer prose onto a card.
+ * Exported for the reload-restore seam (issue #83): restoring a session
+ * paints its persisted card interpretations keyless — local data, so the
+ * read costs no endpoint. */
+export async function cachedCardFills(
   cards: ProductCard[],
-  opts: FillCardsOptions,
-): Promise<ProductCard[]> {
-  if (cards.length === 0) return [];
-  const model = opts.provider.model?.trim();
-  if (!model) return cards;
-
-  // Cached interpretations first — never re-pay the LLM for a card we
-  // already asked the same model about (spec §6, (eventId, model)).
-  const cached = await Promise.all(
+  model: string,
+): Promise<(ProductCard | null)[]> {
+  return Promise.all(
     cards.map(async (card) => {
       const hit = await getInterpretation(card.id, model);
       if (!hit?.bySurface.card) return null;
@@ -237,6 +238,19 @@ export async function fillCards(
       };
     }),
   );
+}
+
+export async function fillCards(
+  cards: ProductCard[],
+  opts: FillCardsOptions,
+): Promise<ProductCard[]> {
+  if (cards.length === 0) return [];
+  const model = opts.provider.model?.trim();
+  if (!model) return cards;
+
+  // Cached interpretations first — never re-pay the LLM for a card we
+  // already asked the same model about (spec §6, (eventId, model)).
+  const cached = await cachedCardFills(cards, model);
   const fresh = cards.filter((c, i) => cached[i] === null);
   if (fresh.length === 0) {
     return cached.map((c, i) => c ?? cards[i]);

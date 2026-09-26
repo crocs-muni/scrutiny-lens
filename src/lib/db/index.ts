@@ -18,6 +18,7 @@
  */
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { DeadLetterEntry } from '$lib/ai/deadLetter';
+import type { SearchRequest } from '$lib/ai/agents/query';
 import { tTags } from '$lib/fabric';
 import { asSignedOnly } from '$lib/fabric/test-tags';
 import type { NostrEvent } from '$lib/fabric';
@@ -39,7 +40,12 @@ export const DB_NAME = 'scrutiny-lens';
 // v6 (issue #31) adds relayHints, the per-event seen-on relay registry the
 // share-link flow encodes into nevent hints (spec §8) and the cold-open
 // reports against (§4). Same no-op store-set change as v4/v5.
-export const DB_VERSION = 6;
+//
+// v7 (issue #83) adds sessionRuns, the session→run mapping that lets a
+// reopened session rebuild from the events cache after a reload. Same no-op
+// store-set change as v4/v5/v6 — the bump is what guarantees the upgrade
+// fires on every live db at ≤ 6.
+export const DB_VERSION = 7;
 const SETTINGS_KEY = 'app';
 
 /** Ring size for the dead-letter store; deadLetter.ts imports this so the
@@ -139,6 +145,9 @@ interface LensDB extends DBSchema {
 	// Value shape mirrors chatPins (id field + array payload) so both stores
 	// share the same keyPath convention. See seen-on.ts.
 	relayHints: { key: string; value: { eventId: string; relays: string[] } };
+	// v7 (issue #83): one settled run per session — the restore seam's
+	// frontier. Keyed by session id so a session yields at most one row.
+	sessionRuns: { key: string; value: PersistedSessionRun };
 }
 
 let conn: IDBPDatabase<LensDB> | undefined;
@@ -255,6 +264,11 @@ async function open(): Promise<void> {
 					// Same guard shape as every store above.
 					db.createObjectStore('relayHints', { keyPath: 'eventId' });
 				}
+				if (!db.objectStoreNames.contains('sessionRuns')) {
+					// v7 (issue #83): the session→run mapping. Same guard shape
+					// as every store above.
+					db.createObjectStore('sessionRuns', { keyPath: 'sessionId' });
+				}
 			}
 		});
 		persistent = true;
@@ -364,14 +378,16 @@ export async function putSession(row: PersistedSession): Promise<void> {
 	}, undefined);
 }
 
-/** Session deletion is a cascade (issue #30): the row, every chat message
- * for the session, and its pinned citation numbers go in ONE transaction —
- * never a partial teardown whose surviving messages would re-number citations
+/** Session deletion is a cascade (issue #30, extended issue #83): the row,
+ * every chat message for the session, its pinned citation numbers, and its
+ * settled run record go in ONE transaction — never a partial teardown whose
+ * surviving rows would let a gone session resurrect or re-number citations
  * on reload (ADR 0003: numbers stay pinned per conversation). */
 export async function deleteSession(id: string): Promise<void> {
 	await attempt(async (d) => {
-		const tx = d.transaction(['sessions', 'chatMessages', 'chatPins'], 'readwrite');
+		const tx = d.transaction(['sessions', 'chatMessages', 'chatPins', 'sessionRuns'], 'readwrite');
 		await tx.objectStore('sessions').delete(id);
+		await tx.objectStore('sessionRuns').delete(id);
 		// Messages ride the sessionId index — an exact-key cursor walk scoped by
 		// the index so deleteSession touches ONLY this session's rows.
 		const messages = tx.objectStore('chatMessages').index('sessionId');
@@ -386,6 +402,42 @@ export async function deleteSession(id: string): Promise<void> {
 /** Newest first — the sidebar rail's display order (SidebarRecents anatomy). */
 export async function listSessions(): Promise<PersistedSession[]> {
 	return attempt(async (d) => (await d.getAllFromIndex('sessions', 'createdAt')).reverse(), []);
+}
+
+/** The session→run mapping a reload-restore reads back (issue #83). The
+ * events themselves stay in the shared events store — this row only pins
+ * the frontier (which admitted ids) plus the translated searches, so a
+ * restore paints exactly the settled session, never a re-queried drift.
+ * Sessions whose run errored or never existed have no row: that's the
+ * relic/placeholder distinction (re-run affordance), not a bug. */
+export interface PersistedSessionRun {
+	sessionId: string;
+	/** Translated searches as the pipeline reported them (spec §3) —
+	 * machine records, filler for the trace on restore; re-runs still go
+	 * through the question anew (searches are NOT replayed). */
+	searches: SearchRequest[];
+	/** Admitted event ids at settle, in admission order. Order matters:
+	 * it is the admitted set the cards/facet derivations saw. */
+	admittedIds: string[];
+	settledAt: number;
+	/** Wall-clock run time as the done row showed it; null while the run
+	 * was still settling when pinned (post-assembly, pre-settle row). */
+	elapsedMs: number | null;
+}
+
+/** Upsert — a run pins its frontier at assembly and re-pins with elapsed
+ * time at settle (issue #83): same row key, second put overwrites. */
+export async function putSessionRun(run: PersistedSessionRun): Promise<void> {
+	await attempt(async (d) => {
+		await d.put('sessionRuns', normalize(run));
+	}, undefined);
+}
+
+/** Null = no settled run for this session (relic row, errored run, or a
+ * session predating v7) — the restore seam declines and the honest
+ * placeholder + re-run affordance takes over. */
+export async function getSessionRun(sessionId: string): Promise<PersistedSessionRun | null> {
+	return attempt(async (d) => (await d.get('sessionRuns', sessionId)) ?? null, null);
 }
 
 /** Persists a settled chat frame (issue #30). Errors never land here — ADR

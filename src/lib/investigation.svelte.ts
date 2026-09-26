@@ -21,6 +21,7 @@ import type { ProviderOverrideInput } from "$lib/ai/provider";
 import { createTransport, type Transport } from "$lib/net/transport";
 import {
   runSearch,
+  skeletonOf,
   type Phase,
   type PipelineEvent,
   type PipelineNotice,
@@ -30,7 +31,14 @@ import {
 import type { SearchRequest } from "$lib/ai/agents/query";
 import type { NostrEvent } from 'nostr-tools/core';
 import { batchNodeInterpret } from "$lib/ai/agents/nodes";
-import { getInterpretation, saveInterpretation } from "$lib/db";
+import {
+  getEvent,
+  getInterpretation,
+  getSessionRun,
+  putSessionRun,
+  saveInterpretation,
+  type CachedEvent,
+} from "$lib/db";
 import type { NodeTile } from "$lib/graph/subject-graph";
 import {
   admitBatch,
@@ -49,6 +57,7 @@ import {
 } from "$lib/pipeline/traversal";
 import {
   assembleCards,
+  cachedCardFills,
   computeFacets,
   fillCards,
   type FacetGroup,
@@ -152,6 +161,15 @@ class Investigation {
    * session-store work, spec §0). */
   sessionId = $state<string | null>(null);
 
+  /** Reload-restore diagnostics (issue #83): null while a live run painted
+   * the surface; restore() sets the count of pinned ids the events cache no
+   * longer holds (0 = frontier intact). A reassembly count, never AI data. */
+  restoredEvicted = $state<number | null>(null);
+  /** Session id restore() declined — no pinned run row, or the whole
+   * frontier evicted. The relic placeholder + one-click re-run reads it
+   * (+page.svelte, issue #83). */
+  restoreMissId = $state<string | null>(null);
+
   /** Hinted relays a cold-open share link reported as failed (issue #31,
    * spec §4): the event still opened — from the rest of the hints or the
    * cache — so this is a degradation notice, not a block. Set by
@@ -188,6 +206,11 @@ class Investigation {
   contextFetched = new Set<string>();
 
   private controller: AbortController | null = null;
+
+  /** Monotonic restore token: the LAST restore click wins — a superseded
+   * restore must not paint over a newer one (same honesty class as the
+   * controller-identity guards, spec §8). Monotonic forever, never reset. */
+  private restoreToken = 0;
 
   private applyEvent(controller: AbortController, event: PipelineEvent): void {
     // Only the current run may write — an aborted run's late events die here.
@@ -250,7 +273,37 @@ class Investigation {
     this.nodeTiles = new Map();
     this.nodeQueue = [];
     this.nodeQueued = new Set();
+    // A live run replaces whatever a restore painted — the diagnostics die
+    // with it (fresh runs own neither field, issue #83).
+    this.restoredEvicted = null;
+    this.restoreMissId = null;
     this.running = true;
+  }
+
+  /** Pin the settled frontier of the CURRENT session (issue #83): on reload
+   * the restore seam rebuilds the surface from this row plus the shared
+   * events cache — never a re-query, so a restored session paints exactly
+   * what settled (spec §2/§6). Fire-and-forget like the orchestrator's
+   * other write-through: a lost pin degrades to the relic placeholder,
+   * never to a crash. */
+  private persistRunRecord(): void {
+    if (this.sessionId === null) return;
+    // Orphan guard (review M5): stop() + closeSession on an in-flight run
+    // cascades the session row away — a late settle must NOT re-pin a
+    // session the rail no longer holds; the relic stays a relic.
+    if (!shell.sessions.some((s) => s.id === this.sessionId)) return;
+    // $state proxy trap (see start()'s settle): read the session back from
+    // the field so the pinned ids are the PROXY's admitted set — the same
+    // array the cards/facets derivations saw.
+    const settled = this.result;
+    if (settled === null) return;
+    void putSessionRun({
+      sessionId: this.sessionId,
+      searches: settled.searches,
+      admittedIds: settled.admitted.map((e) => e.id),
+      settledAt: Date.now(),
+      elapsedMs: this.elapsedMs,
+    });
   }
 
   /** Start a search from the J1 composer. The transport and provider are
@@ -260,6 +313,10 @@ class Investigation {
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
+    // New runs supersede in-flight restores identically (review H2): the
+    // restore token bumps here too, so a late restore commit can never wipe
+    // this run's surfaces or mis-pin its frontier into another row.
+    ++this.restoreToken;
     this.resetRun();
     this.lastQuestion = question;
     const startedAt = performance.now();
@@ -334,6 +391,9 @@ class Investigation {
           settled.admitted,
         );
         this.facetGroups = computeFacets(settled.admitted);
+        // First pin (issue #83): a crash mid-fill still leaves a restorable
+        // frontier; the finally block re-pins with the done-row timing.
+        this.persistRunRecord();
         if (lensDebug()) {
           console.debug(`[lens-trace] settle: admitted-after-context=${settled.admitted.length} cards=${this.cards.length}`);
         }
@@ -368,6 +428,8 @@ class Investigation {
       if (this.controller === controller) {
         this.running = false;
         this.elapsedMs = Math.round(performance.now() - startedAt);
+        // Second pin (issue #83): the done-row timing rides this upsert.
+        this.persistRunRecord();
       }
     }
   }
@@ -391,6 +453,9 @@ class Investigation {
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
+    // Same supersession rule as start() (review H2): a cold open also
+    // invalidates any in-flight restore's commit.
+    ++this.restoreToken;
     // Same fresh-canvas reset as start() — a cold open supersedes any
     // live run — plus its deltas: no trace stages, hints carried over.
     this.resetRun();
@@ -435,6 +500,12 @@ class Investigation {
           shared.admitted,
         );
         this.facetGroups = computeFacets(shared.admitted);
+        // Pin (issue #83, review L8): AFTER the context sweep so the row
+        // carries the full contextual frontier — a prior-context pin would
+        // restore the bare root only. searches stays [] (shared opens have
+        // none); shareHints/hasShareHints stay cleared — transient relay
+        // state, not session evidence.
+        this.persistRunRecord();
       });
     }
     void this.ensureSubjectContext(root.id);
@@ -488,6 +559,182 @@ class Investigation {
   private shareTitle(root: NostrEvent): string {
     const type = scrutinyEventType(root as unknown as FabricEvent);
     return type === "product" || type === "metadata" ? `Shared ${type}` : "Shared event";
+  }
+
+  /** Reload-restore (issue #83): rebuild a reopened session's settled
+   * surface from its pinned run record plus the shared events cache. The
+   * paint is deterministic reassembly (graph/cards/facets) and persisted
+   * interpretations only — no re-query, no drift (spec §2 never-lie, §6
+   * cache). Returns false — and names the session in restoreMissId — when
+   * there is no run row or the whole frontier was evicted: the relic
+   * placeholder + one-click re-run takes over (+page.svelte). */
+  async restore(sessionId: string): Promise<boolean> {
+    if (this.sessionId === sessionId) return true; // already painted
+    const token = ++this.restoreToken; // races: last click wins
+    const run = await getSessionRun(sessionId);
+    if (this.restoreToken !== token) return false;
+    this.restoreMissId = null;
+    if (run === null) {
+      this.restoreMissId = sessionId;
+      return false;
+    }
+    // Displacement (owner ruling 2026-09-26): restore always wins the
+    // surface. A displaced run's SETTLED frontier pins first; its completed
+    // interpretations are already per-event persisted; then it aborts under
+    // the spec §8 "abort on navigation away" lifecycle. A mid-flight run
+    // (result === null) has no frontier to pin — its events stay in the
+    // cache and its row stays a relic.
+    if (this.sessionId !== null && this.result !== null) this.persistRunRecord();
+    // Rotate BEFORE the cache reads (review H1): applyEvent guards on
+    // identity only, not the signal — a superseded runSearch ignoring the
+    // abort (see start()'s settle comment) would otherwise resolve during
+    // these awaits with `this.controller === controller` intact and
+    // overwrite under the restored session.
+    this.controller?.abort();
+    this.controller = new AbortController();
+    const cached = await Promise.all(run.admittedIds.map((id) => getEvent(id)));
+    if (this.restoreToken !== token) return false;
+    const events = cached.filter((e): e is CachedEvent => e !== null);
+    const missing = cached.length - events.length;
+    if (events.length === 0) {
+      // Fully evicted frontier — the same honest decline as a missing row.
+      this.restoreMissId = sessionId;
+      return false;
+    }
+    // Cache paint + assembly happen BEFORE the write block so the state
+    // commit below is ONE synchronous unit — the +page late-key effect
+    // (which owns all post-settle refills, #84) can only observe a complete
+    // snapshot, never a half-painted restore it could double-fill.
+    const assembled = assembleCards(resolveGraph(events), events);
+    // Keyless cache pass (spec §6): persisted card interpretations are
+    // local data — painting them costs no endpoint. Runs even with a key
+    // present; the effect's fill then descends only onto real misses.
+    const painted =
+      settings.model === ""
+        ? assembled
+        : (await cachedCardFills(assembled, settings.model)).map(
+            (p, i) => p ?? assembled[i],
+          );
+    if (this.restoreToken !== token) return false;
+    this.resetRun(); // ends running=true; set deltas below
+    this.phase = "done";
+    this.sessionId = sessionId;
+    this.searches = run.searches;
+    // Trace honesty (review H3, spec §2 rule 6): the literal layer reports
+    // the cache reconstruction in the pipeline's OWN vocabulary — the
+    // rule-5 skeletons a live settle painted, and one cache slice exactly
+    // as runSearch emits it. Eviction is NOT rejection, so rejected: 0.
+    this.skeletons = events.map((e) => skeletonOf(e));
+    this.slices = [
+      {
+        url: "local-cache",
+        received: events.length,
+        route: "cache",
+        rejected: 0,
+        status: "ok",
+      },
+    ];
+    this.result = {
+      searches: run.searches,
+      admitted: events,
+      invalidSkipped: 0,
+      notices: [],
+      relays: [],
+    } as SearchSession;
+    this.cards = painted;
+    this.facetGroups = computeFacets(events);
+    this.elapsedMs = run.elapsedMs;
+    this.restoredEvicted = missing;
+    if (settings.model !== "") {
+      // Seed the trace's descriptions row (review H3d): cache paints ARE
+      // rendered interpretations — the decouple counter must never read
+      // "not interpreted" beside them (spec §2 rule 6).
+      this.fillStats = {
+        interpreted: painted.filter((c) => c.interpreted).length,
+        total: painted.length,
+      };
+    }
+    this.running = false;
+    // #84's other half (ruling: caused, not derived): a key being present
+    // at restore is one of the two refill call sites. Fired ONLY from this
+    // post-commit tail, so the lane always sees the complete snapshot and
+    // its own identity gate is satisfied (shell.session was switched by the
+    // rail click before restore was called); fire-and-forget like
+    // openShared's lane — the rail never waits on an endpoint.
+    void this.keyArrived();
+    return true;
+  }
+
+  /** Late-key refill (issue #84): a session that settled keyless painted
+   * rule-5 raw, and the node trickle's keyless pass drained its queue
+   * permanently — entering the key in Settings afterwards never re-armed
+   * either lane. keyArrived re-arms both against the CURRENT settled
+   * session (restored sessions included, #83): the node queue resets and
+   * re-queues the admitted set (cache-first per spec §6, so primed nodes
+   * paint without an endpoint), then the same chunked fill lane start()
+   * runs fills the raw cards. Awaits the batch + node drain so callers and
+   * tests observe a settled lane. No-op without a settled surface, while a
+   * fill is in flight, or without key+model — the raw cards stay honest. */
+  async keyArrived(): Promise<void> {
+    await this._lateKeyRefill(defaultCallLLM, streamLLM);
+  }
+
+  /** @internal — test seam for the late-key lane (same shape as
+   * `_fillInChunksForTests`): the injected callLLM drives the BATCH path —
+   * the production stream seam would route around it to the real gateway. */
+  async _keyArrivedForTests(callLLM: CallLLM): Promise<void> {
+    await this._lateKeyRefill(callLLM, undefined);
+  }
+
+  private async _lateKeyRefill(
+    callLLM: CallLLM,
+    stream: StreamLLM | undefined,
+  ): Promise<void> {
+    if (this.result === null || this.filling) return;
+    if (settings.apiKey === "" || settings.model === "") return;
+    // Session-identity gate (review): a refill may ONLY answer for the open
+    // session — a call that still sees the displaced session's painted run
+    // (key committed mid-restore) must bail and let the restore's own
+    // post-commit refill take over. Wrong-session by-index merges are a
+    // spec §2 violation, not a token nit.
+    if (this.sessionId !== shell.session?.id) return;
+    // Re-arm a possibly-aborted controller (user stopped a run, then set
+    // the key).
+    if (this.controller === null || this.controller.signal.aborted)
+      this.controller = new AbortController();
+    const controller = this.controller;
+    // Per #84's notes: a keyless pass drains the node queue permanently —
+    // re-arm.
+    this.nodeQueue = [];
+    this.nodeQueued = new Set();
+    this.nodeFillFor(this.result.admitted.map((e) => e.id));
+    if (this.cards.some((c) => !c.interpreted)) {
+      const provider = {
+        baseUrl: settings.endpoint,
+        model: settings.model,
+        apiKey: settings.apiKey,
+      };
+      this.filling = true;
+      try {
+        // Stream seam defaults to the production gateway (progressive
+        // per-record paint, same as start()/openShared()); tests pass
+        // explicit undefined so the injected callLLM drives the batch path.
+        await this.fillInChunks(provider, callLLM, controller, LANE_STAGGER_MS, stream);
+      } catch {
+        /* per-chunk degrade lives inside fillInChunks */
+      } finally {
+        if (this.controller === controller) this.filling = false;
+      }
+    }
+    // Await the node drain so callers/tests observe a settled lane. Aborts
+    // and supersession must exit (runNodeFill leaves its queue on abort).
+    while (
+      this.controller === controller &&
+      !controller.signal.aborted &&
+      (this.nodeFillRunning || this.nodeQueue.length > 0)
+    ) {
+      await sleep(5, controller.signal);
+    }
   }
 
   /** Abort the in-flight run (spec §8) without clearing what it already
@@ -615,7 +862,14 @@ class Investigation {
         if (!res.ok) {
           // Unreachable endpoint: stop burning tokens; schema/content
           // failures retry nothing — the fallback is already the truth.
-          if (res.kind === "unreachable") return;
+          if (res.kind === "unreachable") {
+            // Drain the tail honestly (review M1): ids stay rule-5 until
+            // something re-queues them (nodeQueued semantics), but the
+            // queue itself empties — keyArrived's drain-wait must never
+            // spin on an orphaned queue.
+            this.nodeQueue = [];
+            return;
+          }
           continue;
         }
         const vms = res.result.nodes;
@@ -1019,7 +1273,14 @@ export function resetInvestigation(): void {
   investigation.fillStats = { interpreted: 0, total: 0 };
   investigation.fillFailure = null;
   investigation.fillErrorMessage = null;
+  investigation.lastQuestion = "";
+  investigation.sessionId = null;
+  investigation.restoredEvicted = null;
+  investigation.restoreMissId = null;
   investigation.selectedEventId = null;
+  investigation.graphSubjectId = null;
+  investigation.expandedRelated = [];
+  investigation.hasShareHints = false;
   investigation.contextFetched = new Set();
   investigation.shareHints = [];
   investigation._resetNodeFill();
