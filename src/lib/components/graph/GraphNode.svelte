@@ -1,6 +1,8 @@
 <script lang="ts" module>
-	/* Exported for GraphCanvas (the nodeTypes map's data contract) — module
-	 * script so the type may be exported. */
+	import type { SubjectGraphNode } from '$lib/graph/subject-graph';
+
+	/* Exported for GraphCanvas — the data contract every node receives
+	 * (derivation anatomy + canvas-injected state + verb callbacks). */
 	export interface GraphNodeData extends SubjectGraphNode {
 		selected: boolean;
 		/** Citation palette slot (0–5) when the chat cites this event. */
@@ -10,63 +12,77 @@
 		onSelect: (id: string) => void;
 		onExpand: (id: string) => void;
 	}
+
+	/** N4 floors: full card ≥ 0.6 · icon+mono ≥ 0.35 · disc below. */
+	const FLOOR_LINE = 0.6;
+	const FLOOR_DISC = 0.35;
+
+	export type Tier = 'full' | 'line' | 'disc';
+
+	export function tierOf(zoom: number, forced: boolean): Tier {
+		if (forced || zoom >= FLOOR_LINE) return 'full';
+		if (zoom >= FLOOR_DISC) return 'line';
+		return 'disc';
+	}
+
+	/** Approximate model-space half-extents per tier/kind — the edge-clipping
+	 * footprints (edges terminate at the card border, never pierce to the
+	 * center). Widths are exact (w-[250px]/[230px]/[150px], h-7 w-7); heights
+	 * are close approximations of the painted anatomy — tuned on the owner's
+	 * feel pass, never geometry-correct. Only `full` varies by kind. */
+	export const TIER_HALF: {
+		full: Readonly<Record<SubjectGraphNode['kind'], { hw: number; hh: number }>>;
+		line: { hw: number; hh: number };
+		disc: { hw: number; hh: number };
+	} = {
+		full: {
+			product: { hw: 125, hh: 62 },
+			metadata: { hw: 115, hh: 46 }
+		},
+		line: { hw: 75, hh: 16 },
+		disc: { hw: 14, hh: 14 }
+	};
 </script>
 
 <script lang="ts">
-	/* GRAPH NODE (#29b) — the canvas's per-event surface. Anatomy is
-	 * BIBLE-locked, never improvised:
+	/* GRAPH NODE (#29b → #95 engine swap) — the canvas's per-event surface.
+	 * Anatomy is BIBLE-locked, never improvised; identical markup to the
+	 * xyflow era. What changed: the component is a plain DOM card now —
+	 * no nodeType registration, no handles, no useViewport. Zoom arrives as
+	 * a prop; position lives on the canvas's wrapper (physics owns it).
 	 *
+	 * BIBLE rules this component still carries:
 	 *  - N1: subject (product) = tinted 30px tile + title + publisher +
 	 *    one-line description + footer (time · edited ×N · icon-number
 	 *    counts); a linked record (metadata) omits description and counts.
 	 *  - N3 states: retracted = dashed red border + hatch + struck title;
 	 *    uninterpreted = mono rule-5 title (§9 writing rule); related
-	 *    product = dimmed + +N badge (admitted-but-hidden neighbors,
-	 *    ruling 8).
-	 *  - N4 zoom ladder: rendered zoom floors full → icon+mono line → icon
-	 *    disc; selected / hovered / citation-lit break every floor.
-	 *  - Chain word (ruling 9): one amber footer word, verbatim from core
-	 *    resolve() via the subject graph — halted / forked / stopped at
-	 *    limit. No pill.
-	 *  - Rings: selection = accent (ruling 2/#29a); citation spotlight =
-	 *    --cite hue OUTSIDE the accent (citations.css). Hover must never
-	 *    change store-level state — hovered is component-local.
-	 *
-	 * xyflow contract: this component is the `scrutiny` nodeType. Eight
-	 * invisible handles (source+target × four sides) let the subject graph's
-	 * quadrant math attach edges to facing sides; ids `s-<side>` / `t-<side>`. */
+	 *    product = dimmed + +N badge (admitted-but-hidden neighbors).
+	 *  - N4 zoom ladder: floors full/line/disc; selected / hovered /
+	 *    citation-lit break every floor (forced full).
+	 *  - Chain word: one amber footer word, verbatim from core resolve().
+	 *  - Rings: selection = accent ring; citation spotlight = --cite hue
+	 *    OUTSIDE the accent. Hover never touches store state. */
 
-	import { Handle, Position, useViewport, type NodeProps } from '@xyflow/svelte';
 	import { IconClock, IconFile, IconLink } from '@tabler/icons-svelte';
-	import type { SubjectGraphNode, HandleSide } from '$lib/graph/subject-graph';
 	import { iconForNode } from '$lib/graph/icons';
 	import PublisherChip from '../ui/PublisherChip.svelte';
 	import { firstPaintBloom } from '../ui/bloom.svelte';
 	import { formatRel } from '$lib/shell.svelte';
 
-	const props: NodeProps = $props();
-	/* One documented cast at the xyflow seam: nodeTypes below pins `data` to
-	 * GraphNodeData (xyflow types data as Record<string, unknown>). */
-	const data = $derived(props.data as unknown as GraphNodeData);
-	const id = $derived(props.id);
-
-	const viewport = useViewport();
-	/** N4 floors: full card ≥ 0.6 · icon+mono ≥ 0.35 · disc below. */
-	const FLOOR_LINE = 0.6;
-	const FLOOR_DISC = 0.35;
+	interface Props {
+		data: GraphNodeData;
+		/** Rendered zoom (model px → screen px). Comes from the canvas camera. */
+		zoom: number;
+	}
+	const { data, zoom }: Props = $props();
 
 	// Local-only interaction state: hover escalates detail (N4) without ever
 	// touching store state (spotlight's own rule for the same reason).
 	let hovered = $state(false);
 
 	const forced = $derived(data.selected || hovered || data.citationLit);
-	const tier = $derived<'full' | 'line' | 'disc'>(
-		forced || viewport.current.zoom >= FLOOR_LINE
-			? 'full'
-			: viewport.current.zoom >= FLOOR_DISC
-				? 'line'
-				: 'disc'
-	);
+	const tier = $derived(tierOf(zoom, forced));
 
 	// Interpreted → the model's icon token (machine-mapped to a glyph,
 	// icons.ts); fallback → deterministic i-prefix → kind default (N2).
@@ -75,16 +91,14 @@
 
 	/* Tile-settle (issue #82): the node-trickle UPGRADES this node in place —
 	 * a false→true `interpreted` flip earns one ~200ms settle-fade on title +
-	 * glyph (tile presence is deterministic membership; the flip can't lie).
-	 * Dense full/line tiers only — the disc tier's instant glyph pop stands
-	 * by #29c ruling as of #82. First-paint contract: firstPaintBloom. */
+	 * glyph. Dense full/line tiers only — the disc tier's instant glyph pop
+	 * stands by #29c ruling as of #82. */
 	const bloom = firstPaintBloom(() => data.interpreted);
 
-
 	/** Ring stack: box-shadow paints FIRST-listed TOPMOST — accent leads
-	 * (selection must survive citation-lit, Spec finding a2), the cite hue
-	 * trails at 6px so it shows only as the outer band; the tint halo is for
-	 * the unselected lit case (accent covers it otherwise). */
+	 * (selection must survive citation-lit), the cite hue trails at 6px so it
+	 * shows only as the outer band; the tint halo is for the unselected lit
+	 * case (accent covers it otherwise). */
 	const ringStyle = $derived.by(() => {
 		const layers: string[] = [];
 		if (data.selected) layers.push('0 0 0 4px var(--accent-tint)');
@@ -108,38 +122,31 @@
 		return bits;
 	});
 
-	const SIDES: [side: HandleSide, pos: Position][] = [
-		['left', Position.Left],
-		['right', Position.Right],
-		['top', Position.Top],
-		['bottom', Position.Bottom]
-	];
-
 	function keySelect(event: KeyboardEvent): void {
 		if (event.key === 'Enter' || event.key === ' ') {
 			event.preventDefault();
-			data.onSelect(id);
+			data.onSelect(data.id);
 		}
 	}
 </script>
 
 <!-- The node IS one click target (ruling 6: drawer-only detail); dbl-click
- *	is the expansion gesture (ruling 8) — Suppressed when there is nothing
- *	admitted to reveal. -->
+ *	is the expansion gesture (ruling 8) — suppressed when there is nothing
+ *	admitted to reveal. Pointer-drag is the canvas's wrapper's business. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
 	role="button"
 	tabindex="0"
 	title={data.title}
-	onclick={() => data.onSelect(id)}
+	onclick={() => data.onSelect(data.id)}
 	onkeydown={keySelect}
 	ondblclick={() => {
-		if (expandable) data.onExpand(id);
+		if (expandable) data.onExpand(data.id);
 	}}
 	onmouseenter={() => (hovered = true)}
 	onmouseleave={() => (hovered = false)}
-	class="rounded-[12px] border bg-surface text-left transition-shadow duration-150
+	class="relative rounded-[12px] border bg-surface text-left transition-shadow duration-150
 		{tier === 'full' ? (data.kind === 'product' ? 'w-[250px] px-3 py-2.5' : 'w-[230px] px-2.5 py-2') : ''}
 		{tier === 'line' ? 'flex w-[150px] items-center gap-1.5 rounded-[9px] px-2 py-1.5' : ''}
 		{tier === 'disc' ? 'flex h-7 w-7 items-center justify-center rounded-full p-0' : ''}
@@ -246,12 +253,6 @@
 			>+{data.badge}</span
 		>
 	{/if}
-
-	<!-- Edge anchors (invisible): the subject graph's quadrant math keys source/target side. -->
-	{#each SIDES as [side, pos] (side)}
-		<Handle id="s-{side}" type="source" position={pos} class="!invisible" isConnectable={false} />
-		<Handle id="t-{side}" type="target" position={pos} class="!invisible" isConnectable={false} />
-	{/each}
 </div>
 
 <!-- The bloom mark is the shared `.settle-flip` class (app.css, issue #82) —
