@@ -84,7 +84,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 - `@scrutiny-fabric/core` consumed as a local `file:` dep on the sibling repo for now (SDK repo is private — a git-SHA pin resolves nowhere for other machines). When the repo goes public: switch to git-SHA pin + SDK `prepare` script. Later: npm publish. Any deploy before that requires the sibling checkout present at build time (document in README). All protocol work via the SDK; the only app-owned protocol code is the mandated verification shim (Schnorr verify via `@noble/curves` + id recompute) and relay transport.
 - `nostr-tools` relay pool (list from config/env (no hardcoded addresses yet; shipped defaults TBD when the canonical SCRUTINY relays are known), 1–4 entries, user-editable; per-relay status surfaced).
 - Server runtime deleted; ported to client: AI agents (query/cards/nodes/chat), zod gates, verifier, citation registry, transport. `db.ts`/`cache.ts` die → IndexedDB. The followups agent dies (chat suggests follow-ups inline if ever needed).
-- Graph canvas: `@xyflow/svelte`, custom nodes, in-app (not the UI library).
+- Graph canvas: pure d3 (`d3-force` engine `src/lib/graph/canvas-sim.ts` + `d3-zoom` camera) rendering HTML cards directly, in-app. Motion grammar (#95): frozen baseline (no idle motion ever), physics only inside user gestures, every episode auto-halts and re-pins; every node draggable; edges terminate at card borders.
 - LLM streaming browser→endpoint; abort on navigation away.
 
 ## 9. UI

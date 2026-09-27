@@ -1,41 +1,43 @@
 <script lang="ts">
-	/* GRAPH CANVAS (#29b) — the subject graph over the session's admitted
-	 * store, on @xyflow/svelte (ruling 1). All ten rulings land here:
+	/* GRAPH CANVAS (#29b → #95 engine swap) — the subject graph over the
+	 * session's admitted store, on d3-force + d3-zoom (ruling 2026-09-27,
+	 * issue #95). All prior rulings land unchanged — the engine, not the
+	 * grammar, was swapped (@xyflow/svelte is gone):
 	 *
-	 *  - Subject scope (2): the fixed subject + its own records + related-
-	 *    product multihop ends; deriveSubjectGraph owns placement, this file
-	 *    owns painting.
-	 *  - Fixed root, free selection (4): clicks never move the layout; the
-	 *    {#key} on the root (in +page) remounts the flow when a NEW root
-	 *    anchors, so fitView frames one fresh map per anchor.
+	 *  - Subject scope (2): fixed subject + its records + related-product
+	 *    multihop ends; deriveSubjectGraph owns topology, canvas-sim owns
+	 *    motion, this file owns paint. Slots seed the world; live nodes keep
+	 *    their frozen positions across re-derives.
+	 *  - Fixed root, free selection (4): selection never moves the layout;
+	 *    the {#key} on the root (in +page) remounts the canvas when a NEW
+	 *    root anchors, so fit frames one fresh map per anchor.
 	 *  - Drawer-only click (6) / empty-pane deselect (7): node click →
-	 *    onSelect (the same path the results cards take), pane click →
-	 *    onDeselect. xyflow's own selection is disabled — the accent ring is
-	 *    data-driven (ruling 2/#29a), never a canvas-local truth.
+	 *    onSelect (the same path the results cards take), empty-canvas
+	 *    click → onDeselect; Esc is the page's. The accent ring is
+	 *    data-driven (ruling 2/#29a), never canvas-local truth.
 	 *  - Admitted-only expansion (8): the +N badge's dbl-click bubbles to
 	 *    investigation.expandRelated; every rendered edge is backed by an
-	 *    admitted event by construction (deriveSubjectGraph).
-	 *  - Chain word (9) renders on the node; retraction and Show-deleted (10)
+	 *    admitted event by construction. Expansion is a BRANCH-LOCAL
+	 *    reheat: the untouched map holds exactly.
+	 *  - Frozen baseline (#95): no idle motion ever; physics exists only
+	 *    inside gestures (drag — every node movable, nothing sacred;
+	 *    expansion; the explicit Redistribute), and every episode cools to
+	 *    a hard stop by itself, then re-pins. The settling chip in the
+	 *    toolbar discloses whenever the map has heat.
+	 *  - Chain word (9) on the node; retraction and Show-deleted (10)
 	 *    filter in deriveSubjectGraph, the switch lives in the toolbar.
-	 *  - Citation ring: the chat's registry pins (n ↔ eventId) are mapped to
-	 *    palette slots; spotlight hover lights the matching node and forces
-	 *    full detail (N4). The registry is non-reactive internally, so the
-	 *    map rebuilds off chat.messages — pins only change with a turn. */
+	 *  - Citation ring: the chat's registry pins map to palette slots;
+	 *    spotlight hover lights the matching node and forces full detail.
+	 *    The registry is non-reactive internally, so the rebuild ticks
+	 *    off chat.messages — pins only change with a turn. */
 
-	import {
-		SvelteFlow,
-		SvelteFlowProvider,
-		Background,
-		BackgroundVariant,
-		MarkerType,
-		type Node,
-		type Edge
-	} from '@xyflow/svelte';
-	import '@xyflow/svelte/dist/style.css';
 	import '../chat/citations.css';
-	import GraphNode, { type GraphNodeData } from './GraphNode.svelte';
-	import CanvasToolbar from './CanvasToolbar.svelte';
-	import FlowActions, { type FlowViewportActions } from './FlowActions.svelte';
+	import { untrack } from 'svelte';
+	import { select } from 'd3-selection';
+	import { zoom as d3zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
+	import GraphNode, { TIER_HALF, tierOf, type GraphNodeData } from './GraphNode.svelte';
+	import CanvasToolbar, { type CanvasViewportActions } from './CanvasToolbar.svelte';
+	import { CanvasSim, clipToBorder, type SimEdge, type SimNode } from '$lib/graph/canvas-sim';
 	import { deriveSubjectGraph, FIT_OPTIONS } from '$lib/graph/subject-graph';
 	import { investigation } from '$lib/investigation.svelte';
 	import { shell } from '$lib/shell.svelte';
@@ -57,10 +59,30 @@
 	}
 	let { events, cards, root, selectedEventId, onSelect, onDeselect }: Props = $props();
 
-	const nodeTypes = { scrutiny: GraphNode };
-	/** Live viewport actions, registered from inside the flow (see
-	 * FlowActions: provider-scope init binds a dead store on remount). */
-	let viewport = $state<FlowViewportActions | null>(null);
+	const ZOOM_MIN = 0.25;
+	const ZOOM_MAX = 1.6;
+
+	// --- engine --------------------------------------------------------------
+	// Held OUT of the reactive graph: the sim mutates per animation frame;
+	// Svelte owns arrays, the sim owns positions. One sim per component
+	// instance — the {#key} in +page remounts us per root anchor.
+	const sim = new CanvasSim();
+	sim.setTick(flushFrame);
+
+	let stage = $state<HTMLDivElement | null>(null);
+	let cam = $state({ k: 1, x: 0, y: 0 });
+	let settling = $state(false);
+	let toolbarActions = $state<CanvasViewportActions | null>(null);
+
+	const wrapperRefs = new Map<string, HTMLElement>();
+	const lineRefs = new Map<string, SVGLineElement>();
+
+	let zoomBehavior: ZoomBehavior<HTMLDivElement, unknown> | null = null;
+	let stageSel: ReturnType<typeof select<HTMLDivElement, unknown>> | null = null;
+	let draggingId: string | null = null;
+	/** Expansion gesture → the branch reheat fires on the corresponding
+	 * derived-view apply (the dbl-click precedes the store write by design). */
+	let pendingExpand: string | null = null;
 
 	const graph = $derived.by(() => {
 		if (root === null) return { nodes: [], edges: [] };
@@ -75,69 +97,232 @@
 	});
 
 	// The interpretation trickle: report placed ids, in priority order
-	// (subject → its records → related products → their records, the order
-	// deriveSubjectGraph emits them). Cache-first; the lane pays the LLM
-	// only for what the card fill never touched. No starved path: queued/
-	// tiled ids are no-op, expansions just append (#29c ruling C).
+	// (subject → its records → related products → their records). Cache-first;
+	// the lane pays the LLM only for what the card fill never touched.
 	$effect(() => {
 		if (graph.nodes.length > 0) investigation.nodeFillFor(graph.nodes.map((n) => n.id));
 	});
 
-	// SvelteFlow's bind:nodes needs writable fields; the $effect copies the
-	// derived view in whenever any input (graph, selection, spotlight, pins)
-	// changes. One-directional: the flow never writes back (no dragging,
-	// no connects), so there is no sync loop to guard.
-	//
-	// chat.messages is touched so new pins re-run the copy: the registry's
-	// maps are non-reactive internals and pin only on a settled turn.
-	let nodes = $state.raw<Node[]>([]);
-	let edges = $state.raw<Edge[]>([]);
-	$effect(() => {
+	// Render data is a PURE derived (rung 1 of the effect ladder): merge the
+	// derivation with selection/citation/spotlight state. The registry read is
+	// untracked (its maps are non-reactive; pins land with a settled turn).
+	const nodeData = $derived.by(() => {
+		if (root === null) return [] as GraphNodeData[];
+		// Citation pins land on a settled chat turn and the registry is
+		// non-reactive inside — touching this makes the turn the re-derive
+		// trigger (seam: pins rebuild per turn). Untracked reads stay below.
 		void chat.messages.length;
 		const lit = new Set(spotlight.active);
-		nodes = graph.nodes.map((n) => {
-			const citeN = chat.registry.numberFor(n.id) ?? null;
+		return graph.nodes.map((n) => {
+			const citeN = untrack(() => chat.registry.numberFor(n.id) ?? null);
 			const citationIndex = citeN === null ? null : (citeN - 1) % CITATION_SLOTS;
 			return {
-				id: n.id,
-				type: 'scrutiny',
-				position: { x: n.x, y: n.y },
-				data: {
-					...n,
-					selected: n.id === selectedEventId,
-					citationIndex,
-					citationLit: citeN !== null && lit.has(citeN),
-					onSelect,
-					onExpand: (target: string) => investigation.expandRelated(target)
-				} satisfies GraphNodeData
-			};
+				...n,
+				selected: n.id === selectedEventId,
+				citationIndex,
+				citationLit: citeN !== null && lit.has(citeN),
+				onSelect,
+				onExpand: (target: string) => {
+					pendingExpand = target;
+					investigation.expandRelated(target);
+				}
+			} satisfies GraphNodeData;
 		});
-		edges = graph.edges.map((e) => ({
-			id: e.id,
-			source: e.source,
-			target: e.target,
-			// NO text on canvas edges (owner ruling 2026-09-14, superseding
-			// N1⑦'s label anatomy: corpus binding content is a machine
-			// sentence, useless as a verbal edge; verbs live in the drawer's
-			// Files rows and Content instead).
-			sourceHandle: `s-${e.sourceHandle}`,
-			targetHandle: `t-${e.targetHandle}`,
-			// Arrows at the destination end (N1⑦ crow's-foot rule); related-
-			// product edges wear G1's amber dashed multihop language. Strokes
-			// use --ink-3, not --line-strong: the hairline tone is
-			// white-on-white in LIGHT mode (owner screenshot, every prior
-			// round was dark).
-			markerEnd: {
-				type: MarkerType.ArrowClosed,
-				width: 14,
-				height: 14,
-				color: e.related ? 'var(--orange)' : 'var(--ink-3)'
-			},
-			style: e.related
-				? 'stroke: var(--orange); stroke-dasharray: 4 5; stroke-width: 1.8;'
-				: 'stroke: var(--ink-3); stroke-width: 1.8;'
-		}));
 	});
+	// forced-full flags derive from the SAME merged data the cards see —
+	// one citation lookup per node, one truth for tier + edge clipping.
+	const forcedFullMap = $derived(new Map(nodeData.map((m) => [m.id, m.selected || m.citationLit])));
+	const edgeList = $derived(graph.edges.map((e) => ({ id: e.id, related: e.related })));
+
+	// Sync channel: the derivation is the ONLY trigger; the engine sync is the
+	// ONLY side effect. Writes NOTHING to Svelte state (no reads to re-enter,
+	// no writes to re-trigger): the 2026-09-27 mount-loop bug class dies here.
+	$effect(() => {
+		const view = graph; // the single tracked dep
+		const added = sim.applyView(view);
+		// Mid-drag removal (live retraction, undo-expand): the card is gone, so
+		// its pointerup never lands — cool the episode down at the sync point.
+		if (draggingId && !sim.get(draggingId)) {
+			sim.dragEnd(draggingId);
+			draggingId = null;
+			dragCandidate = null;
+		}
+		// The expansion episode: the dbl-click set pendingExpand before the
+		// store write; the synchronous re-derive lands here in the same flush.
+		if (pendingExpand && sim.get(pendingExpand)) {
+			sim.reheat(pendingExpand, added);
+			pendingExpand = null;
+		}
+		// Untracked sweep: flushFrame reads cam/forcedFull, writes settling.
+		untrack(flushFrame);
+	});
+
+	function flushFrame() {
+		for (const n of sim.nodes) {
+			const el = wrapperRefs.get(n.id);
+			if (el) el.style.transform = `translate(${n.x}px, ${n.y}px) translate(-50%, -50%)`;
+		}
+		for (const e of sim.edges) {
+			const ln = lineRefs.get(e.id);
+			if (!ln) continue;
+			const s = e.source as SimNode;
+			const t = e.target as SimNode;
+			if (typeof s === 'string' || typeof t === 'string') continue;
+			// Edges terminate at the card BORDER of each end (ruling: never
+			// pierce to the center). The footprint follows the current tier.
+			const foot = (n: SimNode) => {
+				const tier = tierOf(cam.k, forcedFullMap.get(n.id) ?? false);
+				return tier === 'full' ? TIER_HALF.full[n.n.kind] : TIER_HALF[tier];
+			};
+			const sh = foot(s);
+			const th = foot(t);
+			const p1 = clipToBorder(s.x!, s.y!, t.x!, t.y!, sh.hw, sh.hh);
+			const p2 = clipToBorder(t.x!, t.y!, s.x!, s.y!, th.hw, th.hh);
+			ln.setAttribute('x1', p1.x.toFixed(2));
+			ln.setAttribute('y1', p1.y.toFixed(2));
+			ln.setAttribute('x2', p2.x.toFixed(2));
+			ln.setAttribute('y2', p2.y.toFixed(2));
+		}
+		settling = sim.settling();
+	}
+
+	// --- camera --------------------------------------------------------------
+	function fit(): void {
+		if (!stageSel || !zoomBehavior || !stage || sim.nodes.length === 0) return;
+		let x0 = Infinity,
+			y0 = Infinity,
+			x1 = -Infinity,
+			y1 = -Infinity;
+		for (const n of sim.nodes) {
+			x0 = Math.min(x0, n.x! - 140);
+			y0 = Math.min(y0, n.y! - 100);
+			x1 = Math.max(x1, n.x! + 140);
+			y1 = Math.max(y1, n.y! + 100);
+		}
+		const w = stage.clientWidth || 1;
+		const h = stage.clientHeight || 1;
+		const k = Math.max(
+			ZOOM_MIN,
+			Math.min(FIT_OPTIONS.maxZoom, Math.min(w / (x1 - x0), h / (y1 - y0)) * (1 - FIT_OPTIONS.padding))
+		);
+		stageSel.call(
+			zoomBehavior.transform,
+			zoomIdentity.translate(w / 2 - (k * (x0 + x1)) / 2, h / 2 - (k * (y0 + y1)) / 2).scale(k)
+		);
+	}
+
+	// Ref actions: keep the imperative render loop's DOM map honest across
+	// keyed-each rebuilds and root remounts. (use:, not {@attach} — these are
+	// per-node list bindings, the one job actions still fit.)
+	function registerWrapper(el: HTMLElement, id: string) {
+		// The param IS the keyed-each key — Svelte destroys/recreates on key
+		// change, so no update() arm ever fires.
+		wrapperRefs.set(id, el);
+		return {
+			destroy() {
+				wrapperRefs.delete(id);
+			}
+		};
+	}
+	function registerLine(el: SVGLineElement, id: string) {
+		lineRefs.set(id, el);
+		return {
+			destroy() {
+				lineRefs.delete(id);
+			}
+		};
+	}
+
+	// --- pointer drag (every node movable — nothing is sacred) ---------------
+	// Window-level listeners + a movement threshold; the card keeps ONLY a
+	// pointerdown arm. Two hard rules this buys (adversarial review #95):
+	//   - immediate setPointerCapture retargets click/dblclick to the wrapper,
+	//     killing select (ruling 6) and expand (ruling 8) for real mice — so
+	//     no capture at all, moves/ups are heard on the window;
+	//   - starting the episode at pointerdown would make every plain click
+	//     unpin the whole map and micro-drift it (selection never moves the
+	//     layout, ruling 4) — so the drag starts only past ≈4 screen px.
+	let dragCandidate: { id: string; pointerId: number } | null = null;
+
+	function onNodePointerDown(id: string, e: PointerEvent) {
+		if (e.button !== 0) return;
+		dragCandidate = { id, pointerId: e.pointerId };
+	}
+	function onWindowPointerMove(e: PointerEvent) {
+		if (!stage || !dragCandidate || e.pointerId !== dragCandidate.pointerId) return;
+		const rect = stage.getBoundingClientRect();
+		const wx = (e.clientX - rect.left - cam.x) / cam.k;
+		const wy = (e.clientY - rect.top - cam.y) / cam.k;
+		if (draggingId !== null) {
+			sim.dragMove(draggingId, wx, wy);
+			return;
+		}
+		const n = sim.get(dragCandidate.id);
+		if (!n || Math.hypot(wx - n.x!, wy - n.y!) * cam.k < 4) return;
+		const id = dragCandidate.id;
+		if (!sim.dragStart(id, wx, wy)) {
+			dragCandidate = null;
+			return;
+		}
+		draggingId = id;
+		flushFrame(); // light the chip without waiting for the first tick
+	}
+	function onWindowPointerUp(e: PointerEvent) {
+		if (draggingId !== null && e.pointerId === dragCandidate?.pointerId) {
+			sim.dragEnd(draggingId);
+		}
+		draggingId = null;
+		dragCandidate = null; // a clean click never dragged → never an episode
+	}
+	// Session graph region (xyflow carried the same aria-label). The attach is
+	// a NAMED function: an inline arrow gets a fresh identity at every parent
+	// re-render, which detaches/re-attaches on every state change and resets
+	// the d3-zoom transform to identity — that was the selection-click camera
+	// wipe (adversarial follow-up #95). Stable identity → attach once, live
+	// until the {#key} remount.
+	function setupStage(el: HTMLDivElement): () => void {
+		zoomBehavior = d3zoom<HTMLDivElement, unknown>()
+			.scaleExtent([ZOOM_MIN, ZOOM_MAX])
+			.filter((ev: Event) => {
+				if (ev.type === 'wheel') return true;
+				// dblclick is the expand verb (GraphNode), never a zoom;
+				// card drags are node drags, the pan is background-only.
+				if (ev.type === 'dblclick') return false;
+				return !(ev.target as HTMLElement).closest('.scrutiny-node');
+			})
+			.on('zoom', (ev: { transform: ZoomTransform }) => {
+				cam = { k: ev.transform.k, x: ev.transform.x, y: ev.transform.y };
+				flushFrame();
+			});
+		stageSel = select(el);
+		stageSel.call(zoomBehavior);
+		// Empty-pane deselect: ONLY the stage itself counts — edges and
+		// arrowheads are click targets too, and xyflow's old Pane rule never
+		// let edge clicks deselect (ruling 7).
+		const paneClick = (ev: MouseEvent) => {
+			if (ev.target === el) onDeselect();
+		};
+		el.addEventListener('click', paneClick);
+		window.addEventListener('pointermove', onWindowPointerMove);
+		window.addEventListener('pointerup', onWindowPointerUp);
+		toolbarActions = {
+			zoomIn: () => stageSel!.call(zoomBehavior!.scaleBy, 1.3),
+			zoomOut: () => stageSel!.call(zoomBehavior!.scaleBy, 1 / 1.3),
+			fit
+		};
+		// One fresh map per anchor: macro-task so the first $effect apply lands
+		// before fit reads the nodes (attach then effect, both sync from mount).
+		const mountFitTimer = setTimeout(fit, 0);
+		return () => {
+			clearTimeout(mountFitTimer);
+			el.removeEventListener('click', paneClick);
+			window.removeEventListener('pointermove', onWindowPointerMove);
+			window.removeEventListener('pointerup', onWindowPointerUp);
+			stageSel?.on('.zoom', null);
+			sim.dispose();
+			toolbarActions = null;
+		};
+	}
 </script>
 
 {#if root === null}
@@ -152,29 +337,108 @@
 	<div
 		class="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[14px] border border-line bg-surface"
 	>
-		<SvelteFlowProvider>
-			<CanvasToolbar actions={viewport} />
-			<div class="min-h-0 flex-1">
-				<SvelteFlow
-					bind:nodes
-					bind:edges
-					{nodeTypes}
-					fitView
-					fitViewOptions={FIT_OPTIONS}
-					nodeOrigin={[0.5, 0.5]}
-					minZoom={0.25}
-					maxZoom={1.6}
-					nodesDraggable={false}
-					nodesConnectable={false}
-					elementsSelectable={false}
-					zoomOnDoubleClick={false}
-					onpaneclick={() => onDeselect()}
-					aria-label="Session graph"
-				>
-					<Background variant={BackgroundVariant.Dots} gap={22} size={1} bgColor="var(--line-strong)" />
-					<FlowActions onReady={(a) => (viewport = a)} />
-				</SvelteFlow>
+		<CanvasToolbar actions={toolbarActions} settling={settling} onRedistribute={() => sim.redistribute()} />
+		<!-- Session graph region (xyflow carried the same aria-label). The click
+		 * listener is imperative (attach zone, next to zoom): template-level
+		 * clicks on a static div fight the a11y linter for zero gain — Esc
+		 * stays the keyboard deselect (page-level), unaffected by the swap. -->
+		<div class="stage min-h-0 flex-1" aria-label="Session graph" bind:this={stage} {@attach setupStage}>
+			<div class="world" style="transform: translate({cam.x}px, {cam.y}px) scale({cam.k})">
+				<svg class="edges" aria-hidden="true">
+					<defs>
+						<marker
+							id="scrutiny-arrow-ink"
+							viewBox="0 0 20 20"
+							refX="16"
+							refY="10"
+							markerWidth="13"
+							markerHeight="13"
+							markerUnits="userSpaceOnUse"
+							orient="auto-start-reverse"
+						>
+							<path d="M 0 1 L 14 10 L 0 19 z" fill="var(--ink-3)" />
+						</marker>
+						<marker
+							id="scrutiny-arrow-related"
+							viewBox="0 0 20 20"
+							refX="16"
+							refY="10"
+							markerWidth="13"
+							markerHeight="13"
+							markerUnits="userSpaceOnUse"
+							orient="auto-start-reverse"
+						>
+							<path d="M 0 1 L 14 10 L 0 19 z" fill="var(--orange)" />
+						</marker>
+					</defs>
+					{#each edgeList as e (e.id)}
+						<line use:registerLine={e.id} class:related={e.related} />
+					{/each}
+				</svg>
+				{#each nodeData as n (n.id)}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="scrutiny-node"
+						use:registerWrapper={n.id}
+						onpointerdown={(e) => onNodePointerDown(n.id, e)}
+					>
+						<GraphNode data={n} zoom={cam.k} />
+					</div>
+				{/each}
 			</div>
-		</SvelteFlowProvider>
+		</div>
 	</div>
 {/if}
+
+<style>
+	.stage {
+		position: relative;
+		overflow: hidden;
+		cursor: default;
+		touch-action: none;
+		/* Dots background — parity with the xyflow era (BackgroundVariant.Dots,
+		 * gap 22, size 1, --line-strong). */
+		background-image: radial-gradient(var(--line-strong) 1px, transparent 1.6px);
+		background-size: 22px 22px;
+	}
+	.world {
+		position: absolute;
+		left: 0;
+		top: 0;
+		transform-origin: 0 0;
+	}
+	.edges {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 1px;
+		height: 1px;
+		overflow: visible;
+	}
+	/* --ink-3, not --line-strong: the hairline tone is white-on-white in
+	 * LIGHT mode (owner screenshot, xyflow era). Related = amber dashed
+	 * multihop language (G1); arrows at the destination end (N1⑦). */
+	.edges line {
+		stroke: var(--ink-3);
+		stroke-width: 1.8;
+		marker-end: url(#scrutiny-arrow-ink);
+	}
+	.edges line.related {
+		stroke: var(--orange);
+		stroke-dasharray: 4 5;
+		marker-end: url(#scrutiny-arrow-related);
+	}
+	.scrutiny-node {
+		position: absolute;
+		left: 0;
+		top: 0;
+		cursor: grab;
+		will-change: transform;
+		/* drag = move the card, never select its text (adversarial L6) */
+		user-select: none;
+		-webkit-user-select: none;
+	}
+	.scrutiny-node:active {
+		cursor: grabbing;
+	}
+</style>

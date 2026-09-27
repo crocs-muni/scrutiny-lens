@@ -99,14 +99,15 @@ export interface SubjectGraphNode {
 	/** Related-product badge: admitted neighbors hidden by placement — never
 	 * zero-shown (BIBLE: never zero-shown); null on other nodes. */
 	badge: number | null;
-	/** xyflow position (px, center-origin). */
+	/** Slot position (model px, center-origin): seeds the canvas-sim world;
+	 * authoritative for new arrivals only — live nodes keep their frozen state. */
 	x: number;
 	y: number;
 }
 
 export interface SubjectGraphEdge {
 	id: string;
-	/** Metadata end (xyflow source — arrows point Metadata → Product). */
+	/** Metadata end (edge source — arrows point Metadata → Product). */
 	source: string;
 	target: string;
 	/** The binding event's content — the verb ("documents"). '' = none. */
