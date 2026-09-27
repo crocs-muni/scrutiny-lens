@@ -36,7 +36,7 @@
 	import { untrack } from 'svelte';
 	import { select } from 'd3-selection';
 	import { zoom as d3zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
-	import GraphNode, { TIER_HALF, tierOf, type GraphNodeData } from './GraphNode.svelte';
+	import GraphNode, { DENSE_NODE_GATE, TIER_HALF, tierOf, type GraphNodeData } from './GraphNode.svelte';
 	import CanvasToolbar, { type CanvasViewportActions } from './CanvasToolbar.svelte';
 	import { CanvasSim, clipToBorder, type SimEdge, type SimNode } from '$lib/graph/canvas-sim';
 	import { deriveSubjectGraph, FIT_OPTIONS } from '$lib/graph/subject-graph';
@@ -92,11 +92,17 @@
 			expanded: new Set(investigation.expandedRelated),
 			expandedBridges: new Set(investigation.expandedBridges),
 			cards,
+
 			// Node-surface interpretations (bySurface.node): the trickle
 			// re-renders nodes in place as tiles land (owner ruling C).
 			tiles: investigation.nodeTiles
 		});
 	});
+
+	// #99: the tier ladder is the density safety valve, not the daily tool —
+	// full anatomy everywhere until the current view passes the gate, then
+	// floors engage for that view (recomputed on re-derive, not per frame).
+	const dense = $derived(graph.nodes.length > DENSE_NODE_GATE);
 
 	// The interpretation trickle: report placed ids, in priority order
 	// (subject → its records → related products → their records). Cache-first;
@@ -176,7 +182,7 @@
 			// Edges terminate at the card BORDER of each end (ruling: never
 			// pierce to the center). The footprint follows the current tier.
 			const foot = (n: SimNode) => {
-				const tier = tierOf(cam.k, forcedFullMap.get(n.id) ?? false);
+				const tier = tierOf(dense, cam.k, forcedFullMap.get(n.id) ?? false);
 				return tier === 'full' ? TIER_HALF.full[n.n.kind] : TIER_HALF[tier];
 			};
 			const sh = foot(s);
@@ -387,7 +393,7 @@
 						use:registerWrapper={n.id}
 						onpointerdown={(e) => onNodePointerDown(n.id, e)}
 					>
-						<GraphNode data={n} zoom={cam.k} />
+						<GraphNode data={n} zoom={cam.k} dense={dense} />
 					</div>
 				{/each}
 			</div>

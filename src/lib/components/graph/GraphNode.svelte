@@ -13,14 +13,18 @@
 		onExpand: (id: string) => void;
 	}
 
-	/** N4 floors: full card ≥ 0.6 · icon+mono ≥ 0.35 · disc below. */
+	/** N4 → #99: below the density gate every node is FULL, always; past it,
+	 * the ladder engages (full ≥ 0.6 · line ≥ 0.35 · disc below; escalations
+	 * force full). The gate lives where the count is known (canvas). */
+	export const DENSE_NODE_GATE = 40;
 	const FLOOR_LINE = 0.6;
 	const FLOOR_DISC = 0.35;
 
 	export type Tier = 'full' | 'line' | 'disc';
 
-	export function tierOf(zoom: number, forced: boolean): Tier {
-		if (forced || zoom >= FLOOR_LINE) return 'full';
+	export function tierOf(dense: boolean, zoom: number, forced: boolean): Tier {
+		if (!dense || forced) return 'full';
+		if (zoom >= FLOOR_LINE) return 'full';
 		if (zoom >= FLOOR_DISC) return 'line';
 		return 'disc';
 	}
@@ -74,15 +78,17 @@
 		data: GraphNodeData;
 		/** Rendered zoom (model px → screen px). Comes from the canvas camera. */
 		zoom: number;
+		/** True past the density gate (#99): tiers engage; false = always full. */
+		dense: boolean;
 	}
-	const { data, zoom }: Props = $props();
+	const { data, zoom, dense }: Props = $props();
 
-	// Local-only interaction state: hover escalates detail (N4) without ever
-	// touching store state (spotlight's own rule for the same reason).
+	// Local-only interaction state: hover escalates detail (N4, dense mode
+	// only) without ever touching store state (spotlight's own rule).
 	let hovered = $state(false);
 
 	const forced = $derived(data.selected || hovered || data.citationLit);
-	const tier = $derived(tierOf(zoom, forced));
+	const tier = $derived(tierOf(dense, zoom, forced));
 
 	// Interpreted → the model's icon token (machine-mapped to a glyph,
 	// icons.ts); fallback → deterministic i-prefix → kind default (N2).
