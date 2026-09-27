@@ -265,6 +265,11 @@
 	//     unpin the whole map and micro-drift it (selection never moves the
 	//     layout, ruling 4) — so the drag starts only past ≈4 screen px.
 	let dragCandidate: { id: string; pointerId: number } | null = null;
+	// A drag that RELEASES off its card still fires a click on the nearest
+	// common ancestor = the stage. Untreated, paneClick would deselect the
+	// very node the drag just selected (review F1, #102) — so the episode
+	// marks itself and the pane swallows that one click.
+	let justDragged = false;
 
 	function onNodePointerDown(id: string, e: PointerEvent) {
 		if (e.button !== 0) return;
@@ -293,6 +298,7 @@
 			return;
 		}
 		draggingId = id;
+		justDragged = true;
 		flushFrame(); // light the chip without waiting for the first tick
 	}
 	function onWindowPointerUp(e: PointerEvent) {
@@ -328,7 +334,8 @@
 		// arrowheads are click targets too, and xyflow's old Pane rule never
 		// let edge clicks deselect (ruling 7).
 		const paneClick = (ev: MouseEvent) => {
-			if (ev.target === el) onDeselect();
+			if (ev.target === el && !justDragged) onDeselect();
+			justDragged = false; // one-shot swallow, drag or not
 		};
 		el.addEventListener('click', paneClick);
 		window.addEventListener('pointermove', onWindowPointerMove);
@@ -365,11 +372,7 @@
 	<div
 		class="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[14px] border border-line bg-surface"
 	>
-		<CanvasToolbar
-			actions={toolbarActions}
-			settling={settling}
-			onRedistribute={() => sim.redistribute(new Map(graph.nodes.map((n) => [n.id, [n.x, n.y]])))}
-		/>
+		<CanvasToolbar actions={toolbarActions} settling={settling} onRedistribute={() => sim.redistribute()} />
 		<!-- Session graph region (xyflow carried the same aria-label). The click
 		 * listener is imperative (attach zone, next to zoom): template-level
 		 * clicks on a static div fight the a11y linter for zero gain — Esc

@@ -138,16 +138,19 @@
 	}
 </script>
 
-<!-- The node IS one click target (ruling 6: drawer-only detail). The +N
- *	bubble is the expansion gesture (#97): single-click, discrete hit target —
- *	it never selects. Pointer-drag is the canvas's wrapper's business. -->
+<!-- The node IS one select target (ruling 6: drawer-only detail), accepted
+ *	via the canvas wrapper's pointerdown (press-to-select, #101). No mouse
+ *	onclick here on purpose: it would DOUBLE-fire openDossier after the
+ *	pointerdown (duplicated relay legs per click — review F2, #102). The
+ *	keyboard path (Enter/Space) stays on keySelect. The +N bubble is the
+ *	expansion gesture (#97): single-click, discrete hit target — it never
+ *	selects. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
 	role="button"
 	tabindex="0"
 	title={data.title}
-	onclick={() => data.onSelect(data.id)}
 	onkeydown={keySelect}
 	onmouseenter={() => {
 		hovered = true;

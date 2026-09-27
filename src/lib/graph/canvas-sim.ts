@@ -221,19 +221,18 @@ export class CanvasSim {
 	/** The only whole-map episode. Always user-invoked (Redistribute).
 	 * d3-notebook line: positions are WRITTEN, never animated — every card
 	 * teleports to the derived ring grammar and the map is stone-frozen in
-	 * the same frame (no travel, no settle residue). */
-	redistribute(slots: Map<string, [number, number]>): void {
+	 * the same frame (no travel, no settle residue). Slot coords ride on
+	 * n.n (applyView refreshes it in place) — no param needed. */
+	redistribute(): void {
 		if (this.dragging) return;
 		this.sim.stop();
+		this.sim.alpha(0);
 		for (const n of this.nodes) {
-			const s = slots.get(n.id);
-			if (!s) continue; // node outside the current grammar — keep where it lies
-			n.x = s[0];
-			n.y = s[1];
+			n.x = n.n.x;
+			n.y = n.n.y;
 			n.vx = 0;
 			n.vy = 0;
 		}
-		this.sim.alpha(0);
 		this.freeze(); // re-pin everywhere + final flush so the DOM matches
 	}
 
