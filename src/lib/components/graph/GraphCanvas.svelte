@@ -239,6 +239,7 @@
 			zoomBehavior.transform,
 			zoomIdentity.translate(w / 2 - (k * (x0 + x1)) / 2, h / 2 - (k * (y0 + y1)) / 2).scale(k)
 		);
+		cameraOwnedByUser = false; // auto-fit reclaims the framing
 	}
 
 	// Ref actions: keep the imperative render loop's DOM map honest across
@@ -275,6 +276,12 @@
 	let dragCandidate: { id: string; pointerId: number } | null = null;
 	let firstApplyDone = false;
 	let welcomeFitPending = false;
+	// Camera ownership (#103, d3-tree contrast): the notebook keeps centering
+	// as a per-tick force; we keep it as an auto-fit that MUST re-run when
+	// its assumptions change (stage resize) — but only while the user hasn't
+	// taken the camera. A user gesture (pan/zoom with a source event) claims
+	// it; every auto-fit returns ownership to the framing.
+	let cameraOwnedByUser = false;
 	// A drag that RELEASES off its card still fires a click on the nearest
 	// common ancestor = the stage. Untreated, paneClick would deselect the
 	// very node the drag just selected (review F1, #102) — so the episode
@@ -334,7 +341,10 @@
 				if (ev.type === 'dblclick') return false;
 				return !(ev.target as HTMLElement).closest('.scrutiny-node');
 			})
-			.on('zoom', (ev: { transform: ZoomTransform }) => {
+			.on('zoom', (ev: { transform: ZoomTransform; sourceEvent?: Event | null }) => {
+				// d3-zoom: sourceEvent is present on user gestures, absent on
+				// programmatic transforms (our fit/zoom-in/out buttons).
+				if (ev.sourceEvent != null) cameraOwnedByUser = true;
 				cam = { k: ev.transform.k, x: ev.transform.x, y: ev.transform.y };
 				flushFrame();
 			});
@@ -363,7 +373,25 @@
 				fit();
 			}
 		});
+		// #103: the frame is only valid for the stage SIZE it was computed
+		// for. The dossier below keeps growing after the welcome, the chat
+		// column toggles, the window resizes — any of these shrinks the
+		// stage and the world stays pinned top-left (the "bottom-right
+		// world" bug). Re-fit on resize, debounced, ONLY while the camera
+		// is auto (a user pan/zoom claims it) and no drag owns the pointer.
+		let resizeFitTimer: ReturnType<typeof setTimeout> | null = null;
+		const resizeObserver = new ResizeObserver(() => {
+			if (cameraOwnedByUser || draggingId !== null) return;
+			if (resizeFitTimer) clearTimeout(resizeFitTimer);
+			resizeFitTimer = setTimeout(() => {
+				resizeFitTimer = null;
+				fit();
+			}, 120);
+		});
+		resizeObserver.observe(el);
 		return () => {
+			if (resizeFitTimer) clearTimeout(resizeFitTimer);
+			resizeObserver.disconnect();
 			el.removeEventListener('click', paneClick);
 			window.removeEventListener('pointermove', onWindowPointerMove);
 			window.removeEventListener('pointerup', onWindowPointerUp);
