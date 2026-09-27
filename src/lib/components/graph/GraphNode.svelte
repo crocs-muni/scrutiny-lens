@@ -7,11 +7,15 @@
 		selected: boolean;
 		/** Citation palette slot (0–5) when the chat cites this event. */
 		citationIndex: number | null;
-		/** Spotlight hover state — the ring lights with the pill (#30). */
-		citationLit: boolean;
-		onSelect: (id: string) => void;
-		onExpand: (id: string) => void;
-	}
+	/** Spotlight hover state — the ring lights with the pill (#30). */
+	citationLit: boolean;
+	onSelect: (id: string) => void;
+	onExpand: (id: string) => void;
+	/** Dense-mode only: canvas-level mirror so edge clipping follows the
+	 * hover-escalated card size, never renders under it (§9 "forces full
+	 * detail at any zoom"). Optional: other consumers don't provide it. */
+	onHoverChange?: (id: string, hovered: boolean) => void;
+}
 
 	/** N4 → #99: below the density gate every node is FULL, always; past it,
 	 * the ladder engages (full ≥ 0.6 · line ≥ 0.35 · disc below; escalations
@@ -20,7 +24,7 @@
 	const FLOOR_LINE = 0.6;
 	const FLOOR_DISC = 0.35;
 
-	export type Tier = 'full' | 'line' | 'disc';
+	type Tier = 'full' | 'line' | 'disc';
 
 	export function tierOf(dense: boolean, zoom: number, forced: boolean): Tier {
 		if (!dense || forced) return 'full';
@@ -145,8 +149,14 @@
 	title={data.title}
 	onclick={() => data.onSelect(data.id)}
 	onkeydown={keySelect}
-	onmouseenter={() => (hovered = true)}
-	onmouseleave={() => (hovered = false)}
+	onmouseenter={() => {
+		hovered = true;
+		data.onHoverChange?.(data.id, true);
+	}}
+	onmouseleave={() => {
+		hovered = false;
+		data.onHoverChange?.(data.id, false);
+	}}
 	class="relative rounded-[12px] border bg-surface text-left transition-shadow duration-150
 		{tier === 'full' ? (data.kind === 'product' ? 'w-[250px] px-3 py-2.5' : 'w-[230px] px-2.5 py-2') : ''}
 		{tier === 'line' ? 'flex w-[150px] items-center gap-1.5 rounded-[9px] px-2 py-1.5' : ''}

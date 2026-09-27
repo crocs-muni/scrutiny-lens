@@ -102,9 +102,9 @@ export function clipToBorder(
 }
 
 export class CanvasSim {
-	/** The expansion dbl-click targets this edge set: adjacency in DERIVATION
-	 * terms (every edge counts, both directions), since breath locality is a
-	 * topology question. */
+	/** The expansion bubble click targets this edge set: adjacency in
+	 * DERIVATION terms (every edge counts, both directions), since breath
+	 * locality is a topology question. */
 	private adjacency = new Map<string, Set<string>>();
 
 	nodes: SimNode[] = [];

@@ -38,7 +38,7 @@
 	import { zoom as d3zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
 	import GraphNode, { DENSE_NODE_GATE, TIER_HALF, tierOf, type GraphNodeData } from './GraphNode.svelte';
 	import CanvasToolbar, { type CanvasViewportActions } from './CanvasToolbar.svelte';
-	import { CanvasSim, clipToBorder, type SimEdge, type SimNode } from '$lib/graph/canvas-sim';
+	import { CanvasSim, clipToBorder, type SimNode } from '$lib/graph/canvas-sim';
 	import { deriveSubjectGraph, FIT_OPTIONS } from '$lib/graph/subject-graph';
 	import { investigation } from '$lib/investigation.svelte';
 	import { shell } from '$lib/shell.svelte';
@@ -82,7 +82,7 @@
 	let stageSel: ReturnType<typeof select<HTMLDivElement, unknown>> | null = null;
 	let draggingId: string | null = null;
 	/** Expansion gesture → the branch reheat fires on the corresponding
-	 * derived-view apply (the dbl-click precedes the store write by design). */
+	 * derived-view apply (the bubble click precedes the store write by design). */
 	let pendingExpand: string | null = null;
 
 	const graph = $derived.by(() => {
@@ -136,13 +136,21 @@
 					// reveals its related products; a related's reveals its records.
 					if (n.role === 'related') investigation.expandRelated(target);
 					else investigation.expandBridge(target);
+				},
+				onHoverChange: (id, hovered) => {
+					hoveredId = hovered ? id : hoveredId === id ? null : hoveredId;
 				}
 			} satisfies GraphNodeData;
 		});
 	});
 	// forced-full flags derive from the SAME merged data the cards see —
 	// one citation lookup per node, one truth for tier + edge clipping.
-	const forcedFullMap = $derived(new Map(nodeData.map((m) => [m.id, m.selected || m.citationLit])));
+	// Hover bubbles up from GraphNode (user gesture, not a dep of nodeData) so
+	// dense-mode edge clipping follows the escalated card size exactly.
+	let hoveredId = $state<string | null>(null);
+	const forcedFullMap = $derived(
+		new Map(nodeData.map((m) => [m.id, m.selected || m.citationLit || m.id === hoveredId]))
+	);
 	const edgeList = $derived(graph.edges.map((e) => ({ id: e.id, related: e.related })));
 
 	// Sync channel: the derivation is the ONLY trigger; the engine sync is the
@@ -158,7 +166,7 @@
 			draggingId = null;
 			dragCandidate = null;
 		}
-		// The expansion episode: the dbl-click set pendingExpand before the
+		// The expansion episode: the bubble click set pendingExpand before the
 		// store write; the synchronous re-derive lands here in the same flush.
 		if (pendingExpand && sim.get(pendingExpand)) {
 			sim.reheat(pendingExpand, added);
@@ -182,7 +190,10 @@
 			// Edges terminate at the card BORDER of each end (ruling: never
 			// pierce to the center). The footprint follows the current tier.
 			const foot = (n: SimNode) => {
-				const tier = tierOf(dense, cam.k, forcedFullMap.get(n.id) ?? false);
+				// Below the gate every card is always full — skip the tier
+				// query entirely (the common case past #99).
+				if (!dense) return TIER_HALF.full[n.n.kind];
+				const tier = tierOf(true, cam.k, forcedFullMap.get(n.id) ?? false);
 				return tier === 'full' ? TIER_HALF.full[n.n.kind] : TIER_HALF[tier];
 			};
 			const sh = foot(s);
@@ -296,8 +307,8 @@
 			.scaleExtent([ZOOM_MIN, ZOOM_MAX])
 			.filter((ev: Event) => {
 				if (ev.type === 'wheel') return true;
-				// dblclick is the expand verb (GraphNode), never a zoom;
-				// card drags are node drags, the pan is background-only.
+				// Nothing consumes dblclick on the canvas (expansion lives on
+				// the bubble, #97) — don't let d3's dblclick-zoom hijack it.
 				if (ev.type === 'dblclick') return false;
 				return !(ev.target as HTMLElement).closest('.scrutiny-node');
 			})
