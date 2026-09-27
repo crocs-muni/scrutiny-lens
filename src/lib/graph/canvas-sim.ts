@@ -218,14 +218,23 @@ export class CanvasSim {
 		this.sim.alpha(0.35).alphaTarget(0).restart();
 	}
 
-	/** The only whole-map episode. Always user-invoked (Redistribute). */
-	redistribute(): void {
+	/** The only whole-map episode. Always user-invoked (Redistribute).
+	 * d3-notebook line: positions are WRITTEN, never animated — every card
+	 * teleports to the derived ring grammar and the map is stone-frozen in
+	 * the same frame (no travel, no settle residue). */
+	redistribute(slots: Map<string, [number, number]>): void {
 		if (this.dragging) return;
+		this.sim.stop();
 		for (const n of this.nodes) {
-			n.fx = null;
-			n.fy = null;
+			const s = slots.get(n.id);
+			if (!s) continue; // node outside the current grammar — keep where it lies
+			n.x = s[0];
+			n.y = s[1];
+			n.vx = 0;
+			n.vy = 0;
 		}
-		this.sim.alpha(0.6).alphaTarget(0).restart();
+		this.sim.alpha(0);
+		this.freeze(); // re-pin everywhere + final flush so the DOM matches
 	}
 
 	/** Drag = the notebooks' line, with EVERY node grabbable (nothing sacred).

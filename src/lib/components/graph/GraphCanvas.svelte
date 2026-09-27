@@ -268,6 +268,12 @@
 
 	function onNodePointerDown(id: string, e: PointerEvent) {
 		if (e.button !== 0) return;
+		// Press-to-select (Figma/Miro/litegraph convention, #101): the ring +
+		// drawer land at pointer-DOWN, so the node is already selected when a
+		// drag begins — not after the click completes. Re-affirming an
+		// already-selected card is a no-op (ruling 10); toggle-off never
+		// existed, deselect lives on empty click/Esc.
+		onSelect(id);
 		dragCandidate = { id, pointerId: e.pointerId };
 	}
 	function onWindowPointerMove(e: PointerEvent) {
@@ -359,7 +365,11 @@
 	<div
 		class="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[14px] border border-line bg-surface"
 	>
-		<CanvasToolbar actions={toolbarActions} settling={settling} onRedistribute={() => sim.redistribute()} />
+		<CanvasToolbar
+			actions={toolbarActions}
+			settling={settling}
+			onRedistribute={() => sim.redistribute(new Map(graph.nodes.map((n) => [n.id, [n.x, n.y]])))}
+		/>
 		<!-- Session graph region (xyflow carried the same aria-label). The click
 		 * listener is imperative (attach zone, next to zoom): template-level
 		 * clicks on a static div fight the a11y linter for zero gain — Esc
