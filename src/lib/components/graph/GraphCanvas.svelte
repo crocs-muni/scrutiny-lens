@@ -1,8 +1,8 @@
 <script lang="ts">
 	/* GRAPH CANVAS (#29b → #95 engine swap) — the subject graph over the
-	 * session's admitted store, on d3-force + d3-zoom (ruling 2026-09-27,
-	 * issue #95). All prior rulings land unchanged — the engine, not the
-	 * grammar, was swapped (@xyflow/svelte is gone):
+	 * session's admitted store, on d3-force under a derived camera (rulings
+	 * 2026-09-27 #95 / 2026-09-28 #103). All prior rulings land unchanged —
+	 * the engine, not the grammar, was swapped (@xyflow/svelte is gone):
 	 *
 	 *  - Subject scope (2): fixed subject + its records + related-product
 	 *    multihop ends; deriveSubjectGraph owns topology, canvas-sim owns
@@ -34,8 +34,9 @@
 
 	import '../chat/citations.css';
 	import { untrack } from 'svelte';
-	import { select } from 'd3-selection';
-	import { zoom as d3zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
+	// NO d3-zoom here, by ruling (#103 camera grammar): the camera is a pure
+	// function of stage size, live bounds center, stored zoom k and a stored
+	// pan offset — nothing else can be the truth, so nothing can go stale.
 	import GraphNode, { DENSE_NODE_GATE, TIER_HALF, tierOf, type GraphNodeData } from './GraphNode.svelte';
 	import CanvasToolbar, { type CanvasViewportActions } from './CanvasToolbar.svelte';
 	import { CanvasSim, clipToBorder, type SimNode } from '$lib/graph/canvas-sim';
@@ -71,15 +72,43 @@
 	sim.setTick(flushFrame);
 
 	let stage = $state<HTMLDivElement | null>(null);
-	let cam = $state({ k: 1, x: 0, y: 0 });
+	let stageW = $state(0);
+	let stageH = $state(0);
+	// Derived camera (#103): translation is COMPUTED, never stored —
+	//   cam = stageCenter − k·boundsCenter + panOffset
+	// Stored state is exactly three numbers: zoom level and the user's pan
+	// offset. Bounds center is re-measured every flush (cheap, it rides the
+	// existing per-frame node sweep), so a stage resize, a settle, or a
+	// dragged card re-centers the frame with no special-case refit calls.
+	let cameraK = $state(1);
+	let panOX = $state(0);
+	let panOY = $state(0);
+	let boundsVersion = $state(0); // bumped by flushFrame when the center moved
+	const boundsC = $derived.by(() => {
+		void boundsVersion; // positions live outside the reactive graph — this is the pulse
+		let x0 = Infinity,
+			y0 = Infinity,
+			x1 = -Infinity,
+			y1 = -Infinity;
+		for (const n of sim.nodes) {
+			x0 = Math.min(x0, n.x!);
+			y0 = Math.min(y0, n.y!);
+			x1 = Math.max(x1, n.x!);
+			y1 = Math.max(y1, n.y!);
+		}
+		return x1 === -Infinity ? { x: 0, y: 0 } : { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+	});
+	const cam = $derived({
+		k: cameraK,
+		x: stageW / 2 - cameraK * boundsC.x + panOX,
+		y: stageH / 2 - cameraK * boundsC.y + panOY
+	});
 	let settling = $state(false);
 	let toolbarActions = $state<CanvasViewportActions | null>(null);
 
 	const wrapperRefs = new Map<string, HTMLElement>();
 	const lineRefs = new Map<string, SVGLineElement>();
 
-	let zoomBehavior: ZoomBehavior<HTMLDivElement, unknown> | null = null;
-	let stageSel: ReturnType<typeof select<HTMLDivElement, unknown>> | null = null;
 	let draggingId: string | null = null;
 	/** Expansion gesture → the branch reheat fires on the corresponding
 	 * derived-view apply (the bubble click precedes the store write by design). */
@@ -184,10 +213,31 @@
 		untrack(flushFrame);
 	});
 
+	let lastCX: number | null = null;
+	let lastCY: number | null = null;
 	function flushFrame() {
+		let x0 = Infinity,
+			y0 = Infinity,
+			x1 = -Infinity,
+			y1 = -Infinity;
 		for (const n of sim.nodes) {
+			x0 = Math.min(x0, n.x!);
+			y0 = Math.min(y0, n.y!);
+			x1 = Math.max(x1, n.x!);
+			y1 = Math.max(y1, n.y!);
 			const el = wrapperRefs.get(n.id);
 			if (el) el.style.transform = `translate(${n.x}px, ${n.y}px) translate(-50%, -50%)`;
+		}
+		if (x1 !== -Infinity) {
+			const cx = (x0 + x1) / 2;
+			const cy = (y0 + y1) / 2;
+			// The camera derives from this center — pulse the reactive world
+			// only when it actually moved (frozen map ⇒ no churn).
+			if (lastCX === null || lastCY === null || Math.abs(cx - lastCX) > 0.5 || Math.abs(cy - lastCY) > 0.5) {
+				lastCX = cx;
+				lastCY = cy;
+				boundsVersion++;
+			}
 		}
 		for (const e of sim.edges) {
 			const ln = lineRefs.get(e.id);
@@ -217,8 +267,12 @@
 	}
 
 	// --- camera --------------------------------------------------------------
+	// fit is a COMMAND, never a mode (#103 ruling): hand the frame a fresh k
+	// and clear the pan offset. Welcome-end and the toolbar button are its
+	// only callers — resize does NOT invoke it (the derived translation keeps
+	// you centered at your own k, that is the whole point).
 	function fit(): void {
-		if (!stageSel || !zoomBehavior || !stage || sim.nodes.length === 0) return;
+		if (!stage || sim.nodes.length === 0) return;
 		let x0 = Infinity,
 			y0 = Infinity,
 			x1 = -Infinity,
@@ -229,17 +283,29 @@
 			x1 = Math.max(x1, n.x! + 140);
 			y1 = Math.max(y1, n.y! + 100);
 		}
-		const w = stage.clientWidth || 1;
-		const h = stage.clientHeight || 1;
-		const k = Math.max(
+		cameraK = Math.max(
 			ZOOM_MIN,
-			Math.min(FIT_OPTIONS.maxZoom, Math.min(w / (x1 - x0), h / (y1 - y0)) * (1 - FIT_OPTIONS.padding))
+			Math.min(
+				FIT_OPTIONS.maxZoom,
+				Math.min((stageW || 1) / (x1 - x0), (stageH || 1) / (y1 - y0)) * (1 - FIT_OPTIONS.padding)
+			)
 		);
-		stageSel.call(
-			zoomBehavior.transform,
-			zoomIdentity.translate(w / 2 - (k * (x0 + x1)) / 2, h / 2 - (k * (y0 + y1)) / 2).scale(k)
-		);
-		cameraOwnedByUser = false; // auto-fit reclaims the framing
+		panOX = 0;
+		panOY = 0;
+		flushFrame(); // bounds pulse → the derived cam snaps onto this k now
+	}
+
+	/** Zoom anchored at a stage point (wheel: pointer; buttons: center). Keeps
+	 * the world point under the anchor glued there — the pan OFFSET absorbs
+	 * the k change, everything else is the one derived line. */
+	function zoomAt(px: number, py: number, factor: number): void {
+		const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, cameraK * factor));
+		if (next === cameraK) return;
+		const qx = (px - cam.x) / cameraK;
+		const qy = (py - cam.y) / cameraK;
+		cameraK = next;
+		panOX = px - stageW / 2 + next * boundsC.x - next * qx;
+		panOY = py - stageH / 2 + next * boundsC.y - next * qy;
 	}
 
 	// Ref actions: keep the imperative render loop's DOM map honest across
@@ -276,17 +342,12 @@
 	let dragCandidate: { id: string; pointerId: number } | null = null;
 	let firstApplyDone = false;
 	let welcomeFitPending = false;
-	// Camera ownership (#103, d3-tree contrast): the notebook keeps centering
-	// as a per-tick force; we keep it as an auto-fit that MUST re-run when
-	// its assumptions change (stage resize) — but only while the user hasn't
-	// taken the camera. A user gesture (pan/zoom with a source event) claims
-	// it; every auto-fit returns ownership to the framing.
-	let cameraOwnedByUser = false;
 	// A drag that RELEASES off its card still fires a click on the nearest
 	// common ancestor = the stage. Untreated, paneClick would deselect the
 	// very node the drag just selected (review F1, #102) — so the episode
-	// marks itself and the pane swallows that one click.
+	// marks itself and the pane swallows that one click. Same for pan drag.
 	let justDragged = false;
+	let justPanned = false;
 
 	function onNodePointerDown(id: string, e: PointerEvent) {
 		if (e.button !== 0) return;
@@ -327,42 +388,54 @@
 	}
 	// Session graph region (xyflow carried the same aria-label). The attach is
 	// a NAMED function: an inline arrow gets a fresh identity at every parent
-	// re-render, which detaches/re-attaches on every state change and resets
-	// the d3-zoom transform to identity — that was the selection-click camera
-	// wipe (adversarial follow-up #95). Stable identity → attach once, live
-	// until the {#key} remount.
+	// re-render — stable identity → attach once, live until remount.
+	// Pointer layout: nodes drag cards (wrapper handler above); the stage's
+	// own empty surface PANS (the derived camera's pan offset), wheel ZOOMS
+	// around the pointer.
 	function setupStage(el: HTMLDivElement): () => void {
-		zoomBehavior = d3zoom<HTMLDivElement, unknown>()
-			.scaleExtent([ZOOM_MIN, ZOOM_MAX])
-			.filter((ev: Event) => {
-				if (ev.type === 'wheel') return true;
-				// Nothing consumes dblclick on the canvas (expansion lives on
-				// the bubble, #97) — don't let d3's dblclick-zoom hijack it.
-				if (ev.type === 'dblclick') return false;
-				return !(ev.target as HTMLElement).closest('.scrutiny-node');
-			})
-			.on('zoom', (ev: { transform: ZoomTransform; sourceEvent?: Event | null }) => {
-				// d3-zoom: sourceEvent is present on user gestures, absent on
-				// programmatic transforms (our fit/zoom-in/out buttons).
-				if (ev.sourceEvent != null) cameraOwnedByUser = true;
-				cam = { k: ev.transform.k, x: ev.transform.x, y: ev.transform.y };
-				flushFrame();
-			});
-		stageSel = select(el);
-		stageSel.call(zoomBehavior);
+		// Pan: starts past ≈4 px on empty stage (never on a card), moves the
+		// pan offset 1:1 with the pointer.
+		let panning = false;
+		let panStart: [number, number] = [0, 0];
+		const panDown = (ev: PointerEvent) => {
+			if (ev.button !== 0 || (ev.target as HTMLElement).closest('.scrutiny-node')) return;
+			panning = true;
+			justPanned = false;
+			panStart = [ev.clientX - panOX, ev.clientY - panOY];
+		};
+		const panMove = (ev: PointerEvent) => {
+			if (!panning) return;
+			const nx = ev.clientX - panStart[0];
+			const ny = ev.clientY - panStart[1];
+			if (!justPanned && Math.hypot(nx - panOX, ny - panOY) < 4) return;
+			justPanned = true;
+			panOX = nx;
+			panOY = ny;
+		};
+		const panUp = () => (panning = false);
+		el.addEventListener('pointerdown', panDown);
+		window.addEventListener('pointermove', panMove);
+		window.addEventListener('pointerup', panUp);
+		const wheel = (ev: WheelEvent) => {
+			ev.preventDefault();
+			const rect = el.getBoundingClientRect();
+			zoomAt(ev.clientX - rect.left, ev.clientY - rect.top, Math.exp(-ev.deltaY * 0.0015));
+		};
+		el.addEventListener('wheel', wheel, { passive: false });
 		// Empty-pane deselect: ONLY the stage itself counts — edges and
 		// arrowheads are click targets too, and xyflow's old Pane rule never
 		// let edge clicks deselect (ruling 7).
 		const paneClick = (ev: MouseEvent) => {
-			if (ev.target === el && !justDragged) onDeselect();
-			justDragged = false; // one-shot swallow, drag or not
+			if (ev.target === el && !justDragged && !justPanned) onDeselect();
+			justDragged = false; // one-shot swallows, drag or not
+			justPanned = false;
 		};
 		el.addEventListener('click', paneClick);
 		window.addEventListener('pointermove', onWindowPointerMove);
 		window.addEventListener('pointerup', onWindowPointerUp);
 		toolbarActions = {
-			zoomIn: () => stageSel!.call(zoomBehavior!.scaleBy, 1.3),
-			zoomOut: () => stageSel!.call(zoomBehavior!.scaleBy, 1 / 1.3),
+			zoomIn: () => zoomAt(stageW / 2, stageH / 2, 1.3),
+			zoomOut: () => zoomAt(stageW / 2, stageH / 2, 1 / 1.3),
 			fit
 		};
 		// The opening camera: NOT at mount (t0 pile-up), but after the first
@@ -373,29 +446,24 @@
 				fit();
 			}
 		});
-		// #103: the frame is only valid for the stage SIZE it was computed
-		// for. The dossier below keeps growing after the welcome, the chat
-		// column toggles, the window resizes — any of these shrinks the
-		// stage and the world stays pinned top-left (the "bottom-right
-		// world" bug). Re-fit on resize, debounced, ONLY while the camera
-		// is auto (a user pan/zoom claims it) and no drag owns the pointer.
-		let resizeFitTimer: ReturnType<typeof setTimeout> | null = null;
-		const resizeObserver = new ResizeObserver(() => {
-			if (cameraOwnedByUser || draggingId !== null) return;
-			if (resizeFitTimer) clearTimeout(resizeFitTimer);
-			resizeFitTimer = setTimeout(() => {
-				resizeFitTimer = null;
-				fit();
-			}, 120);
+		// The ONLY resize work left: feed the derived camera fresh stage
+		// dims. Re-centering is free from here — it is one derived line, not
+		// a call chain.
+		const resizeObserver = new ResizeObserver((entries) => {
+			const r = entries[0].contentRect;
+			stageW = r.width;
+			stageH = r.height;
 		});
 		resizeObserver.observe(el);
 		return () => {
-			if (resizeFitTimer) clearTimeout(resizeFitTimer);
 			resizeObserver.disconnect();
+			el.removeEventListener('pointerdown', panDown);
+			el.removeEventListener('wheel', wheel);
 			el.removeEventListener('click', paneClick);
+			window.removeEventListener('pointermove', panMove);
+			window.removeEventListener('pointerup', panUp);
 			window.removeEventListener('pointermove', onWindowPointerMove);
 			window.removeEventListener('pointerup', onWindowPointerUp);
-			stageSel?.on('.zoom', null);
 			sim.setEnd(null);
 			sim.dispose();
 			toolbarActions = null;
