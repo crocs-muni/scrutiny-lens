@@ -110,8 +110,6 @@
 		return layers.join(', ');
 	});
 
-	const expandable = $derived(data.role === 'related' && data.badge !== null);
-
 	/** Time footer pieces (mono, machine-made — §9 writing rule). Hues are
 	 * boarded: the retracted word is N3's RED, chain words stay amber. */
 	const footerBits = $derived.by(() => {
@@ -130,9 +128,9 @@
 	}
 </script>
 
-<!-- The node IS one click target (ruling 6: drawer-only detail); dbl-click
- *	is the expansion gesture (ruling 8) — suppressed when there is nothing
- *	admitted to reveal. Pointer-drag is the canvas's wrapper's business. -->
+<!-- The node IS one click target (ruling 6: drawer-only detail). The +N
+ *	bubble is the expansion gesture (#97): single-click, discrete hit target —
+ *	it never selects. Pointer-drag is the canvas's wrapper's business. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
@@ -141,9 +139,6 @@
 	title={data.title}
 	onclick={() => data.onSelect(data.id)}
 	onkeydown={keySelect}
-	ondblclick={() => {
-		if (expandable) data.onExpand(data.id);
-	}}
 	onmouseenter={() => (hovered = true)}
 	onmouseleave={() => (hovered = false)}
 	class="relative rounded-[12px] border bg-surface text-left transition-shadow duration-150
@@ -213,7 +208,7 @@
 		{/if}
 
 		{#if data.role === 'related'}
-			<p class="mt-1 text-[10px] text-ink-3">related product · dbl-click expands</p>
+			<p class="mt-1 text-[10px] text-ink-3">related product · click +{data.badge ?? 'N'} to expand</p>
 		{/if}
 
 		<div
@@ -245,12 +240,23 @@
 		</div>
 	{/if}
 
-	<!-- N3/G1: admitted-but-hidden neighbors (ruling 8) — never zero-shown. -->
+	<!-- N3/G1 → #97: admitted-but-hidden neighbors (never zero-shown). The
+	 * bubble is the expansion verb — single click, discrete hit target,
+	 * never a selection. Meaning is role-bound: records hide PRODUCT
+	 * bridges, relateds hide RECORDS. -->
 	{#if data.badge !== null}
-		<span
-			class="absolute -bottom-2 -right-2 flex h-[22px] w-[22px] items-center justify-center rounded-full border-[1.5px] border-line bg-surface font-mono text-[9px] font-semibold text-ink-2"
-			title="{data.badge} admitted {data.badge === 1 ? 'neighbor' : 'neighbors'} hidden — double-click to expand"
-			>+{data.badge}</span
+		<button
+			type="button"
+			class="absolute -bottom-2 -right-2 flex h-[22px] w-[22px] items-center justify-center rounded-full border-[1.5px] border-line bg-surface font-mono text-[9px] font-semibold text-ink-2 transition-colors hover:border-accent"
+			title={data.role === 'related'
+				? `${data.badge} admitted ${data.badge === 1 ? 'record' : 'records'} hidden — click to expand`
+				: `${data.badge} related ${data.badge === 1 ? 'product' : 'products'} hidden — click to expand`}
+			onclick={(e) => {
+				e.stopPropagation();
+				data.onExpand(data.id);
+			}}
+			onpointerdown={(e) => e.stopPropagation()}
+			>+{data.badge}</button
 		>
 	{/if}
 </div>

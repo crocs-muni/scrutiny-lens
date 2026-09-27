@@ -15,10 +15,11 @@
 	 *    onSelect (the same path the results cards take), empty-canvas
 	 *    click → onDeselect; Esc is the page's. The accent ring is
 	 *    data-driven (ruling 2/#29a), never canvas-local truth.
-	 *  - Admitted-only expansion (8): the +N badge's dbl-click bubbles to
-	 *    investigation.expandRelated; every rendered edge is backed by an
-	 *    admitted event by construction. Expansion is a BRANCH-LOCAL
-	 *    reheat: the untouched map holds exactly.
+	 *  - Admitted-only expansion (8 → #97): the +N bubble is a single-click,
+	 *    discrete hit target — records expand their bridges, relateds expand
+	 *    their records; every rendered edge is backed by an admitted event
+	 *    by construction. Expansion is a BRANCH-LOCAL reheat: the untouched
+	 *    map holds exactly.
 	 *  - Frozen baseline (#95): no idle motion ever; physics exists only
 	 *    inside gestures (drag — every node movable, nothing sacred;
 	 *    expansion; the explicit Redistribute), and every episode cools to
@@ -89,6 +90,7 @@
 		return deriveSubjectGraph(events, root, {
 			showDeleted: shell.showDeleted,
 			expanded: new Set(investigation.expandedRelated),
+			expandedBridges: new Set(investigation.expandedBridges),
 			cards,
 			// Node-surface interpretations (bySurface.node): the trickle
 			// re-renders nodes in place as tiles land (owner ruling C).
@@ -124,7 +126,10 @@
 				onSelect,
 				onExpand: (target: string) => {
 					pendingExpand = target;
-					investigation.expandRelated(target);
+					// The bubble's meaning is role-bound (#97): a record's bubble
+					// reveals its related products; a related's reveals its records.
+					if (n.role === 'related') investigation.expandRelated(target);
+					else investigation.expandBridge(target);
 				}
 			} satisfies GraphNodeData;
 		});

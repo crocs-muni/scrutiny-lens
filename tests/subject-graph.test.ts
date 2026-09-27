@@ -71,6 +71,7 @@ function cardFor(event: NostrEvent, overrides: Partial<ProductCard> = {}): Produ
 }
 
 const NO_EXPAND = new Set<string>();
+const NO_BRIDGES = new Set<string>();
 
 /** base fixture: subject with two linked records (distinct verbs) — m1
  * carries the URL (files=1), m1 also bridges to related product p2, p2's
@@ -96,7 +97,7 @@ describe('deriveSubjectGraph — placement', () => {
 	it('centers the subject; records take dyadic slots by ADMISSION ORDER (ruling 3 append-only)', () => {
 		const f = baseFixture();
 		const events = [f.root, f.m1, f.m3, f.p2, f.m2, f.b1, f.b3, f.b2, f.b4];
-		const opts = { showDeleted: false, expanded: NO_EXPAND, cards: [] };
+		const opts = { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] };
 		const a = deriveSubjectGraph(events, 'root', opts);
 
 		const root = a.nodes.find((n) => n.id === 'root');
@@ -114,7 +115,7 @@ describe('deriveSubjectGraph — placement', () => {
 		const f = baseFixture();
 		const before = [f.root, f.m1, f.b1];
 		const after = [f.root, f.m1, f.b1, f.m3, f.b3];
-		const opts = { showDeleted: false, expanded: NO_EXPAND, cards: [] };
+		const opts = { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] };
 		const young = deriveSubjectGraph(before, 'root', opts);
 		const grown = deriveSubjectGraph(after, 'root', opts);
 		for (const shared of young.nodes) {
@@ -141,7 +142,7 @@ describe('deriveSubjectGraph — placement', () => {
 				binding('root', `m${i}`, 'documents', 1500 + i, `b${i}`)
 			);
 		}
-		const view = deriveSubjectGraph(events, 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph(events, 'root', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] });
 		// slot 4 = rev(4)=1 → 45° NE on the diagonal ring (radius 432):
 		// x≈y≈432·cos45≈305.47
 		const m4 = view.nodes.find((n) => n.id === 'm4');
@@ -160,7 +161,7 @@ describe('deriveSubjectGraph — placement', () => {
 
 	it('routes edges Metadata → Product with the verb label and facing handles', () => {
 		const f = baseFixture();
-		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] });
 		expect(view.edges).toHaveLength(1);
 		const edge = view.edges[0];
 		expect(edge).toMatchObject({ source: 'm1', target: 'root', label: 'affected by', related: false });
@@ -176,27 +177,42 @@ describe('deriveSubjectGraph — placement', () => {
 
 	it('an absent subject (or a non-node event) yields an empty view — the canvas', () => {
 		const f = baseFixture();
-		expect(deriveSubjectGraph([f.root], 'ghost', { showDeleted: false, expanded: NO_EXPAND, cards: [] })).toEqual({ nodes: [], edges: [] });
-		expect(deriveSubjectGraph([f.root, f.b1], 'b1', { showDeleted: false, expanded: NO_EXPAND, cards: [] })).toEqual({ nodes: [], edges: [] });
+		expect(deriveSubjectGraph([f.root], 'ghost', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] })).toEqual({ nodes: [], edges: [] });
+		expect(deriveSubjectGraph([f.root, f.b1], 'b1', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] })).toEqual({ nodes: [], edges: [] });
 	});
 });
 
-describe('deriveSubjectGraph — related products and expansion (ruling 8)', () => {
-	it('a shared linked record exposes the other end as a related product with a hidden-neighbor badge; the edge stays', () => {
+describe('deriveSubjectGraph — related products and expansion (ruling 8 → #97)', () => {
+	it('t0 hides related products and their bridge edges entirely; the shared record carries the +N bubble', () => {
 		const f = baseFixture();
 		const view = deriveSubjectGraph([f.root, f.m1, f.m3, f.p2, f.m2, f.b1, f.b3, f.b2, f.b4], 'root', {
 			showDeleted: false,
-			expanded: NO_EXPAND,
+			expanded: NO_EXPAND, expandedBridges: NO_BRIDGES,
+			cards: []
+		});
+		// #97: no related product node, no orange edge, until the user clicks.
+		expect(view.nodes.some((n) => n.id === 'p2')).toBe(false);
+		expect(view.edges.some((e) => e.id === 'b2')).toBe(false);
+		// The bridge record's badge counts the exact related products hidden.
+		expect(view.nodes.find((n) => n.id === 'm1')).toMatchObject({ role: 'record', badge: 1 });
+		// A bridge-free record has nothing and shows nothing (never zero-shown).
+		expect(view.nodes.find((n) => n.id === 'm3')).toMatchObject({ role: 'record', badge: null });
+	});
+
+	it('a bridge bubble click reveals the related product WITH its dashed edge and drains the record badge', () => {
+		const f = baseFixture();
+		const view = deriveSubjectGraph([f.root, f.m1, f.m3, f.p2, f.m2, f.b1, f.b3, f.b2, f.b4], 'root', {
+			showDeleted: false,
+			expanded: NO_EXPAND, expandedBridges: new Set(['m1']),
 			cards: []
 		});
 		const p2 = view.nodes.find((n) => n.id === 'p2');
-		expect(p2).toBeDefined();
-		expect(p2).toMatchObject({ role: 'related', badge: 1 }); // m2 is admitted but not placed
-		// The bridge edge to the related product renders dashed (G1 multihop
-		// ray)…
+		expect(p2).toMatchObject({ role: 'related', badge: 1 }); // m2 admitted, still hidden
 		const bridge = view.edges.find((e) => e.id === 'b2');
 		expect(bridge).toMatchObject({ source: 'm1', target: 'p2', related: true });
-		// …but the hidden neighbor itself has no node and no edge.
+		// The expanded bridge's record no longer counts what it just revealed.
+		expect(view.nodes.find((n) => n.id === 'm1')).toMatchObject({ badge: null });
+		// …but the hidden neighbor itself still has no node and no edge.
 		expect(view.nodes.some((n) => n.id === 'm2')).toBe(false);
 		expect(view.edges.some((e) => e.id === 'b4')).toBe(false);
 	});
@@ -207,6 +223,8 @@ describe('deriveSubjectGraph — related products and expansion (ruling 8)', () 
 		const view = deriveSubjectGraph(events, 'root', {
 			showDeleted: false,
 			expanded: new Set(['p2']),
+			// #97: related products enter the view only through an expanded bridge
+			expandedBridges: new Set(['m1']),
 			cards: []
 		});
 		const p2 = view.nodes.find((n) => n.id === 'p2');
@@ -228,7 +246,7 @@ describe('deriveSubjectGraph — related products and expansion (ruling 8)', () 
 	it('a binding to a never-admitted event contributes nothing — no node, edge, or silent guess', () => {
 		const f = baseFixture();
 		const ghost = binding('root', 'ghost-meta', 'documents', 1900, 'b9');
-		const view = deriveSubjectGraph([f.root, f.m1, f.b1, ghost], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1, ghost], 'root', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] });
 		expect(view.nodes.map((n) => n.id)).toEqual(['root', 'm1']);
 		expect(view.edges).toHaveLength(1);
 		// Subject counts are dossier-parity (dossier.ts fileRows): "bindings
@@ -256,17 +274,17 @@ describe('deriveSubjectGraph — retraction (ruling 10)', () => {
 		const bd = binding('root', 'mdel', 'documents', 1300, 'bd');
 		const ba = binding('root', 'alive', 'documents', 1400, 'ba');
 		const events = [root, mdel, alive, bd, ba, DEL('mdel')];
-		const hidden = deriveSubjectGraph(events, 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const hidden = deriveSubjectGraph(events, 'root', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] });
 		expect(hidden.nodes.some((n) => n.id === 'mdel')).toBe(false);
 		expect(hidden.edges.some((e) => e.id === 'bd')).toBe(false);
-		const shown = deriveSubjectGraph(events, 'root', { showDeleted: true, expanded: NO_EXPAND, cards: [] });
+		const shown = deriveSubjectGraph(events, 'root', { showDeleted: true, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] });
 		expect(shown.nodes.find((n) => n.id === 'mdel')).toMatchObject({ retracted: true });
 		expect(shown.edges.some((e) => e.id === 'bd')).toBe(true);
 	});
 
 	it('the subject always renders, retraction included — the canvas mirrors an opened dossier', () => {
 		const root = product('root\n', 1000, [], 'root');
-		const view = deriveSubjectGraph([root, DEL('root')], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([root, DEL('root')], 'root', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] });
 		expect(view.nodes).toHaveLength(1);
 		expect(view.nodes[0]).toMatchObject({ id: 'root', role: 'subject', retracted: true });
 	});
@@ -277,7 +295,7 @@ describe('deriveSubjectGraph — chain word and edited count (ruling 9)', () => 
 		const root = product('v1\n', 1000, [], 'root');
 		const p1 = patch('root', 'root', 'v1\n', 'v2\n', 2000, 'p1');
 		const p2 = patch('root', 'p1', 'v2\n', 'v3\n', 3000, 'p2');
-		const view = deriveSubjectGraph([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] });
 		expect(view.nodes[0]).toMatchObject({ editedN: 2, chainWord: null });
 	});
 
@@ -286,7 +304,7 @@ describe('deriveSubjectGraph — chain word and edited count (ruling 9)', () => 
 		const p1 = patch('root', 'root', 'v1\n', 'v2\n', 2000, 'p1');
 		// H1 halt: a well-formed diff against the wrong base (T1 no-match).
 		const p2 = patch('root', 'p1', 'WRONG\n', 'v3\n', 3000, 'p2');
-		const view = deriveSubjectGraph([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] });
 		expect(view.nodes[0]).toMatchObject({ editedN: 1, chainWord: 'halted' });
 	});
 
@@ -294,7 +312,7 @@ describe('deriveSubjectGraph — chain word and edited count (ruling 9)', () => 
 		const root = product('v1\n', 1000, [], 'root');
 		const p1 = patch('root', 'root', 'v1\n', 'v2-a\n', 2000, 'p1a');
 		const p2 = patch('root', 'root', 'v1\n', 'v2-b\n', 2100, 'p1b');
-		const view = deriveSubjectGraph([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const view = deriveSubjectGraph([root, p1, p2], 'root', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] });
 		expect(view.nodes[0]).toMatchObject({ editedN: 0, chainWord: 'forked' });
 	});
 
@@ -308,7 +326,7 @@ describe('deriveSubjectGraph — chain word and edited count (ruling 9)', () => 
 			.join('\n');
 		const root = product(wide, 1000, [], 'root');
 		const p1 = patch('root', 'root', wide, changed, 2000, 'p1');
-		const res = deriveSubjectGraph([root, p1], 'root', { showDeleted: false, expanded: NO_EXPAND, cards: [] });
+		const res = deriveSubjectGraph([root, p1], 'root', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] });
 		expect(res.nodes[0].chainWord).toBe('stopped at limit');
 	});
 
@@ -331,7 +349,7 @@ describe('deriveSubjectGraph — node voice', () => {
 	it('interpreted products take the cache title+snippet; metadata stays rule-5 mono with no snippet', () => {
 		const f = baseFixture();
 		const cards = [cardFor(f.root)];
-		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', { showDeleted: false, expanded: NO_EXPAND, cards });
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards });
 		const root = view.nodes.find((n) => n.id === 'root');
 		expect(root).toMatchObject({ title: 'AI title', interpreted: true, snippet: 'AI description' });
 		const m1 = view.nodes.find((n) => n.id === 'm1');
@@ -349,7 +367,7 @@ describe('deriveSubjectGraph — node voice', () => {
 		]);
 		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', {
 			showDeleted: false,
-			expanded: NO_EXPAND,
+			expanded: NO_EXPAND, expandedBridges: NO_BRIDGES,
 			cards: [cardFor(f.root)],
 			tiles
 		});
@@ -369,7 +387,7 @@ describe('deriveSubjectGraph — node voice', () => {
 		// Fallback stays pure without a tile — interpreted marks the voice.
 		const noTiles = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', {
 			showDeleted: false,
-			expanded: NO_EXPAND,
+			expanded: NO_EXPAND, expandedBridges: NO_BRIDGES,
 			cards: []
 		});
 		expect(noTiles.nodes.find((n) => n.id === 'm1')).toMatchObject({ interpreted: false, typeToken: undefined });
@@ -381,6 +399,9 @@ describe('deriveSubjectGraph — node voice', () => {
 		const view = deriveSubjectGraph([f.root, f.m1, f.m3, f.p2, f.m2, f.b1, f.b3, f.b2, f.b4], 'root', {
 			showDeleted: false,
 			expanded: NO_EXPAND,
+			// #97: this test's purpose is ADMITTED-vs-PLACED counts, not
+			// visibility gating — the bridge is opened so p2 is in the frame.
+			expandedBridges: new Set(['m1']),
 			cards: []
 		});
 		expect(view.nodes.find((n) => n.id === 'root')).toMatchObject({ boundMetadata: 2, files: 1 });
@@ -395,7 +416,7 @@ describe('deriveSubjectGraph — node voice', () => {
 		// shows exactly these rows).
 		const view = deriveSubjectGraph([f.root, f.m1, f.p2, f.b1, f.b2], 'm1', {
 			showDeleted: false,
-			expanded: NO_EXPAND,
+			expanded: NO_EXPAND, expandedBridges: NO_BRIDGES,
 			cards: []
 		});
 		const subject = view.nodes.find((n) => n.id === 'm1');

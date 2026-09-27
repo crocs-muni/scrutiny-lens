@@ -139,6 +139,11 @@ export interface SubjectGraphOptions {
 	showDeleted: boolean;
 	/** Related products whose admitted neighbors are revealed (ruling 8). */
 	expanded: ReadonlySet<string>;
+	/** Ring-1 records whose bridge bubble was clicked (#97): the related
+	 * products behind them render (until then, t0 is subject + records only
+	 * and no bridge edges exist). A related product renders iff at least
+	 * one of its bridges is in this set. */
+	expandedBridges: ReadonlySet<string>;
 	/** The interpretations cache's materialized face (product titles/snippets). */
 	cards: ProductCard[];
 	/** Node-surface interpretations (bySurface.node), materialized by the
@@ -364,6 +369,10 @@ export function deriveSubjectGraph(
 	const r3 = r2 + R_STEP;
 	const relatedAngle = new Map<string, number>();
 	for (const [relatedId, bridges] of [...relatedOf].sort(([a], [b]) => a.localeCompare(b))) {
+		// #97: related products render only after the user expands one of
+		// their bridges — unexpanded bridges keep them (and their edges)
+		// completely off the map; the record's bubble counts them.
+		if (!bridges.some((b) => opts.expandedBridges.has(b))) continue;
 		const angles = bridges.map((b) => angleOf.get(b) ?? 0);
 		// Circular mean keeps bridges on opposite sides from averaging to 0.
 		const mx = angles.reduce((s, a) => s + Math.cos(a), 0) / angles.length;
@@ -377,6 +386,9 @@ export function deriveSubjectGraph(
 	// around its anchor ray.
 	const byAnchor = new Map<string, string[]>();
 	for (const [leaf, { anchor }] of recordsOfRelated) {
+		// Defensive: leaves fan around a PLACED anchor only — an expanded
+		// related whose bridge bubble was never clicked owns no geometry.
+		if (!placed.has(anchor)) continue;
 		const list = byAnchor.get(anchor) ?? [];
 		list.push(leaf);
 		byAnchor.set(anchor, list);
@@ -460,9 +472,14 @@ export function deriveSubjectGraph(
 	const nodes: SubjectGraphNode[] = [nodeFor(rootId, 'subject')];
 	for (const id of ring1Ids) nodes.push(nodeFor(id, 'record'));
 	for (const [relatedId] of [...relatedOf].sort(([a], [b]) => a.localeCompare(b))) {
+		if (!placed.has(relatedId)) continue; // bridge bubble unexpanded (#97)
 		nodes.push(nodeFor(relatedId, expanded.has(relatedId) ? 'record' : 'related'));
 	}
-	for (const [leaf] of recordsOfRelated) nodes.push(nodeFor(leaf, 'record'));
+	for (const [leaf] of recordsOfRelated) {
+		// Same defense as the fan: no node without a placed anchor (#97).
+		if (!placed.has(leaf)) continue;
+		nodes.push(nodeFor(leaf, 'record'));
+	}
 
 	/* ---------------- edges ---------------- */
 	const edges: SubjectGraphEdge[] = [];
@@ -489,7 +506,10 @@ export function deriveSubjectGraph(
 	// The subject's own records ↔ subject edges.
 	for (const [, b] of ring1) pushEdge(b, false);
 	// Bridge ↔ related product, and expanded related product ↔ its records.
+	// (#97: no orange edges until the bridge's bubble is clicked — the
+	// related product isn't placed for unexpanded bridges.)
 	for (const [relatedId, bridges] of relatedOf) {
+		if (!placed.has(relatedId)) continue;
 		for (const bridgeId of bridges) {
 			const b = (bindingsByEndpoint.get(bridgeId) ?? []).find(
 				(row) => otherEnd(row, bridgeId) === relatedId

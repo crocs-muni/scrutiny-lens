@@ -71,7 +71,7 @@
 		title={settling ? 'physics running — it stops by itself' : 'fully frozen — nothing moves at rest'}
 		>{settling ? 'settling…' : 'frozen'}</span
 	>
-	{#if investigation.expandedRelated.length > 0}
+	{#if investigation.expansionLog.length > 0}
 		<button
 			class="flex h-8 items-center gap-1.5 rounded-[7px] border border-line px-2.5 text-[12px] text-ink-2 transition-colors hover:bg-hover"
 			title="Undo last expansion"
