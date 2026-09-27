@@ -200,6 +200,13 @@ class Investigation {
    * Admitted-only: entries never imply a fetch. */
   expandedRelated = $state<string[]>([]);
 
+  /** #97: ring-1 records whose bridge bubble was clicked — their related
+   * products render (and the orange bridge edges with them). */
+  expandedBridges = $state<string[]>([]);
+  /** One LIFO across both expansion kinds (#29b/#97 compound undo): the
+   * toolbar chip pops whichever expansion was LAST, by kind. */
+  expansionLog = $state<('related' | 'bridge')[]>([]);
+
   /** Subjects whose §8.2 dossier context was fetched (or is in flight) —
    * one traversal per subject per session; dies with the session (start()
    * re-creates it with the rest of the run's state). */
@@ -267,6 +274,8 @@ class Investigation {
     this.selectedEventId = null;
     this.graphSubjectId = null;
     this.expandedRelated = [];
+    this.expandedBridges = [];
+    this.expansionLog = [];
     this.contextFetched = new Set();
     this.shareHints = [];
     this.hasShareHints = false;
@@ -763,7 +772,17 @@ class Investigation {
 
   /** Reveal a related product's admitted neighbors (#29b ruling 8). */
   expandRelated(id: string): void {
-    if (!this.expandedRelated.includes(id)) this.expandedRelated.push(id);
+    if (this.expandedRelated.includes(id)) return;
+    this.expandedRelated.push(id);
+    this.expansionLog.push('related');
+  }
+
+  /** Reveal the related products behind a ring-1 record (#97: the bridge
+   * bubble is the only way, one record at a time). */
+  expandBridge(id: string): void {
+    if (this.expandedBridges.includes(id)) return;
+    this.expandedBridges.push(id);
+    this.expansionLog.push('bridge');
   }
 
   /* ---------------------------------------------------------------- *
@@ -902,9 +921,12 @@ class Investigation {
   }
 
 
-  /** Toolbar's undo chip — pops the LAST expansion, nothing else. */
+  /** Toolbar's undo chip — pops the LAST expansion, either kind (#29b/#97
+   * compound LIFO via expansionLog). */
   undoExpandRelated(): void {
-    this.expandedRelated.pop();
+    const last = this.expansionLog.pop();
+    if (last === 'bridge') this.expandedBridges.pop();
+    else if (last === 'related') this.expandedRelated.pop();
   }
 
   /** @internal — the module-level reset seam (reload/close) clears the
@@ -1280,6 +1302,8 @@ export function resetInvestigation(): void {
   investigation.selectedEventId = null;
   investigation.graphSubjectId = null;
   investigation.expandedRelated = [];
+  investigation.expandedBridges = [];
+  investigation.expansionLog = [];
   investigation.hasShareHints = false;
   investigation.contextFetched = new Set();
   investigation.shareHints = [];
