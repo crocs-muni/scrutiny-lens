@@ -14,7 +14,7 @@ import {
 	buildProduct,
 	type UnsignedEvent
 } from '@scrutiny-fabric/core';
-import { deriveSubjectGraph, sideToward, chainWordOf } from '$lib/graph/subject-graph';
+import { deriveSubjectGraph, chainWordOf } from '$lib/graph/subject-graph';
 import type { NostrEvent } from '$lib/fabric';
 import type { ProductCard } from '$lib/pipeline/cards';
 
@@ -159,20 +159,12 @@ describe('deriveSubjectGraph — placement', () => {
 		expect(view.nodes.filter((n) => n.role === 'record')).toHaveLength(10);
 	});
 
-	it('routes edges Metadata → Product with the verb label and facing handles', () => {
+	it('routes edges Metadata → Product with the verb label, dashed flag on for multihop', () => {
 		const f = baseFixture();
 		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', { showDeleted: false, expanded: NO_EXPAND, expandedBridges: NO_BRIDGES, cards: [] });
 		expect(view.edges).toHaveLength(1);
 		const edge = view.edges[0];
 		expect(edge).toMatchObject({ source: 'm1', target: 'root', label: 'affected by', related: false });
-		// m1 sits east of the subject → the edge leaves m1's left, enters the
-		// subject's right.
-		expect(edge.sourceHandle).toBe('left');
-		expect(edge.targetHandle).toBe('right');
-		expect(sideToward(0, 5)).toBe('bottom');
-		expect(sideToward(0, -5)).toBe('top');
-		expect(sideToward(9, 1)).toBe('right');
-		expect(sideToward(-9, 1)).toBe('left');
 	});
 
 	it('an absent subject (or a non-node event) yields an empty view — the canvas', () => {

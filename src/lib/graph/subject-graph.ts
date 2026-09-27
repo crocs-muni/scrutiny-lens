@@ -112,15 +112,9 @@ export interface SubjectGraphEdge {
 	target: string;
 	/** The binding event's content — the verb ("documents"). '' = none. */
 	label: string;
-	/** Handles face each other across the edge (quadrants of the from→to
-	 * vector) so curves never pierce cards. */
-	sourceHandle: HandleSide;
-	targetHandle: HandleSide;
 	/** Edge into a related product — N3/G1 dashed "also affects → multihop". */
 	related: boolean;
 }
-
-export type HandleSide = 'left' | 'right' | 'top' | 'bottom';
 
 export interface SubjectGraph {
 	nodes: SubjectGraphNode[];
@@ -197,11 +191,8 @@ function otherEnd(row: BindingRow, id: string): string {
 	return row.productId === id ? row.metadataId : row.productId;
 }
 
-/** Quadrant of the from→to vector — the side the edge should attach to. */
-export function sideToward(dx: number, dy: number): HandleSide {
-	if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 'right' : 'left';
-	return dy >= 0 ? 'bottom' : 'top';
-}
+/** xyflow attach-side computation lived here; the d3 canvas clips edges at
+ * card borders instead (canvas-sim clipToBorder). Deleted 2026-09-27. */
 
 /** One cast per boundary (fabric seam policy) — matches fabric/index.ts. */
 function asCore(event: NostrEvent): CoreNostrEvent {
@@ -491,15 +482,11 @@ export function deriveSubjectGraph(
 		if (from === undefined || to === undefined) {
 			throw new Error(`subject-graph: edge ${b.id} references unplaced endpoint (layout regression)`);
 		}
-		const sSide = sideToward(to.x - from.x, to.y - from.y);
-		const tSide = sideToward(from.x - to.x, from.y - to.y);
 		edges.push({
 			id: b.id,
 			source: b.metadataId,
 			target: b.productId,
 			label: b.label,
-			sourceHandle: sSide,
-			targetHandle: tSide,
 			related
 		});
 	}
@@ -511,6 +498,10 @@ export function deriveSubjectGraph(
 	for (const [relatedId, bridges] of relatedOf) {
 		if (!placed.has(relatedId)) continue;
 		for (const bridgeId of bridges) {
+			// #97's letter: orange edges render ONLY for the bubble you
+			// actually clicked — placing the related product DOES NOT
+			// disclose its other bridges.
+			if (!opts.expandedBridges.has(bridgeId)) continue;
 			const b = (bindingsByEndpoint.get(bridgeId) ?? []).find(
 				(row) => otherEnd(row, bridgeId) === relatedId
 			);
