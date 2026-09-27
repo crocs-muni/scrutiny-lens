@@ -159,6 +159,14 @@
 	$effect(() => {
 		const view = graph; // the single tracked dep
 		const added = sim.applyView(view);
+		// The welcome (#102 ruling): the FIRST batch of arrivals rehearses the
+		// map into its ring grammar on-screen; the camera frames only the
+		// organized result — fitting the t0 pile-up would zoom tight, then
+		// watch everyone spread out of frame.
+		if (added.length > 0 && !firstApplyDone) {
+			firstApplyDone = true;
+			welcomeFitPending = true;
+		}
 		// Mid-drag removal (live retraction, undo-expand): the card is gone, so
 		// its pointerup never lands — cool the episode down at the sync point.
 		if (draggingId && !sim.get(draggingId)) {
@@ -265,6 +273,8 @@
 	//     unpin the whole map and micro-drift it (selection never moves the
 	//     layout, ruling 4) — so the drag starts only past ≈4 screen px.
 	let dragCandidate: { id: string; pointerId: number } | null = null;
+	let firstApplyDone = false;
+	let welcomeFitPending = false;
 	// A drag that RELEASES off its card still fires a click on the nearest
 	// common ancestor = the stage. Untreated, paneClick would deselect the
 	// very node the drag just selected (review F1, #102) — so the episode
@@ -345,15 +355,20 @@
 			zoomOut: () => stageSel!.call(zoomBehavior!.scaleBy, 1 / 1.3),
 			fit
 		};
-		// One fresh map per anchor: macro-task so the first $effect apply lands
-		// before fit reads the nodes (attach then effect, both sync from mount).
-		const mountFitTimer = setTimeout(fit, 0);
+		// The opening camera: NOT at mount (t0 pile-up), but after the first
+		// arrival episode freezes — fit frames the organized map once.
+		sim.setEnd(() => {
+			if (welcomeFitPending) {
+				welcomeFitPending = false;
+				fit();
+			}
+		});
 		return () => {
-			clearTimeout(mountFitTimer);
 			el.removeEventListener('click', paneClick);
 			window.removeEventListener('pointermove', onWindowPointerMove);
 			window.removeEventListener('pointerup', onWindowPointerUp);
 			stageSel?.on('.zoom', null);
+			sim.setEnd(null);
 			sim.dispose();
 			toolbarActions = null;
 		};

@@ -113,6 +113,7 @@ export class CanvasSim {
 	private sim: Simulation<SimNode, SimEdge>;
 	private byId = new Map<string, SimNode>();
 	private tickCb: (() => void) | null = null;
+	private endCb: (() => void) | null = null;
 	private dragging: string | null = null;
 
 	constructor() {
@@ -122,9 +123,19 @@ export class CanvasSim {
 			.force('collide', forceCollide<SimNode>((n) => COLLIDE_RADIUS[n.n.kind]).iterations(2))
 			.force('x', forceX(0).strength(0.03))
 			.force('y', forceY(0).strength(0.03))
+			// SLOT GRAVITY (#102 follow-up, owner ruling 2026-09-28 — the
+			// @d3/force-directed-tree idiom): a weak per-node pull toward the
+			// derived ring slot. This is what turns admission reheats into a
+			// visible "organize" instead of drift: nodes flow toward the ring
+			// grammar, settle there, and freeze where they lie.
+			.force('slotX', forceX<SimNode>((n) => n.n.x).strength(0.03))
+			.force('slotY', forceY<SimNode>((n) => n.n.y).strength(0.03))
 			.stop();
 		this.sim.on('tick', () => this.tickCb?.());
-		this.sim.on('end', () => this.freeze());
+		this.sim.on('end', () => {
+			this.freeze();
+			this.endCb?.();
+		});
 		// Baseline truth: cooler than the off-switch, not merely stopped —
 		// stop() leaves alpha hot (the spike's "stuck settling" bug).
 		this.sim.alpha(0);
@@ -132,6 +143,9 @@ export class CanvasSim {
 
 	setTick(cb: (() => void) | null): void {
 		this.tickCb = cb;
+	}
+	setEnd(cb: (() => void) | null): void {
+		this.endCb = cb;
 	}
 
 	settling(): boolean {
@@ -147,18 +161,32 @@ export class CanvasSim {
 	 * wherever the user's gestures (or nothing) left them, so re-derives
 	 * (tiles, citations, show-deleted) never reset the map.
 	 * Returns the ids of nodes added by this view.
+	 *
+	 * ARRIVAL EPISODE (@d3/force-directed-tree, owner ruling 2026-09-28):
+	 * newcomers enter AT the subject (their world-parent in this graph),
+	 * unpinned, and the whole component reheats — slot gravity flows
+	 * everyone toward the ring grammar over the next breath, then 'end'
+	 * freezes the organized map. The first apply (session open) is the
+	 * same episode, so the welcome is organic, never scripted.
 	 */
 	applyView(view: SubjectGraph): string[] {
 		const wanted = new Map(view.nodes.map((n) => [n.id, n]));
 		const added: string[] = [];
+		const subj = view.nodes.find((n) => n.role === 'subject') ?? view.nodes[0];
 		for (const n of view.nodes) {
 			const cur = this.byId.get(n.id);
 			if (cur) {
 				cur.n = n; // anatomy/state refreshes in place; position is the map's truth
 			} else {
-				// New arrivals PIN at their slot: the baseline is frozen by
-				// construction, and only a gesture (reheat/drag) releases them.
-				const sn: SimNode = { id: n.id, n, x: n.x, y: n.y, vx: 0, vy: 0, fx: n.x, fy: n.y };
+				// New arrivals seed at the subject (the tree-notebook's
+				// enter-at-parent), with a tiny id-seeded jitter so stacked
+				// twins don't fuse into one card (#87 feel).
+				const live = this.byId.get(subj?.id ?? '');
+				const ox = live?.x ?? n.x;
+				const oy = live?.y ?? n.y;
+				const jx = ((n.id.charCodeAt(0) % 7) - 3) * 2;
+				const jy = ((n.id.charCodeAt(1) % 7) - 3) * 2;
+				const sn: SimNode = { id: n.id, n, x: ox + jx, y: oy + jy, vx: 0, vy: 0, fx: null, fy: null };
 				this.byId.set(n.id, sn);
 				this.nodes.push(sn);
 				added.push(n.id);
@@ -188,6 +216,16 @@ export class CanvasSim {
 		const link = this.sim.force('link') as ForceLink<SimNode, SimEdge>;
 		link.links(this.edges).distance((e) => (e.related ? LINK_DISTANCE.leaf : LINK_DISTANCE.ring));
 		this.sim.nodes(this.nodes);
+		// The arrival episode itself (#102 ruling): every mutation reheats,
+		// the whole component flows (never while a drag owns the pointer),
+		// 'end' freezes what slot gravity organized.
+		if (added.length > 0 && !this.dragging) {
+			for (const sn of this.nodes) {
+				sn.fx = null;
+				sn.fy = null;
+			}
+			this.sim.alpha(0.35).alphaTarget(0).restart();
+		}
 		return added;
 	}
 
