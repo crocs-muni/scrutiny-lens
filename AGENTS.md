@@ -11,7 +11,7 @@ The superseded 16-doc set was removed from the tree (git history preserves it). 
 ## Product invariants (from spec.md — read it)
 
 - **No app server.** Static SPA; the browser talks to Nostr relays and the user's AI endpoint directly. No telemetry, analytics, or beacons; all assets self-hosted.
-- **Never lie (spec §2).** AI writes only: search translation, card texts, node titles/summaries, chat answers. Status, patch history, facets, counts, citation quotes, date comparisons are computed deterministically — never by AI. Chat quotes must match event content verbatim or the claim is dropped. AI failure → fallback that shows the event's own tags + first ~200 chars, marked "not interpreted". **Never fabricate placeholder text.**
+- **Never lie (spec §2).** AI writes only: search translation, card texts, node titles/summaries, chat answers. Status, patch history, facets, counts, citation quotes, date comparisons are computed deterministically — never by AI. Chat quotes must match event content verbatim or the claim is dropped. AI failure → fallback that shows the event's own tags + first ~200 chars, marked "raw". **Never fabricate placeholder text.**
 - **API key:** memory-only, never persisted (including inside anything serialized to IndexedDB), never logged; sent only to the user's configured endpoint.
 
 ## Hard rules
