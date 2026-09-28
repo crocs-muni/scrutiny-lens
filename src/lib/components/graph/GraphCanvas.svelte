@@ -1,8 +1,8 @@
 <script lang="ts">
 	/* GRAPH CANVAS (#29b → #95 engine swap) — the subject graph over the
-	 * session's admitted store, on d3-force + d3-zoom (ruling 2026-09-27,
-	 * issue #95). All prior rulings land unchanged — the engine, not the
-	 * grammar, was swapped (@xyflow/svelte is gone):
+	 * session's admitted store, on d3-force under a derived camera (rulings
+	 * 2026-09-27 #95 / 2026-09-28 #103). All prior rulings land unchanged —
+	 * the engine, not the grammar, was swapped (@xyflow/svelte is gone):
 	 *
 	 *  - Subject scope (2): fixed subject + its records + related-product
 	 *    multihop ends; deriveSubjectGraph owns topology, canvas-sim owns
@@ -34,8 +34,9 @@
 
 	import '../chat/citations.css';
 	import { untrack } from 'svelte';
-	import { select } from 'd3-selection';
-	import { zoom as d3zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
+	// NO d3-zoom here, by ruling (#103 camera grammar): the camera is a pure
+	// function of stage size, live bounds center, stored zoom k and a stored
+	// pan offset — nothing else can be the truth, so nothing can go stale.
 	import GraphNode, { DENSE_NODE_GATE, TIER_HALF, tierOf, type GraphNodeData } from './GraphNode.svelte';
 	import CanvasToolbar, { type CanvasViewportActions } from './CanvasToolbar.svelte';
 	import { CanvasSim, clipToBorder, type SimNode } from '$lib/graph/canvas-sim';
@@ -62,6 +63,7 @@
 
 	const ZOOM_MIN = 0.25;
 	const ZOOM_MAX = 1.6;
+	const FIT_FLOOR = 0.15;
 
 	// --- engine --------------------------------------------------------------
 	// Held OUT of the reactive graph: the sim mutates per animation frame;
@@ -71,15 +73,42 @@
 	sim.setTick(flushFrame);
 
 	let stage = $state<HTMLDivElement | null>(null);
-	let cam = $state({ k: 1, x: 0, y: 0 });
+	let stageW = $state(0);
+	let stageH = $state(0);
+	// Derived camera (#103): translation is COMPUTED, never stored —
+	//   cam = stageCenter − k·boundsCenter + panOffset
+	// Stored state is exactly three numbers: zoom level and the user's pan
+	// offset. Bounds center is re-measured every flush (cheap, it rides the
+	// existing per-frame node sweep), so a stage resize, a settle, or a
+	// dragged card re-centers the frame with no special-case refit calls.
+	let cameraK = $state(1);
+	let panOX = $state(0);
+	let panOY = $state(0);
+	// FIT GLIDE (machine for the Commands): easing lives ONLY here — damped
+	// targets written by fit()/settle-correction, converged by a small rAF
+	// loop with exponential smoothing (log-space for k; multiplicative value,
+	// equal-ratio glide). Gestures (zoomAt/pan) write the live values and
+	// NULL the targets in the same line: the wheel always wins instantly,
+	// never a rubber band (scout-verified convention).
+	let kTarget: number | null = null;
+	let panTarget: [number, number] | null = null;
+	// Set by ANY deliberate input (wheel, pan, card drag, bubble expand);
+	// cleared by fit. Until then the settle correction never touches the frame.
+	let camClaimed = false;
+	// Live world-bounds center — flushFrame already sweeps every node per
+	// frame, so it publishes the center itself (nothing else reads a pulse).
+	let boundsC = $state({ x: 0, y: 0 });
+	const cam = $derived({
+		k: cameraK,
+		x: stageW / 2 - cameraK * boundsC.x + panOX,
+		y: stageH / 2 - cameraK * boundsC.y + panOY
+	});
 	let settling = $state(false);
 	let toolbarActions = $state<CanvasViewportActions | null>(null);
 
 	const wrapperRefs = new Map<string, HTMLElement>();
 	const lineRefs = new Map<string, SVGLineElement>();
 
-	let zoomBehavior: ZoomBehavior<HTMLDivElement, unknown> | null = null;
-	let stageSel: ReturnType<typeof select<HTMLDivElement, unknown>> | null = null;
 	let draggingId: string | null = null;
 	/** Expansion gesture → the branch reheat fires on the corresponding
 	 * derived-view apply (the bubble click precedes the store write by design). */
@@ -132,6 +161,7 @@
 				onSelect,
 				onExpand: (target: string) => {
 					pendingExpand = target;
+					camClaimed = true; // deliberate input — the settle correction stays off
 					// The bubble's meaning is role-bound (#97): a record's bubble
 					// reveals its related products; a related's reveals its records.
 					if (n.role === 'related') investigation.expandRelated(target);
@@ -159,6 +189,22 @@
 	$effect(() => {
 		const view = graph; // the single tracked dep
 		const added = sim.applyView(view);
+		// Episodes invalidate camera glides (#102-review F5): a fit/correction
+		// computed for the pre-arrival spread must not keep converging onto a
+		// frame that no longer describes the world — the next freeze re-decides.
+		if (added.length > 0) {
+			kTarget = null;
+			panTarget = null;
+		}
+		// Analytic pre-fit (#102 ruling, scout-verified Figma/Excalidraw
+		// convention): the final frame is a property of the DERIVED slot
+		// grammar — computable before the first physics tick. Set it at t=0,
+		// instantly (no glide at open), and the welcome plays out INSIDE its
+		// already-correct frame.
+		if (added.length > 0 && !firstApplyDone) {
+			firstApplyDone = true;
+			if (stageW > 0 && !camClaimed) preFit(view.nodes as { x: number; y: number }[]);
+		}
 		// Mid-drag removal (live retraction, undo-expand): the card is gone, so
 		// its pointerup never lands — cool the episode down at the sync point.
 		if (draggingId && !sim.get(draggingId)) {
@@ -176,10 +222,31 @@
 		untrack(flushFrame);
 	});
 
+	let lastCX: number | null = null;
+	let lastCY: number | null = null;
 	function flushFrame() {
+		let x0 = Infinity,
+			y0 = Infinity,
+			x1 = -Infinity,
+			y1 = -Infinity;
 		for (const n of sim.nodes) {
+			x0 = Math.min(x0, n.x!);
+			y0 = Math.min(y0, n.y!);
+			x1 = Math.max(x1, n.x!);
+			y1 = Math.max(y1, n.y!);
 			const el = wrapperRefs.get(n.id);
 			if (el) el.style.transform = `translate(${n.x}px, ${n.y}px) translate(-50%, -50%)`;
+		}
+		if (x1 !== -Infinity) {
+			const cx = (x0 + x1) / 2;
+			const cy = (y0 + y1) / 2;
+			// The camera derives from this center — pulse the reactive world
+			// only when it actually moved (frozen map ⇒ no churn).
+			if (lastCX === null || lastCY === null || Math.abs(cx - lastCX) > 0.5 || Math.abs(cy - lastCY) > 0.5) {
+				lastCX = cx;
+				lastCY = cy;
+				boundsC = { x: cx, y: cy };
+			}
 		}
 		for (const e of sim.edges) {
 			const ln = lineRefs.get(e.id);
@@ -205,32 +272,129 @@
 			ln.setAttribute('x2', p2.x.toFixed(2));
 			ln.setAttribute('y2', p2.y.toFixed(2));
 		}
+		// Settle correction: the sim waxes hot per episode, and slot gravity
+		// holds equilibrium NEAR the grammar, not exactly on it. At the true
+		// freeze moment (settling flips false — the only event we can hear),
+		// measure the organized bounds; if the fit drifted >10% in k from
+		// what the frame shows, glide quietly to it. Never once the user has
+		// touched the camera (camClaimed — Mapbox/Excalidraw: don't yank).
+		const wasSettling = settling;
 		settling = sim.settling();
+		if (wasSettling && !settling && !camClaimed && draggingId === null) {
+			const sb = simBounds();
+			if (sb) {
+				const nowK = fitK(sb);
+				if (Math.abs(nowK - cameraK) > 0.1 * nowK) {
+					kTarget = nowK;
+					panTarget = [0, 0];
+					ensureDampLoop();
+				}
+			}
+		}
 	}
 
 	// --- camera --------------------------------------------------------------
-	function fit(): void {
-		if (!stageSel || !zoomBehavior || !stage || sim.nodes.length === 0) return;
+	/** Analytic fit-k for a node spread (slots at open, physics at settle):
+	 * the frame is a property of the grammar, computable before motion. */
+	function fitK(bounds: { x0: number; y0: number; x1: number; y1: number }): number {
+		// The interaction floor (0.25) applies to GESTURES, not to fit:
+		// "everything in view" is the fit's contract — clamping fit AT the
+		// gesture floor silently crops big maps on short stages. react-flow
+		// makes this same fit-below-minZoom allowance.
+		return Math.max(
+			FIT_FLOOR,
+			Math.min(
+				FIT_OPTIONS.maxZoom,
+				Math.min((stageW || 1) / (bounds.x1 - bounds.x0), (stageH || 1) / (bounds.y1 - bounds.y0)) *
+					(1 - FIT_OPTIONS.padding)
+			)
+		);
+	}
+	// Pads ≈ card half-width/-height + gutter — never overridden by callers.
+	const BOUNDS_PAD_W = 140;
+	const BOUNDS_PAD_H = 100;
+	function boundsOf(points: { x: number; y: number }[]) {
+		if (points.length === 0) return null;
 		let x0 = Infinity,
 			y0 = Infinity,
 			x1 = -Infinity,
 			y1 = -Infinity;
-		for (const n of sim.nodes) {
-			x0 = Math.min(x0, n.x! - 140);
-			y0 = Math.min(y0, n.y! - 100);
-			x1 = Math.max(x1, n.x! + 140);
-			y1 = Math.max(y1, n.y! + 100);
+		for (const n of points) {
+			x0 = Math.min(x0, n.x - BOUNDS_PAD_W);
+			y0 = Math.min(y0, n.y - BOUNDS_PAD_H);
+			x1 = Math.max(x1, n.x + BOUNDS_PAD_W);
+			y1 = Math.max(y1, n.y + BOUNDS_PAD_H);
 		}
-		const w = stage.clientWidth || 1;
-		const h = stage.clientHeight || 1;
-		const k = Math.max(
-			ZOOM_MIN,
-			Math.min(FIT_OPTIONS.maxZoom, Math.min(w / (x1 - x0), h / (y1 - y0)) * (1 - FIT_OPTIONS.padding))
-		);
-		stageSel.call(
-			zoomBehavior.transform,
-			zoomIdentity.translate(w / 2 - (k * (x0 + x1)) / 2, h / 2 - (k * (y0 + y1)) / 2).scale(k)
-		);
+		return { x0, y0, x1, y1 };
+	}
+	function simBounds() {
+		return boundsOf(sim.nodes as { x: number; y: number }[]);
+	}
+	// fit is a COMMAND, never a mode (#103 ruling): hand the frame a fresh k
+	// and clear the pan offset — through the glide (≈300 ms convention), so
+	// the welcome landing and the toolbar button feel the same.
+	function fit(): void {
+		const b = simBounds();
+		if (!b) return;
+		kTarget = fitK(b);
+		panTarget = [0, 0];
+		camClaimed = false;
+		ensureDampLoop();
+	}
+	let dampRaf: number | null = null;
+	let lastStep = 0;
+	function ensureDampLoop(): void {
+		if (dampRaf !== null) return;
+		lastStep = performance.now();
+		dampRaf = requestAnimationFrame(dampStep);
+	}
+	function dampStep(now: number): void {
+		const dt = Math.min(0.1, Math.max(0.001, (now - lastStep) / 1000)); // clamp tab-switch spikes
+		lastStep = now;
+		const t = 1 - Math.exp(-4 * dt); // rate 4 → lands in ~300 ms
+		if (kTarget !== null) {
+			// log-space: k is multiplicative ⇒ equal ratio, equal glide speed
+			cameraK = Math.exp(Math.log(cameraK) + (Math.log(kTarget) - Math.log(cameraK)) * t);
+			if (Math.abs(Math.log(kTarget) - Math.log(cameraK)) < 0.005) {
+				cameraK = kTarget;
+				kTarget = null;
+			}
+		}
+		if (panTarget !== null) {
+			panOX += (panTarget[0] - panOX) * t;
+			panOY += (panTarget[1] - panOY) * t;
+			if (Math.abs(panTarget[0] - panOX) < 0.5 && Math.abs(panTarget[1] - panOY) < 0.5) {
+				panOX = panTarget[0];
+				panOY = panTarget[1];
+				panTarget = null;
+			}
+		}
+		// #102-review F2: the glide moves k — re-clip edges every frame, or
+		// dense-mode floors desync the SVG under the cards it already showed.
+		flushFrame();
+		if (kTarget !== null || panTarget !== null) {
+			dampRaf = requestAnimationFrame(dampStep);
+		} else {
+			dampRaf = null;
+		}
+	}
+
+	/** Zoom anchored at a stage point (wheel: pointer; buttons: center). Keeps
+	 * the world point under the anchor glued there — the pan OFFSET absorbs
+	 * the k change. A gesture also CLAIMS the camera and kills any in-flight
+	 * glide in the same line (gestures never rubber-band). */
+	function zoomAt(px: number, py: number, factor: number): void {
+		const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, cameraK * factor));
+		if (next === cameraK) return;
+		const qx = (px - cam.x) / cameraK;
+		const qy = (py - cam.y) / cameraK;
+		cameraK = next;
+		panOX = px - stageW / 2 + next * boundsC.x - next * qx;
+		panOY = py - stageH / 2 + next * boundsC.y - next * qy;
+		kTarget = null;
+		panTarget = null;
+		camClaimed = true;
+		flushFrame(); // #102-review F2: re-clip edges at the new k NOW (dense-mode tier math lives here; the main-era zoom contract)
 	}
 
 	// Ref actions: keep the imperative render loop's DOM map honest across
@@ -265,9 +429,35 @@
 	//     unpin the whole map and micro-drift it (selection never moves the
 	//     layout, ruling 4) — so the drag starts only past ≈4 screen px.
 	let dragCandidate: { id: string; pointerId: number } | null = null;
+	/** One shot at the analytic t0 fit (either leg consumes the shot); the
+	 * pre-fit itself lands exactly once, from either leg, with identical k. */
+	let firstApplyDone = false;
+	let preFitted = false;
+	/** The analytic t0 fit: the final frame is a property of the DERIVED
+	 * slot grammar — computed once, from the effect leg when the stage was
+	 * already measured, else from the ResizeObserver's first size. Never
+	 * after the user gestures (gestures always win — same grammar: camClaimed). */
+	function preFit(nodes: { x: number; y: number }[]): void {
+		if (preFitted) return;
+		const b = boundsOf(nodes);
+		if (b) cameraK = fitK(b);
+		preFitted = true;
+	}
+	// A drag that RELEASES off its card still fires a click on the nearest
+	// common ancestor = the stage. Untreated, paneClick would deselect the
+	// very node the drag just selected (review F1, #102) — so the episode
+	// marks itself and the pane swallows that one click. Same for pan drag.
+	let justDragged = false;
+	let justPanned = false;
 
 	function onNodePointerDown(id: string, e: PointerEvent) {
 		if (e.button !== 0) return;
+		// Press-to-select (Figma/Miro/litegraph convention, #101): the ring +
+		// drawer land at pointer-DOWN, so the node is already selected when a
+		// drag begins — not after the click completes. Re-affirming an
+		// already-selected card is a no-op (ruling 10); toggle-off never
+		// existed, deselect lives on empty click/Esc.
+		onSelect(id);
 		dragCandidate = { id, pointerId: e.pointerId };
 	}
 	function onWindowPointerMove(e: PointerEvent) {
@@ -287,6 +477,10 @@
 			return;
 		}
 		draggingId = id;
+		justDragged = true;
+		camClaimed = true; // any deliberate input owns the camera from here
+		kTarget = null; // #102-review F1: same line as wheel/pan
+		panTarget = null;
 		flushFrame(); // light the chip without waiting for the first tick
 	}
 	function onWindowPointerUp(e: PointerEvent) {
@@ -298,49 +492,100 @@
 	}
 	// Session graph region (xyflow carried the same aria-label). The attach is
 	// a NAMED function: an inline arrow gets a fresh identity at every parent
-	// re-render, which detaches/re-attaches on every state change and resets
-	// the d3-zoom transform to identity — that was the selection-click camera
-	// wipe (adversarial follow-up #95). Stable identity → attach once, live
-	// until the {#key} remount.
+	// re-render — stable identity → attach once, live until remount.
+	// Pointer layout: nodes drag cards (wrapper handler above); the stage's
+	// own empty surface PANS (the derived camera's pan offset), wheel ZOOMS
+	// around the pointer.
 	function setupStage(el: HTMLDivElement): () => void {
-		zoomBehavior = d3zoom<HTMLDivElement, unknown>()
-			.scaleExtent([ZOOM_MIN, ZOOM_MAX])
-			.filter((ev: Event) => {
-				if (ev.type === 'wheel') return true;
-				// Nothing consumes dblclick on the canvas (expansion lives on
-				// the bubble, #97) — don't let d3's dblclick-zoom hijack it.
-				if (ev.type === 'dblclick') return false;
-				return !(ev.target as HTMLElement).closest('.scrutiny-node');
-			})
-			.on('zoom', (ev: { transform: ZoomTransform }) => {
-				cam = { k: ev.transform.k, x: ev.transform.x, y: ev.transform.y };
-				flushFrame();
-			});
-		stageSel = select(el);
-		stageSel.call(zoomBehavior);
+		// Pan: starts past ≈4 px on empty stage (never on a card), moves the
+		// pan offset 1:1 with the pointer.
+		let panning = false;
+		let panStart: [number, number] = [0, 0];
+		const panDown = (ev: PointerEvent) => {
+			if (ev.button !== 0 || (ev.target as HTMLElement).closest('.scrutiny-node')) return;
+			panning = true;
+			justPanned = false;
+			panStart = [ev.clientX - panOX, ev.clientY - panOY];
+		};
+		const panMove = (ev: PointerEvent) => {
+			// #102-review F4: released outside the window / pointercancel means
+			// the up never lands — a stray move must never pan with no button.
+			if (!panning || (ev.buttons & 1) === 0) return;
+			const nx = ev.clientX - panStart[0];
+			const ny = ev.clientY - panStart[1];
+			if (!justPanned && Math.hypot(nx - panOX, ny - panOY) < 4) return;
+			justPanned = true;
+			camClaimed = true; // a pan gesture owns the camera too
+			kTarget = null; // #102-review F1: gestures kill in-flight glides
+			panTarget = null; // (the damp loop must never fight the pointer)
+			panOX = nx;
+			panOY = ny;
+		};
+		const panUp = () => (panning = false);
+		const panCancel = () => (panning = false);
+		el.addEventListener('pointerdown', panDown);
+		window.addEventListener('pointermove', panMove);
+		window.addEventListener('pointerup', panUp);
+		window.addEventListener('pointercancel', panCancel);
+		const wheel = (ev: WheelEvent) => {
+			ev.preventDefault();
+			// Firefox reports line-mode deltas (deltaMode 1, ≈3/notch) — the
+			// deleted d3-zoom normalized them; restore that (×33 ≈ px/notch,
+			// #102-review F3).
+			const dy = (ev.deltaMode === 1 ? 33 : 1) * ev.deltaY;
+			const rect = el.getBoundingClientRect();
+			zoomAt(ev.clientX - rect.left, ev.clientY - rect.top, Math.exp(-dy * 0.0015));
+		};
+		el.addEventListener('wheel', wheel, { passive: false });
 		// Empty-pane deselect: ONLY the stage itself counts — edges and
 		// arrowheads are click targets too, and xyflow's old Pane rule never
 		// let edge clicks deselect (ruling 7).
 		const paneClick = (ev: MouseEvent) => {
-			if (ev.target === el) onDeselect();
+			if (ev.target === el && !justDragged && !justPanned) onDeselect();
 		};
 		el.addEventListener('click', paneClick);
+		// Swallows are consumed by ANY post-gesture click (bubble phase ⇒ after
+		// paneClick ruled). Without this, a drag ending over the drawer (its
+		// click's ancestor ≠ stage) leaves the swallow armed and eats the
+		// user's next intentional empty-pane click (S9, #102).
+		const consumeSwallows = () => {
+			justDragged = false;
+			justPanned = false;
+		};
+		window.addEventListener('click', consumeSwallows);
 		window.addEventListener('pointermove', onWindowPointerMove);
 		window.addEventListener('pointerup', onWindowPointerUp);
 		toolbarActions = {
-			zoomIn: () => stageSel!.call(zoomBehavior!.scaleBy, 1.3),
-			zoomOut: () => stageSel!.call(zoomBehavior!.scaleBy, 1 / 1.3),
+			zoomIn: () => zoomAt(stageW / 2, stageH / 2, 1.3),
+			zoomOut: () => zoomAt(stageW / 2, stageH / 2, 1 / 1.3),
 			fit
 		};
-		// One fresh map per anchor: macro-task so the first $effect apply lands
-		// before fit reads the nodes (attach then effect, both sync from mount).
-		const mountFitTimer = setTimeout(fit, 0);
+		// The ONLY resize work left: feed the derived camera fresh stage
+		// dims. Re-centering is free from here — it is one derived line, not
+		// a call chain.
+		const resizeObserver = new ResizeObserver((entries) => {
+			const r = entries[0].contentRect;
+			stageW = r.width;
+			stageH = r.height;
+			// The first stage-size notification lands AFTER the first apply
+			// (attach→measure is async): the t0 pre-fit waits, not dies —
+			// still instant, still before the visible frames.
+			if (firstApplyDone && !camClaimed) preFit(graph.nodes as { x: number; y: number }[]);
+		});
+		resizeObserver.observe(el);
 		return () => {
-			clearTimeout(mountFitTimer);
+			resizeObserver.disconnect();
+			el.removeEventListener('pointerdown', panDown);
+			el.removeEventListener('wheel', wheel);
 			el.removeEventListener('click', paneClick);
+			window.removeEventListener('click', consumeSwallows);
+			window.removeEventListener('pointermove', panMove);
+			window.removeEventListener('pointerup', panUp);
+			window.removeEventListener('pointercancel', panCancel);
 			window.removeEventListener('pointermove', onWindowPointerMove);
 			window.removeEventListener('pointerup', onWindowPointerUp);
-			stageSel?.on('.zoom', null);
+			if (dampRaf !== null) cancelAnimationFrame(dampRaf);
+			dampRaf = null;
 			sim.dispose();
 			toolbarActions = null;
 		};
@@ -359,7 +604,15 @@
 	<div
 		class="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[14px] border border-line bg-surface"
 	>
-		<CanvasToolbar actions={toolbarActions} settling={settling} onRedistribute={() => sim.redistribute()} />
+		<CanvasToolbar
+			actions={toolbarActions}
+			settling={settling}
+			onRedistribute={() => {
+				kTarget = null; // #102-review F5: the snap rewrites the world —
+				panTarget = null; // a glide aimed at its old spread must die here
+				sim.redistribute();
+			}}
+		/>
 		<!-- Session graph region (xyflow carried the same aria-label). The click
 		 * listener is imperative (attach zone, next to zoom): template-level
 		 * clicks on a static div fight the a11y linter for zero gain — Esc

@@ -2,26 +2,24 @@
  * CANVAS-SIM (#95) — the d3-force engine behind the session graph. Pure
  * module: no Svelte, no DOM, no stores; the component owns refs and store
  * reads, this class owns positions and motion. Subject-graph slots remain
- * the geometry of record — physics exists only as a gesture-local episode.
+ * the geometry of record — physics exists only as four named episodes
+ * (rulings 2026-09-27/28, mechanics per the d3 notebooks):
  *
- * Interaction contract (owner ruling 2026-09-27; mechanics are the verbatim
- * d3 idiom from @d3/force-directed-graph-canvas/-tree):
- *
- *  - BASELINE: frozen. Every node is pinned (fx/fy = current coords); the
- *    simulation timer is off. Nothing breathes at rest — positions are
- *    admitted slots (new arrivals) or the last frozen state (live nodes).
- *  - DRAG: EVERY node is grabbable, including the subject — nothing is
- *    sacred. While the pointer holds a node, the whole component breathes
- *    (alphaTarget(0.3).restart() — the notebooks' line) and the grabbed
- *    node follows the pointer exactly (fx/fy). Release → cools to a full
- *    stop by itself (d3's built-in alphaMin halt; nobody writes a stop
- *    button), and every node re-pins where it lies.
- *  - EXPANSION: a branch-local episode — only the expanded node's 2-hop
- *    neighborhood and the freshly admitted leaves move; the rest of the
- *    audited map holds exactly (measured honesty, like the spike's
- *    0.00px guarantee).
- *  - REDISTRIBUTE: the only whole-map verb, always user-invoked. Then the
- *    world finds its shape once and freezes again.
+ *  - BASELINE: frozen. The simulation timer is off, every node re-pinned
+ *    (fx/fy) where the last episode froze it. Nothing breathes at rest —
+ *    and 'settling' means what the EYE says: a velocity-based early-freeze
+ *    kills the ~3 s sub-perceptual alpha tail (¼ px/tick × 20 ticks).
+ *  - ARRIVAL (#102 welcome): newcomers enter at the subject, the whole map
+ *    reheats (alpha 0.35), and a per-node slot-gravity force organizes
+ *    everyone toward the ring grammar on-screen; first apply = the welcome.
+ *  - DRAG: EVERY node grabbable, subject included. The pointer pins the
+ *    node, the component ripples (alphaTarget 0.3), release cools to
+ *    frozen early or by d3's alphaMin halt — the map stays the truth.
+ *  - EXPANSION: branch-local breath (2-hop neighborhood + fresh leaves
+ *    only; the audited map holds).
+ *  - REDISTRIBUTE: whole-map verb, user-invoked, INSTANT — positions are
+ *    written to the derived slot grammar and frozen the same frame
+ *    (positions are written, never animated).
  *
  * Determinism: d3-force ships a fixed-seed LCG and slots seed the world, so
  * the same view + same gesture sequence reproduces the same frozen map.
@@ -114,6 +112,7 @@ export class CanvasSim {
 	private byId = new Map<string, SimNode>();
 	private tickCb: (() => void) | null = null;
 	private dragging: string | null = null;
+	private stillTicks = 0;
 
 	constructor() {
 		this.sim = forceSimulation<SimNode, SimEdge>(this.nodes)
@@ -122,8 +121,41 @@ export class CanvasSim {
 			.force('collide', forceCollide<SimNode>((n) => COLLIDE_RADIUS[n.n.kind]).iterations(2))
 			.force('x', forceX(0).strength(0.03))
 			.force('y', forceY(0).strength(0.03))
+			// SLOT GRAVITY (#102 follow-up, owner ruling 2026-09-28 — the
+			// @d3/force-directed-tree idiom): a weak per-node pull toward the
+			// derived ring slot. This is what turns admission reheats into a
+			// visible "organize" instead of drift: nodes flow toward the ring
+			// grammar, settle there, and freeze where they lie.
+			.force('slotX', forceX<SimNode>((n) => n.n.x).strength(0.03))
+			.force('slotY', forceY<SimNode>((n) => n.n.y).strength(0.03))
 			.stop();
-		this.sim.on('tick', () => this.tickCb?.());
+		this.sim.on('tick', () => {
+			this.tickCb?.();
+			// EARLY FREEZE (#103): alpha decays ×0.9772/tick to alphaMin —
+			// that's ≈254 ticks (4.2 s) from a reheat, of which the last ~3 s
+			// are sub-perceptual creep. "Frozen" should mean what the eye —
+			// not the alpha value — says: kill the tail once every card has
+			// crept below ¼ px/tick for ~⅓ s straight. Never mid-drag: the
+			// gesture owns the stillness there.
+			if (this.dragging) {
+				this.stillTicks = 0;
+				return;
+			}
+			let vmax = 0;
+			for (const n of this.nodes) {
+				const v = Math.hypot(n.vx ?? 0, n.vy ?? 0);
+				if (v > vmax) vmax = v;
+			}
+			if (vmax < 0.25) {
+				if (++this.stillTicks >= 20) {
+					this.stillTicks = 0;
+					this.sim.alpha(0).alphaTarget(0).stop();
+					this.freeze();
+				}
+			} else {
+				this.stillTicks = 0;
+			}
+		});
 		this.sim.on('end', () => this.freeze());
 		// Baseline truth: cooler than the off-switch, not merely stopped —
 		// stop() leaves alpha hot (the spike's "stuck settling" bug).
@@ -147,18 +179,32 @@ export class CanvasSim {
 	 * wherever the user's gestures (or nothing) left them, so re-derives
 	 * (tiles, citations, show-deleted) never reset the map.
 	 * Returns the ids of nodes added by this view.
+	 *
+	 * ARRIVAL EPISODE (@d3/force-directed-tree, owner ruling 2026-09-28):
+	 * newcomers enter AT the subject (their world-parent in this graph),
+	 * unpinned, and the whole component reheats — slot gravity flows
+	 * everyone toward the ring grammar over the next breath, then 'end'
+	 * freezes the organized map. The first apply (session open) is the
+	 * same episode, so the welcome is organic, never scripted.
 	 */
 	applyView(view: SubjectGraph): string[] {
 		const wanted = new Map(view.nodes.map((n) => [n.id, n]));
 		const added: string[] = [];
+		const subj = view.nodes.find((n) => n.role === 'subject') ?? view.nodes[0];
 		for (const n of view.nodes) {
 			const cur = this.byId.get(n.id);
 			if (cur) {
 				cur.n = n; // anatomy/state refreshes in place; position is the map's truth
 			} else {
-				// New arrivals PIN at their slot: the baseline is frozen by
-				// construction, and only a gesture (reheat/drag) releases them.
-				const sn: SimNode = { id: n.id, n, x: n.x, y: n.y, vx: 0, vy: 0, fx: n.x, fy: n.y };
+				// New arrivals seed at the subject (the tree-notebook's
+				// enter-at-parent), with a tiny id-seeded jitter so stacked
+				// twins don't fuse into one card (#87 feel).
+				const live = this.byId.get(subj?.id ?? '');
+				const ox = live?.x ?? n.x;
+				const oy = live?.y ?? n.y;
+				const jx = ((n.id.charCodeAt(0) % 7) - 3) * 2;
+				const jy = ((n.id.charCodeAt(1) % 7) - 3) * 2;
+				const sn: SimNode = { id: n.id, n, x: ox + jx, y: oy + jy, vx: 0, vy: 0, fx: null, fy: null };
 				this.byId.set(n.id, sn);
 				this.nodes.push(sn);
 				added.push(n.id);
@@ -188,6 +234,16 @@ export class CanvasSim {
 		const link = this.sim.force('link') as ForceLink<SimNode, SimEdge>;
 		link.links(this.edges).distance((e) => (e.related ? LINK_DISTANCE.leaf : LINK_DISTANCE.ring));
 		this.sim.nodes(this.nodes);
+		// The arrival episode itself (#102 ruling): every mutation reheats,
+		// the whole component flows (never while a drag owns the pointer),
+		// 'end' freezes what slot gravity organized.
+		if (added.length > 0 && !this.dragging) {
+			for (const sn of this.nodes) {
+				sn.fx = null;
+				sn.fy = null;
+			}
+			this.sim.alpha(0.35).alphaTarget(0).restart();
+		}
 		return added;
 	}
 
@@ -218,14 +274,22 @@ export class CanvasSim {
 		this.sim.alpha(0.35).alphaTarget(0).restart();
 	}
 
-	/** The only whole-map episode. Always user-invoked (Redistribute). */
+	/** The only whole-map episode. Always user-invoked (Redistribute).
+	 * d3-notebook line: positions are WRITTEN, never animated — every card
+	 * teleports to the derived ring grammar and the map is stone-frozen in
+	 * the same frame (no travel, no settle residue). Slot coords ride on
+	 * n.n (applyView refreshes it in place) — no param needed. */
 	redistribute(): void {
 		if (this.dragging) return;
+		this.sim.stop();
+		this.sim.alpha(0);
 		for (const n of this.nodes) {
-			n.fx = null;
-			n.fy = null;
+			n.x = n.n.x;
+			n.y = n.n.y;
+			n.vx = 0;
+			n.vy = 0;
 		}
-		this.sim.alpha(0.6).alphaTarget(0).restart();
+		this.freeze(); // re-pin everywhere + final flush so the DOM matches
 	}
 
 	/** Drag = the notebooks' line, with EVERY node grabbable (nothing sacred).

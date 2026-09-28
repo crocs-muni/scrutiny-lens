@@ -31,8 +31,9 @@
 		/** True while physics runs (an episode). The map discloses its own
 		 * motion — "frozen on its own" is the rule, never a hidden stop. */
 		settling: boolean;
-		/** The only whole-map verb (#95): unpins everything, one episode. */
-		onRedistribute: () => void;
+	/** The only whole-map verb (#95): snaps every card back to the ring
+	 * grammar — instant, no episode (ruling 2026-09-28). */
+	onRedistribute: () => void;
 	}
 	let { actions, settling, onRedistribute }: Props = $props();
 
@@ -60,7 +61,7 @@
 	>
 	<button
 		class={btn}
-		title="Redistribute: run one layout episode over the whole map, then it freezes again"
+		title="Redistribute: snap every card back to its ring slot — instant"
 		aria-label="Redistribute all"
 		onclick={onRedistribute}><IconRefresh size={14} /></button
 	>
