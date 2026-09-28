@@ -329,6 +329,134 @@ describe('adaptive pacing (issue #64)', () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * Adaptive slot semantics (issue #104): the window seeds at 1 per baseUrl
+ * and earns concurrency from clean answers up to the PER-HOST ceiling —
+ * e-infra's LiteLLM proxy caps accounts at 4 parallel open requests
+ * (measured), unknown hosts keep the generic maxConcurrent fallback. No
+ * global cap remains: different endpoints never share admission.
+ * ------------------------------------------------------------------ */
+
+describe('adaptive slot semantics (issue #104)', () => {
+	it('seeds the pacing window at 1 per baseUrl: a fresh burst admits one at a time until clean answers grow it', async () => {
+		// A BYOK caller cannot know the endpoint's ceiling — the window earns
+		// concurrency from clean answers instead of presuming it (the static
+		// cap used to hand out maxConcurrent slots on sight: on a 1-slot
+		// proxy that was a guaranteed first-burst 429). Four slow calls on a
+		// fresh baseUrl: with K=4 growth the window is still 1 when the last
+		// call of the burst admits.
+		const { fetch: f, log } = scriptedFetch(Array.from({ length: 4 }, () => ({ delayMs: 60 })));
+		const { fetch: tracked, peak } = withPeak(f);
+		setBaseFetch(tracked);
+		await Promise.all(Array.from({ length: 4 }, () => callLLM(args())));
+		expect(log).toHaveLength(4);
+		expect(peak()).toBe(1);
+	});
+
+	it('grows to the measured e-infra ceiling of 4, never above: a 6-burst peaks at 4 (HOST_CONCURRENCY_CEILINGS)', async () => {
+		// 12 clean answers grow the window 1 → 2 → 3 → 4 (+1 per K=4). Six
+		// callers at once then admit four; further successes must never push
+		// a fifth request onto the measured account cap (the 4 decoding
+		// streams + 4 fired requests = 429 storm this issue kills).
+		const einfra = { ...provider, baseUrl: 'https://llm.ai.e-infra.cz/v1' };
+		const warm = scriptedFetch(Array.from({ length: 12 }, () => ({})));
+		setBaseFetch(warm.fetch);
+		for (let i = 0; i < 12; i++) expect(await callLLM(args({ provider: einfra }))).toBe('T');
+
+		const burst = scriptedFetch(Array.from({ length: 10 }, () => ({ delayMs: 60 })));
+		const { fetch: tracked, peak } = withPeak(burst.fetch);
+		setBaseFetch(tracked);
+		await Promise.all(Array.from({ length: 6 }, () => callLLM(args({ provider: einfra }))));
+		// A second burst after more clean answers still admits no 5th slot.
+		await Promise.all(Array.from({ length: 4 }, () => callLLM(args({ provider: einfra }))));
+		expect(burst.log).toHaveLength(10);
+		expect(peak()).toBe(4);
+	});
+
+	it('server-truthful invariant: a stream+call mix on the 4-parallel host never exceeds 4 in-flight fetches (and all complete)', async () => {
+		// Streams hold their slots to completion now, so the invariant the
+		// endpoint measures — open requests against the account — is exactly
+		// what withPeak counts here.
+		const einfra = { ...provider, baseUrl: 'https://llm.ai.e-infra.cz/v1' };
+		const warm = scriptedFetch(Array.from({ length: 12 }, () => ({})));
+		setBaseFetch(warm.fetch);
+		for (let i = 0; i < 12; i++) await callLLM(args({ provider: einfra }));
+
+		// Fetch order is NOT admission order across the two arms (the SDK's
+		// stream and generate pipelines take different hops to the network),
+		// but it IS admission order within each arm — so the steps split by
+		// the request's own `stream` flag instead of one shared queue.
+		const streams = scriptedFetch([
+			{ stream: ['a1', 'a2'], chunkGapMs: 150 },
+			{ stream: ['b1'] },
+			{ stream: ['c1'] }
+		]);
+		const calls = scriptedFetch(Array.from({ length: 5 }, () => ({ delayMs: 70 })));
+		const { fetch: tracked, peak } = withPeak((async (input: RequestInfo | URL, init?: RequestInit) => {
+			const body = typeof init?.body === 'string' ? init.body : '';
+			return body.includes('"stream":true')
+				? streams.fetch(input, init)
+				: calls.fetch(input, init);
+		}) as typeof fetch);
+		setBaseFetch(tracked);
+		const streamText = async (): Promise<string> => {
+			let text = '';
+			for await (const c of streamLLM(args({ provider: einfra }))) text += c;
+			return text;
+		};
+		const results = await Promise.all([
+			streamText(),
+			callLLM(args({ provider: einfra })),
+			streamText(),
+			callLLM(args({ provider: einfra })),
+			callLLM(args({ provider: einfra })),
+			streamText(),
+			callLLM(args({ provider: einfra })),
+			callLLM(args({ provider: einfra }))
+		]);
+		expect(results).toEqual(['a1a2', 'T', 'b1', 'T', 'T', 'c1', 'T', 'T']);
+		expect(streams.log).toHaveLength(3);
+		expect(calls.log).toHaveLength(5);
+		expect(peak()).toBeLessThanOrEqual(4);
+	});
+
+	it('reads x-ratelimit-remaining-requests on a success: ≤ 1 halves the window before the next burst', async () => {
+		// The proxy TELLS us its account headroom on every success — acting
+		// on it beats discovering the wall as a 429 (spec §2: use the
+		// endpoint's own truth). Grow the window 1 → 2 (K=4 clean answers),
+		// then one success carrying remaining-requests: 1 halves it back —
+		// no cooldown, the endpoint has not said stop — so the next 2-burst
+		// serializes.
+		const warm = scriptedFetch([{}, {}, {}, {}]);
+		setBaseFetch(warm.fetch);
+		for (let i = 0; i < 4; i++) expect(await callLLM(args())).toBe('T');
+		const headerHit = scriptedFetch([{ headers: { 'x-ratelimit-remaining-requests': '1' } }]);
+		setBaseFetch(headerHit.fetch);
+		expect(await callLLM(args())).toBe('T');
+
+		const burst = scriptedFetch([{ delayMs: 60 }, { delayMs: 60 }]);
+		const { fetch: tracked, peak } = withPeak(burst.fetch);
+		setBaseFetch(tracked);
+		await Promise.all([callLLM(args()), callLLM(args())]);
+		expect(peak()).toBe(1);
+	});
+
+	it('a retryable stream failure (5xx) sleeps its backoff between attempts — never a tight retry loop', async () => {
+		// Regression (review of #104): the retry paths once `continue`d the
+		// attempts loop from inside the try, jumping past the post-finally
+		// backoff sleep — a 5xx answered with instant re-attacks is a 429
+		// storm factory. The backoff for attempt 1 is ~500ms (±20% jitter):
+		// the second fetch must land no earlier than ~380ms after the first.
+		const { fetch: f, log } = scriptedFetch([{ status: 500 }, { stream: ['ok'] }]);
+		setBaseFetch(f);
+		const chunks: string[] = [];
+		for await (const c of streamLLM(args())) chunks.push(c);
+		expect(chunks.join('')).toBe('ok');
+		expect(log).toHaveLength(2);
+		expect(log[1].startMs - log[0].startMs).toBeGreaterThanOrEqual(350);
+	});
+});
+
+/* ------------------------------------------------------------------ *
  * 429 handling
  * ------------------------------------------------------------------ */
 
@@ -520,21 +648,33 @@ describe('streamLLM', () => {
 		expect(log).toHaveLength(2);
 	});
 
-	it('releases the slot after the first chunk (streaming chat never starves the lanes)', async () => {
-		const { fetch: f } = scriptedFetch([{ stream: ['a', 'b', 'c'], chunkGapMs: 400 }, { delayMs: 10 }]);
+	it('an open stream holds its slot to completion: a queued call finishes only after the stream ends (issue #104)', async () => {
+		// The repealed contract released the slot at first byte — but the
+		// endpoint counts OPEN streams server-side (measured on e-infra's
+		// LiteLLM proxy: releasing early let 4 decoding streams + 4 fresh
+		// requests hit it at once → the 429 storm this issue kills). With
+		// the window seeded at 1, the queued call may only run once the
+		// stream's slot frees at stream end. Ordering is asserted via the
+		// completion flags, never tight wall-clock bounds.
+		// The call carries a small response delay so its completion is
+		// strictly AFTER the stream's bookkeeping — the flag assertions
+		// order events without any tight wall-clock bound.
+		const { fetch: f, log } = scriptedFetch([{ stream: ['a', 'b', 'c'], chunkGapMs: 250 }, { delayMs: 50 }]);
 		setBaseFetch(f);
 		const chunks: string[] = [];
+		let streamDone = false;
 		const consuming = (async () => {
 			for await (const c of streamLLM(args())) chunks.push(c);
+			streamDone = true;
 		})();
 		await vi.waitFor(() => expect(chunks).toEqual(['a']), { timeout: 2000 });
-		// While the stream is still open (2 more chunks, 400ms apart), a
-		// non-streaming call must acquire a slot and complete.
-		const t0 = Date.now();
+		// Two chunks still owed (250ms apart). The call must park behind the
+		// held stream slot and land only after the last chunk arrived.
 		expect(await callLLM(args())).toBe('T');
-		expect(Date.now() - t0).toBeLessThan(350);
-		await consuming;
+		expect(streamDone).toBe(true);
 		expect(chunks.join('')).toBe('abc');
+		await consuming;
+		expect(log).toHaveLength(2);
 	});
 
 	it('caller abort before the first byte aborts the upstream fetch and releases the slot', async () => {

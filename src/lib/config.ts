@@ -21,6 +21,18 @@ export const RELAY_MAX = 4;
 /** Spec §5 ships a known-good default; env overrides it, not replaces it. */
 const SPEC_ENDPOINT = 'https://llm.ai.e-infra.cz/v1';
 
+/** Per-host pacing ceilings (issue #104): the gateway's adaptive window
+ * grows toward this for a known host instead of the generic `maxConcurrent`
+ * fallback. e-infra's LiteLLM proxy caps ACCOUNTS at 4 parallel open
+ * requests — measured live: 4 decoding streams + 4 newly fired requests
+ * made the 429 storms this issue kills, so the window must stop AT the
+ * account cap, not above it. Unknown hosts keep the conservative BYOK
+ * fallback (a caller cannot know an arbitrary endpoint's ceiling — spec §2
+ * never-lie applies to capacity claims too). Keyed by URL hostname. */
+export const HOST_CONCURRENCY_CEILINGS: Record<string, number> = {
+	'llm.ai.e-infra.cz': 4
+};
+
 /** Spec §8 default relay pool (2026-09-17 test-corpus bootstrap: the user's
  * lens-demo relay (relay.tools/newlay) holds the full JCAlgTest + sec-certs
  * test corpora with NIP-50 search; Primal is the free public mirror that
