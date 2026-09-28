@@ -2,26 +2,24 @@
  * CANVAS-SIM (#95) — the d3-force engine behind the session graph. Pure
  * module: no Svelte, no DOM, no stores; the component owns refs and store
  * reads, this class owns positions and motion. Subject-graph slots remain
- * the geometry of record — physics exists only as a gesture-local episode.
+ * the geometry of record — physics exists only as four named episodes
+ * (rulings 2026-09-27/28, mechanics per the d3 notebooks):
  *
- * Interaction contract (owner ruling 2026-09-27; mechanics are the verbatim
- * d3 idiom from @d3/force-directed-graph-canvas/-tree):
- *
- *  - BASELINE: frozen. Every node is pinned (fx/fy = current coords); the
- *    simulation timer is off. Nothing breathes at rest — positions are
- *    admitted slots (new arrivals) or the last frozen state (live nodes).
- *  - DRAG: EVERY node is grabbable, including the subject — nothing is
- *    sacred. While the pointer holds a node, the whole component breathes
- *    (alphaTarget(0.3).restart() — the notebooks' line) and the grabbed
- *    node follows the pointer exactly (fx/fy). Release → cools to a full
- *    stop by itself (d3's built-in alphaMin halt; nobody writes a stop
- *    button), and every node re-pins where it lies.
- *  - EXPANSION: a branch-local episode — only the expanded node's 2-hop
- *    neighborhood and the freshly admitted leaves move; the rest of the
- *    audited map holds exactly (measured honesty, like the spike's
- *    0.00px guarantee).
- *  - REDISTRIBUTE: the only whole-map verb, always user-invoked. Then the
- *    world finds its shape once and freezes again.
+ *  - BASELINE: frozen. The simulation timer is off, every node re-pinned
+ *    (fx/fy) where the last episode froze it. Nothing breathes at rest —
+ *    and 'settling' means what the EYE says: a velocity-based early-freeze
+ *    kills the ~3 s sub-perceptual alpha tail (¼ px/tick × 20 ticks).
+ *  - ARRIVAL (#102 welcome): newcomers enter at the subject, the whole map
+ *    reheats (alpha 0.35), and a per-node slot-gravity force organizes
+ *    everyone toward the ring grammar on-screen; first apply = the welcome.
+ *  - DRAG: EVERY node grabbable, subject included. The pointer pins the
+ *    node, the component ripples (alphaTarget 0.3), release cools to
+ *    frozen early or by d3's alphaMin halt — the map stays the truth.
+ *  - EXPANSION: branch-local breath (2-hop neighborhood + fresh leaves
+ *    only; the audited map holds).
+ *  - REDISTRIBUTE: whole-map verb, user-invoked, INSTANT — positions are
+ *    written to the derived slot grammar and frozen the same frame
+ *    (positions are written, never animated).
  *
  * Determinism: d3-force ships a fixed-seed LCG and slots seed the world, so
  * the same view + same gesture sequence reproduces the same frozen map.

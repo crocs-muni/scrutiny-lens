@@ -22,8 +22,6 @@
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tailwindcss/vite": "^4.3.3",
     "@types/d3-force": "^3.0.10",
-    "@types/d3-selection": "^3.0.12",
-    "@types/d3-zoom": "^3.0.8",
     "@types/node": "^26.3.0",
     "fake-indexeddb": "^6.2.5",
     "svelte": "^5.56.10",

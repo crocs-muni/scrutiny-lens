@@ -92,22 +92,12 @@
 	// never a rubber band (scout-verified convention).
 	let kTarget: number | null = null;
 	let panTarget: [number, number] | null = null;
-	let camClaimed = false; // set by any wheel/pan gesture until the next fit
-	let boundsVersion = $state(0); // bumped by flushFrame when the center moved
-	const boundsC = $derived.by(() => {
-		void boundsVersion; // positions live outside the reactive graph — this is the pulse
-		let x0 = Infinity,
-			y0 = Infinity,
-			x1 = -Infinity,
-			y1 = -Infinity;
-		for (const n of sim.nodes) {
-			x0 = Math.min(x0, n.x!);
-			y0 = Math.min(y0, n.y!);
-			x1 = Math.max(x1, n.x!);
-			y1 = Math.max(y1, n.y!);
-		}
-		return x1 === -Infinity ? { x: 0, y: 0 } : { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
-	});
+	// Set by ANY deliberate input (wheel, pan, card drag, bubble expand);
+	// cleared by fit. Until then the settle correction never touches the frame.
+	let camClaimed = false;
+	// Live world-bounds center — flushFrame already sweeps every node per
+	// frame, so it publishes the center itself (nothing else reads a pulse).
+	let boundsC = $state({ x: 0, y: 0 });
 	const cam = $derived({
 		k: cameraK,
 		x: stageW / 2 - cameraK * boundsC.x + panOX,
@@ -199,6 +189,13 @@
 	$effect(() => {
 		const view = graph; // the single tracked dep
 		const added = sim.applyView(view);
+		// Episodes invalidate camera glides (#102-review F5): a fit/correction
+		// computed for the pre-arrival spread must not keep converging onto a
+		// frame that no longer describes the world — the next freeze re-decides.
+		if (added.length > 0) {
+			kTarget = null;
+			panTarget = null;
+		}
 		// Analytic pre-fit (#102 ruling, scout-verified Figma/Excalidraw
 		// convention): the final frame is a property of the DERIVED slot
 		// grammar — computable before the first physics tick. Set it at t=0,
@@ -206,11 +203,7 @@
 		// already-correct frame.
 		if (added.length > 0 && !firstApplyDone) {
 			firstApplyDone = true;
-			if (stageW > 0) {
-				const b = boundsOf(view.nodes as { x: number; y: number }[]);
-				if (b) cameraK = fitK(b);
-				preFitted = true;
-			}
+			if (stageW > 0 && !camClaimed) preFit(view.nodes as { x: number; y: number }[]);
 		}
 		// Mid-drag removal (live retraction, undo-expand): the card is gone, so
 		// its pointerup never lands — cool the episode down at the sync point.
@@ -252,7 +245,7 @@
 			if (lastCX === null || lastCY === null || Math.abs(cx - lastCX) > 0.5 || Math.abs(cy - lastCY) > 0.5) {
 				lastCX = cx;
 				lastCY = cy;
-				boundsVersion++;
+				boundsC = { x: cx, y: cy };
 			}
 		}
 		for (const e of sim.edges) {
@@ -304,9 +297,6 @@
 	/** Analytic fit-k for a node spread (slots at open, physics at settle):
 	 * the frame is a property of the grammar, computable before motion. */
 	function fitK(bounds: { x0: number; y0: number; x1: number; y1: number }): number {
-		const spanW = bounds.x1 - bounds.x0;
-		const spanH = bounds.y1 - bounds.y0;
-		if (spanW < 1 && spanH < 1) return cameraK; // one card: no pan-out meaning
 		// The interaction floor (0.25) applies to GESTURES, not to fit:
 		// "everything in view" is the fit's contract — clamping fit AT the
 		// gesture floor silently crops big maps on short stages. react-flow
@@ -315,21 +305,25 @@
 			FIT_FLOOR,
 			Math.min(
 				FIT_OPTIONS.maxZoom,
-				Math.min((stageW || 1) / spanW, (stageH || 1) / spanH) * (1 - FIT_OPTIONS.padding)
+				Math.min((stageW || 1) / (bounds.x1 - bounds.x0), (stageH || 1) / (bounds.y1 - bounds.y0)) *
+					(1 - FIT_OPTIONS.padding)
 			)
 		);
 	}
-	function boundsOf(points: { x: number; y: number }[], padW = 140, padH = 100) {
+	// Pads ≈ card half-width/-height + gutter — never overridden by callers.
+	const BOUNDS_PAD_W = 140;
+	const BOUNDS_PAD_H = 100;
+	function boundsOf(points: { x: number; y: number }[]) {
 		if (points.length === 0) return null;
 		let x0 = Infinity,
 			y0 = Infinity,
 			x1 = -Infinity,
 			y1 = -Infinity;
 		for (const n of points) {
-			x0 = Math.min(x0, n.x - padW);
-			y0 = Math.min(y0, n.y - padH);
-			x1 = Math.max(x1, n.x + padW);
-			y1 = Math.max(y1, n.y + padH);
+			x0 = Math.min(x0, n.x - BOUNDS_PAD_W);
+			y0 = Math.min(y0, n.y - BOUNDS_PAD_H);
+			x1 = Math.max(x1, n.x + BOUNDS_PAD_W);
+			y1 = Math.max(y1, n.y + BOUNDS_PAD_H);
 		}
 		return { x0, y0, x1, y1 };
 	}
@@ -347,18 +341,6 @@
 		camClaimed = false;
 		ensureDampLoop();
 	}
-	/** Instant fit at open — the Figma/Excalidraw convention (no glide at
-	 * t=0, or the map starts life smeared). */
-	function fitInstant(): void {
-		const b = simBounds();
-		if (!b) return;
-		cameraK = fitK(b);
-		panOX = 0;
-		panOY = 0;
-		kTarget = null;
-		panTarget = null;
-	}
-
 	let dampRaf: number | null = null;
 	let lastStep = 0;
 	function ensureDampLoop(): void {
@@ -387,6 +369,9 @@
 				panTarget = null;
 			}
 		}
+		// #102-review F2: the glide moves k — re-clip edges every frame, or
+		// dense-mode floors desync the SVG under the cards it already showed.
+		flushFrame();
 		if (kTarget !== null || panTarget !== null) {
 			dampRaf = requestAnimationFrame(dampStep);
 		} else {
@@ -409,6 +394,7 @@
 		kTarget = null;
 		panTarget = null;
 		camClaimed = true;
+		flushFrame(); // #102-review F2: re-clip edges at the new k NOW (dense-mode tier math lives here; the main-era zoom contract)
 	}
 
 	// Ref actions: keep the imperative render loop's DOM map honest across
@@ -443,8 +429,20 @@
 	//     unpin the whole map and micro-drift it (selection never moves the
 	//     layout, ruling 4) — so the drag starts only past ≈4 screen px.
 	let dragCandidate: { id: string; pointerId: number } | null = null;
+	/** One shot at the analytic t0 fit (either leg consumes the shot); the
+	 * pre-fit itself lands exactly once, from either leg, with identical k. */
 	let firstApplyDone = false;
-	let preFitted = false; // the analytic t0 fit lands exactly once (effect or RO)
+	let preFitted = false;
+	/** The analytic t0 fit: the final frame is a property of the DERIVED
+	 * slot grammar — computed once, from the effect leg when the stage was
+	 * already measured, else from the ResizeObserver's first size. Never
+	 * after the user gestures (gestures always win — same grammar: camClaimed). */
+	function preFit(nodes: { x: number; y: number }[]): void {
+		if (preFitted) return;
+		const b = boundsOf(nodes);
+		if (b) cameraK = fitK(b);
+		preFitted = true;
+	}
 	// A drag that RELEASES off its card still fires a click on the nearest
 	// common ancestor = the stage. Untreated, paneClick would deselect the
 	// very node the drag just selected (review F1, #102) — so the episode
@@ -481,6 +479,8 @@
 		draggingId = id;
 		justDragged = true;
 		camClaimed = true; // any deliberate input owns the camera from here
+		kTarget = null; // #102-review F1: same line as wheel/pan
+		panTarget = null;
 		flushFrame(); // light the chip without waiting for the first tick
 	}
 	function onWindowPointerUp(e: PointerEvent) {
@@ -508,23 +508,33 @@
 			panStart = [ev.clientX - panOX, ev.clientY - panOY];
 		};
 		const panMove = (ev: PointerEvent) => {
-			if (!panning) return;
+			// #102-review F4: released outside the window / pointercancel means
+			// the up never lands — a stray move must never pan with no button.
+			if (!panning || (ev.buttons & 1) === 0) return;
 			const nx = ev.clientX - panStart[0];
 			const ny = ev.clientY - panStart[1];
 			if (!justPanned && Math.hypot(nx - panOX, ny - panOY) < 4) return;
 			justPanned = true;
 			camClaimed = true; // a pan gesture owns the camera too
+			kTarget = null; // #102-review F1: gestures kill in-flight glides
+			panTarget = null; // (the damp loop must never fight the pointer)
 			panOX = nx;
 			panOY = ny;
 		};
 		const panUp = () => (panning = false);
+		const panCancel = () => (panning = false);
 		el.addEventListener('pointerdown', panDown);
 		window.addEventListener('pointermove', panMove);
 		window.addEventListener('pointerup', panUp);
+		window.addEventListener('pointercancel', panCancel);
 		const wheel = (ev: WheelEvent) => {
 			ev.preventDefault();
+			// Firefox reports line-mode deltas (deltaMode 1, ≈3/notch) — the
+			// deleted d3-zoom normalized them; restore that (×33 ≈ px/notch,
+			// #102-review F3).
+			const dy = (ev.deltaMode === 1 ? 33 : 1) * ev.deltaY;
 			const rect = el.getBoundingClientRect();
-			zoomAt(ev.clientX - rect.left, ev.clientY - rect.top, Math.exp(-ev.deltaY * 0.0015));
+			zoomAt(ev.clientX - rect.left, ev.clientY - rect.top, Math.exp(-dy * 0.0015));
 		};
 		el.addEventListener('wheel', wheel, { passive: false });
 		// Empty-pane deselect: ONLY the stage itself counts — edges and
@@ -532,10 +542,17 @@
 		// let edge clicks deselect (ruling 7).
 		const paneClick = (ev: MouseEvent) => {
 			if (ev.target === el && !justDragged && !justPanned) onDeselect();
-			justDragged = false; // one-shot swallows, drag or not
-			justPanned = false;
 		};
 		el.addEventListener('click', paneClick);
+		// Swallows are consumed by ANY post-gesture click (bubble phase ⇒ after
+		// paneClick ruled). Without this, a drag ending over the drawer (its
+		// click's ancestor ≠ stage) leaves the swallow armed and eats the
+		// user's next intentional empty-pane click (S9, #102).
+		const consumeSwallows = () => {
+			justDragged = false;
+			justPanned = false;
+		};
+		window.addEventListener('click', consumeSwallows);
 		window.addEventListener('pointermove', onWindowPointerMove);
 		window.addEventListener('pointerup', onWindowPointerUp);
 		toolbarActions = {
@@ -553,11 +570,7 @@
 			// The first stage-size notification lands AFTER the first apply
 			// (attach→measure is async): the t0 pre-fit waits, not dies —
 			// still instant, still before the visible frames.
-			if (!preFitted && firstApplyDone && !camClaimed) {
-				const b = boundsOf(graph.nodes as { x: number; y: number }[]);
-				if (b) cameraK = fitK(b);
-				preFitted = true;
-			}
+			if (firstApplyDone && !camClaimed) preFit(graph.nodes as { x: number; y: number }[]);
 		});
 		resizeObserver.observe(el);
 		return () => {
@@ -565,8 +578,10 @@
 			el.removeEventListener('pointerdown', panDown);
 			el.removeEventListener('wheel', wheel);
 			el.removeEventListener('click', paneClick);
+			window.removeEventListener('click', consumeSwallows);
 			window.removeEventListener('pointermove', panMove);
 			window.removeEventListener('pointerup', panUp);
+			window.removeEventListener('pointercancel', panCancel);
 			window.removeEventListener('pointermove', onWindowPointerMove);
 			window.removeEventListener('pointerup', onWindowPointerUp);
 			if (dampRaf !== null) cancelAnimationFrame(dampRaf);
@@ -589,7 +604,15 @@
 	<div
 		class="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[14px] border border-line bg-surface"
 	>
-		<CanvasToolbar actions={toolbarActions} settling={settling} onRedistribute={() => sim.redistribute()} />
+		<CanvasToolbar
+			actions={toolbarActions}
+			settling={settling}
+			onRedistribute={() => {
+				kTarget = null; // #102-review F5: the snap rewrites the world —
+				panTarget = null; // a glide aimed at its old spread must die here
+				sim.redistribute();
+			}}
+		/>
 		<!-- Session graph region (xyflow carried the same aria-label). The click
 		 * listener is imperative (attach zone, next to zoom): template-level
 		 * clicks on a static div fight the a11y linter for zero gain — Esc
