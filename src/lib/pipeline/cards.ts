@@ -21,7 +21,12 @@ import type { ProviderOverrideInput } from "$lib/ai/provider";
 import { artifactsOf } from "$lib/artifacts";
 import { getInterpretation, saveInterpretation } from "$lib/db";
 import { type AIKind, type CallLLM } from "$lib/ai/output";
-import { generateRecords, streamRecords, type StreamLLM } from "$lib/ai/records";
+import {
+  generateRecords,
+  streamRecords,
+  type PartialDraft,
+  type StreamLLM,
+} from "$lib/ai/records";
 import { z } from "zod";
 
 export interface ProductCard {
@@ -200,6 +205,18 @@ export interface FillCardsOptions {
    * callers must tolerate a card being painted here and merged again at
    * settle; the consumer-visible truth never differs between the two. */
   onPaint?: (card: ProductCard, index: number) => void;
+  /** Draft stream (issue #109, spec §9 drafting voice): while a card's
+   * record is still arriving, fired with its best so-far parse — already
+   * id-affinity-gated and clipped to the same limits the settle pass
+   * enforces, so nothing a consumer shows can outlive the gate. A `null`
+   * draft revokes that card's overlay (its trailing block completed: it
+   * either just painted via onPaint or dies at settle). Memory-only by
+   * contract — never persisted, never announced; the settle pass stays
+   * the single source of truth. Streamed arm only. */
+  onDraft?: (
+    cardId: string,
+    draft: { title: string; snippet: string } | null,
+  ) => void;
   signal?: AbortSignal;
   /** Reports the settle-kind when the fill call fails (unreachable/timeout →
    * transport; schema_failure → the endpoint answered but output didn't
@@ -264,10 +281,37 @@ export async function fillCards(
   // text to this one and persist the lie into the (eventId, model) cache.
   // Foreign echoes and repeats of an already-claimed id are dropped; the
   // per-item fallback then leaves that card raw (rule 5).
-  const drafts = new Map<
+  const gated = new Map<
     string,
     { id: string; title: string; snippet: string }
   >();
+  // Draft stream (issue #109): the pre-gate tail parse reaches the
+  // consumer ONLY through the SAME affinity gate + clip the settle path
+  // enforces — the user never sees more text than can survive the gate,
+  // so a gate rejection never visibly takes anything back (spec §9
+  // drafting voice). One trailing block at a time: `draftCardId` remembers
+  // which card the in-flight tail's draft hangs on, so the
+  // boundary-complete null (or an id line re-written to another id)
+  // revokes exactly that card's overlay and no other.
+  const emitDraft = opts.onDraft;
+  let draftCardId: string | null = null;
+  const onDraft =
+    emitDraft === undefined
+      ? undefined
+      : (partial: PartialDraft | null): void => {
+          const next =
+            partial !== null && requested.has(partial.id) ? partial.id : null;
+          if (draftCardId !== null && draftCardId !== next) {
+            emitDraft(draftCardId, null);
+          }
+          draftCardId = next;
+          if (next !== null && partial !== null) {
+            emitDraft(next, {
+              title: clip(partial.title, CLIP_LIMIT.title),
+              snippet: clip(partial.snippet, CLIP_LIMIT.snippet),
+            });
+          }
+        };
 
   // One batch-shaped call for all uncached cards — rate-limit-safe (spec §7's
   // AI-fill budget). KV records salvage per-card: a truncated batch fills the
@@ -294,20 +338,21 @@ export async function fillCards(
       ? await streamRecords({
           ...share,
           streamLLM: opts.streamLLM,
-          onRecord: (draft) => {
+          onDraft,
+          onRecord: (record) => {
             // Progressive paint = the streamed view of the same truth:
             // the SAME affinity gate the settle pass runs; settle then
             // guards repeats (first id claim wins) exactly like the batch
             // path — no streamed record can re-route another card's slot.
-            if (!requested.has(draft.id) || drafts.has(draft.id)) return;
-            drafts.set(draft.id, draft);
-            const idx = freshIndexById.get(draft.id);
+            if (!requested.has(record.id) || gated.has(record.id)) return;
+            gated.set(record.id, record);
+            const idx = freshIndexById.get(record.id);
             if (idx === undefined) return;
             const card = fresh[idx];
             const painted = {
               ...card,
-              title: clip(draft.title, CLIP_LIMIT.title),
-              snippet: clip(draft.snippet, CLIP_LIMIT.snippet),
+              title: clip(record.title, CLIP_LIMIT.title),
+              snippet: clip(record.snippet, CLIP_LIMIT.snippet),
               interpreted: true,
             };
             opts.onPaint?.(painted, idx);
@@ -316,9 +361,9 @@ export async function fillCards(
       : await generateRecords({ ...share, callLLM: opts.callLLM });
 
   if (result.ok) {
-    for (const draft of result.result) {
-      if (!requested.has(draft.id) || drafts.has(draft.id)) continue;
-      drafts.set(draft.id, draft);
+    for (const record of result.result) {
+      if (!requested.has(record.id) || gated.has(record.id)) continue;
+      gated.set(record.id, record);
     }
   } else {
     // Never-lie: surface WHY the fill failed so the banner distinguishes a
@@ -330,12 +375,12 @@ export async function fillCards(
 
   return cards.map((card, i) => {
     if (cached[i]) return cached[i];
-    const draft = drafts.get(card.id);
-    if (!draft) return card; // rule 5 fallback per item (unsalvaged)
+    const record = gated.get(card.id);
+    if (!record) return card; // rule 5 fallback per item (unsalvaged)
     const filled = {
       ...card,
-      title: clip(draft.title, CLIP_LIMIT.title),
-      snippet: clip(draft.snippet, CLIP_LIMIT.snippet),
+      title: clip(record.title, CLIP_LIMIT.title),
+      snippet: clip(record.snippet, CLIP_LIMIT.snippet),
       interpreted: true,
     };
     // Persist for repeat queries — same (eventId, model) surface (spec §6).

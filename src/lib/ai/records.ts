@@ -620,6 +620,15 @@ export async function generateRecords<T>(
  * Throws on transport failure. Structurally identical to chat's StreamLLM. */
 export type StreamLLM = (args: CallLLMArgs) => AsyncIterable<string>;
 
+/** The pre-gate draft view of one still-arriving KV block (issue #109):
+ * the fill lane's three keys, parsed so far. PRE-GATE by construction —
+ * the settle pass (zod + id-affinity) stays the only authority. */
+export interface PartialDraft {
+  id: string;
+  title: string;
+  snippet: string;
+}
+
 export type StreamRecordsOptions<T> = Omit<
   GenerateRecordsOptions<T>,
   "callLLM"
@@ -630,6 +639,14 @@ export type StreamRecordsOptions<T> = Omit<
    * per-block gate. Callers must tolerate a record being reported here and
    * ALSO appearing in the settled result (dedupe per id is the caller's). */
   onRecord?: (record: T) => void;
+  /** Draft stream (issue #109, spec §9 drafting voice): fired after every
+   * accumulated-text change with the BEST CURRENT PARSE of the trailing
+   * (incomplete) block — `null` while the tail has no `id:` line yet, and
+   * `null` again the moment a blank-line boundary completes (the previous
+   * tail is finished: its record either just fired onRecord or dies at the
+   * settle pass). Pre-gate by definition; the caller gates/clips before
+   * anything is shown. */
+  onDraft?: (partial: PartialDraft | null, fullTextSoFar: string) => void;
 };
 
 /** Everything before the END of the last blank-line boundary: the blocks
@@ -641,6 +658,47 @@ function takeCompletedPrefix(text: string): string {
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) last = m.index + m[0].length;
   return last === -1 ? "" : text.slice(0, last);
+}
+
+/** The draft's line grammar, longest-prefix-first like blockToEntries.
+ * Fixed to the fill record's keys: that is the only drafting surface
+ * (spec §9 writing-rule line). */
+const PARTIAL_KEYS = ["snippet", "title", "id"] as const;
+
+/** Light, pre-gate parse of the still-arriving trailing block (issue
+ * #109): the SAME line grammar as blockToEntries (first-wins keys,
+ * space-folded continuations, a repeated key folding AS TEXT into the
+ * current value) but NO zod and NO max — the settle pass re-gates
+ * authoritatively, so this is a preview of the record the strict parser
+ * WOULD build from this tail, never a second truth. Returns null until an
+ * `id:` line has parsed: prose without an id has no card to attach to, so
+ * nothing may show. */
+export function parsePartialDraft(text: string): PartialDraft | null {
+  const draft: PartialDraft = { id: "", title: "", snippet: "" };
+  const seen = new Set<string>();
+  let lastKey: keyof PartialDraft | null = null;
+  const fold = (piece: string): void => {
+    if (lastKey === null) return;
+    draft[lastKey] = draft[lastKey] ? `${draft[lastKey]} ${piece}` : piece;
+  };
+  for (const raw of normalize(text).split("\n")) {
+    if (isBlank(raw)) continue;
+    const line = raw.trim();
+    const key = PARTIAL_KEYS.find((k) => line === k || line.startsWith(k + ":"));
+    if (key === undefined) {
+      fold(line);
+      continue;
+    }
+    const value = line === key ? "" : line.slice(key.length + 1).trim();
+    if (seen.has(key)) {
+      fold(`${key}: ${value}`);
+      continue;
+    }
+    seen.add(key);
+    lastKey = key;
+    draft[key] = value;
+  }
+  return draft.id === "" ? null : draft;
 }
 
 /**
@@ -667,6 +725,7 @@ export async function streamRecords<T>(
     provider,
     streamLLM: seam,
     onRecord,
+    onDraft,
   } = opts;
 
   const provRes = getProviderConfig(provider);
@@ -726,6 +785,14 @@ export async function streamRecords<T>(
               emitted++;
             }
           }
+        }
+        if (onDraft !== undefined) {
+          // Draft surface (issue #109): AFTER the boundary bookkeeping, so
+          // the tail this parse describes is exactly the block still in
+          // flight — a boundary completing inside this delta re-parses to
+          // the NEW tail (usually id-less → null), which is how the
+          // consumer learns to revoke the previous block's draft.
+          onDraft(parsePartialDraft(full.slice(consumed)), full);
         }
       }
     } catch (err) {
