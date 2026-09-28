@@ -8,12 +8,18 @@
  *   1. every card is interpreted OR honestly raw (no fabricated text)
  *   2. ≥1 card AI-interpreted (the happy path works)
  *   3. no api-key fragment anywhere in the output
- *   4. zero transport failures surfaced (the 429s were retried away)
+ *   4. zero transport failures surfaced (the 429s were retried away —
+ *      rate_limited counts as one when it escapes the retry budget, #105)
  *   5. the truncated lane salvaged per-card, not all-or-nothing
+ *   6. the 429-storm lane (#105): two consecutive throttles halve the
+ *      window twice and the last retry still recovers, with the gateway's
+ *      surfaced-429 counter seeing both scripted throttles
+ * Also logs (never asserts) first-fill latency against spec §7's ~10s bar.
  */
 import { translateQuestion } from "$lib/ai/agents/query";
 import { fillCards, type ProductCard } from "$lib/pipeline/cards";
 import { defaultCallLLM } from "$lib/ai/output";
+import { surfaced429Count } from "$lib/ai/gateway";
 
 /** Same-origin fake gateway; the model name selects the scripted lane.
  * A fresh nonce per run: bucket cursors stay unexhausted across reruns AND
@@ -52,6 +58,16 @@ export async function runSmoke(): Promise<{ lines: string[] }> {
   const lines: string[] = [];
   const log = (msg: string) => lines.push(msg);
   const results: Array<[string, boolean, string]> = [];
+  // First-fill latency (issue #105, spec §7's ~10s bar): the smoke drives
+  // fillCards non-streamed, so the first moment a card can flip interpreted
+  // is a fillCards RESOLUTION carrying one — latched on the first chunk.
+  const runStart = performance.now();
+  let firstFillMs: number | null = null;
+  const markFirstFill = (filled: ProductCard[]): void => {
+    if (firstFillMs === null && filled.some((c) => c.interpreted)) {
+      firstFillMs = performance.now() - runStart;
+    }
+  };
   try {
     // ── 1. translate lane (429 → KV) ─────────────────────────────
     const t = await translateQuestion({
@@ -72,19 +88,21 @@ export async function runSmoke(): Promise<{ lines: string[] }> {
     const failures: string[] = [];
     const filledAll: ProductCard[] = [];
     // Chunk A rides the degradation gauntlet (429 → junk → truncated);
-    // chunk B completes. spread: fillCards returns an array.
-    filledAll.push(
-      ...(await fillCards(cards.slice(0, 3), {
-        provider: provider("smoke-fill-a"),
-        callLLM: defaultCallLLM,
-        onFailure: (kind) => failures.push(kind),
-      })),
-      ...(await fillCards(cards.slice(3, 6), {
-        provider: provider("smoke-fill-b"),
-        callLLM: defaultCallLLM,
-        onFailure: (kind) => failures.push(kind),
-      })),
-    );
+    // chunk B completes. Kept as named results so the first interpreted
+    // resolution can latch the #105 first-fill latency.
+    const filledA = await fillCards(cards.slice(0, 3), {
+      provider: provider("smoke-fill-a"),
+      callLLM: defaultCallLLM,
+      onFailure: (kind) => failures.push(kind),
+    });
+    markFirstFill(filledA);
+    const filledB = await fillCards(cards.slice(3, 6), {
+      provider: provider("smoke-fill-b"),
+      callLLM: defaultCallLLM,
+      onFailure: (kind) => failures.push(kind),
+    });
+    markFirstFill(filledB);
+    filledAll.push(...filledA, ...filledB);
 
     // invariant: every card interpreted or honestly raw (the raw title
     // is the deterministic identifier fallback, never fabricated).
@@ -113,9 +131,17 @@ export async function runSmoke(): Promise<{ lines: string[] }> {
     );
     results.push(["fill: no key/model fragment in output", !keyLeak, ""]);
 
-    // The 429 must have been retried away: no transport-kind failure surfaced.
+    // The 429 must have been retried away: no transport-kind failure
+    // surfaced. rate_limited IS a transport failure here (issue #105 — a
+    // 429 the retries couldn't clear reached the surface, and the old list
+    // silently excused it); each scripted 429 above is recoverable, so the
+    // count must still be zero.
     const transportFailures = failures.filter(
-      (f) => f === "unreachable" || f === "timeout" || f === "browser_blocked",
+      (f) =>
+        f === "unreachable" ||
+        f === "timeout" ||
+        f === "browser_blocked" ||
+        f === "rate_limited",
     );
     results.push([
       "fill: zero transport failures surfaced",
@@ -156,6 +182,43 @@ export async function runSmoke(): Promise<{ lines: string[] }> {
       chunkB.every((c) => c.interpreted),
       chunkB.map((c) => (c.interpreted ? "AI" : "raw")).join(" "),
     ]);
+
+    // ── 3. 429 storm lane (issue #105): two CONSECUTIVE throttles — the
+    // gateway halves its admission window on each (floor 1; the halving
+    // itself is unit-tested in tests/gateway.test.ts) and the final retry
+    // of the 3-attempt budget must still recover. This lane keeps its own
+    // failures list so the shared zero-transport check above stays scoped
+    // to the chunk gauntlet.
+    const stormBefore = surfaced429Count();
+    const stormFailures: string[] = [];
+    const stormFilled = await fillCards([6, 7, 8].map(mkCard), {
+      provider: provider("smoke-storm"),
+      callLLM: defaultCallLLM,
+      onFailure: (kind) => stormFailures.push(kind),
+    });
+    markFirstFill(stormFilled);
+    results.push([
+      "storm: fill recovered after consecutive 429s (window halved, then healed)",
+      stormFilled.some((c) => c.interpreted),
+      `${stormFilled.filter((c) => c.interpreted).length}/3 interpreted${stormFailures.length > 0 ? ` · ${stormFailures.join(",")}` : ""}`,
+    ]);
+    // Teeth for the storm: BOTH scripted 429s must have been SEEN app-side
+    // — a bucket silently answering 200 would pass the line above.
+    const stormSaw = surfaced429Count() - stormBefore;
+    results.push([
+      "storm: surfaced-429 counter saw both scripted throttles",
+      stormSaw >= 2,
+      `+${stormSaw}`,
+    ]);
+
+    // Visible, not assumed (issue #105): when did the first card flip
+    // interpreted? A log line, not an assert — a cold CI must not flake on
+    // the §7 ~10s bar.
+    log(
+      firstFillMs === null
+        ? "first fill: n/a (no card interpreted this run)"
+        : `first fill: ${Math.round(firstFillMs)}ms (spec §7 ~10s bar)`,
+    );
   } catch (err) {
     results.push(["smoke crashed", false, String(err)]);
   }

@@ -245,7 +245,8 @@
 					investigation.fillStats.interpreted,
 					investigation.fillStats.total,
 					investigation.fillFailure,
-					investigation.fillErrorMessage
+					investigation.fillErrorMessage,
+					investigation.rateLimitedCount
 				)
 			: ''
 	);

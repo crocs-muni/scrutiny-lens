@@ -35,6 +35,23 @@ describe("fillNote — says the truth about why cards aren't interpreted", () =>
 		expect(note).not.toContain('unreachable');
 	});
 
+	it('appends the endpoint-stated 429 count when the run saw any (#105)', () => {
+		// The count is what the gateway actually SAW this run (spec §2),
+		// carried as a trailing suffix so a later wording pass (#108) can
+		// rewrite the head sentence without touching the count.
+		expect(fillNote(0, 5, 'rate_limited', null, 2)).toBe(
+			'AI endpoint rate limited — cards show the raw events · endpoint rate limited 2×'
+		);
+		// Zero means the retries cleared everything — the bare sentence
+		// already says what happened, no suffix.
+		expect(fillNote(0, 5, 'rate_limited', null, 0)).toBe(
+			'AI endpoint rate limited — cards show the raw events'
+		);
+		expect(fillNote(0, 5, 'rate_limited')).toBe(
+			'AI endpoint rate limited — cards show the raw events'
+		);
+	});
+
 	it('partial interpretation stays numeric and never "broken"', () => {
 		expect(fillNote(2, 5, 'schema_failure')).toBe(
 			'AI slow — 2 of 5 cards interpreted · uninterpreted cards show the raw events'

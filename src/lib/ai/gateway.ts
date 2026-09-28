@@ -96,6 +96,22 @@ export function resetGateway(): void {
 	limits = { ...DEFAULT_LIMITS };
 	injectedFetch = null;
 	secretHashes.clear();
+	surfaced429 = 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * Surfaced-429 counter (issue #105)
+ * ------------------------------------------------------------------ */
+
+/** Every 429 the endpoint ANSWERED this page's lifetime — the raw material
+ * for the banner's "endpoint rate limited N×" (spec §2 honest
+ * instrumentation: it counts only what the endpoint actually said, so a run
+ * whose retries cleared everything reads 0 and says nothing). */
+let surfaced429 = 0;
+
+/** Read seam for the smoke and the results banner: 429s seen so far. */
+export function surfaced429Count(): number {
+	return surfaced429;
 }
 
 /* ------------------------------------------------------------------ *
@@ -196,6 +212,10 @@ function halveWindow(baseUrl: string): void {
 
 function recordRateLimited(baseUrl: string): void {
 	halveWindow(baseUrl);
+	// Issue #105: this is THE single funnel every 429 flows through
+	// (callLLM, streamLLM, and both gatewayFetch arms), so the count lives
+	// here — never beside one arm, where a lane could throttle uncounted.
+	surfaced429 += 1;
 }
 
 /** Proactive shave (issue #104): a success header says the account is
