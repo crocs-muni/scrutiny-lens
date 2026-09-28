@@ -114,6 +114,7 @@ export class CanvasSim {
 	private byId = new Map<string, SimNode>();
 	private tickCb: (() => void) | null = null;
 	private dragging: string | null = null;
+	private stillTicks = 0;
 
 	constructor() {
 		this.sim = forceSimulation<SimNode, SimEdge>(this.nodes)
@@ -130,7 +131,33 @@ export class CanvasSim {
 			.force('slotX', forceX<SimNode>((n) => n.n.x).strength(0.03))
 			.force('slotY', forceY<SimNode>((n) => n.n.y).strength(0.03))
 			.stop();
-		this.sim.on('tick', () => this.tickCb?.());
+		this.sim.on('tick', () => {
+			this.tickCb?.();
+			// EARLY FREEZE (#103): alpha decays ×0.9772/tick to alphaMin —
+			// that's ≈254 ticks (4.2 s) from a reheat, of which the last ~3 s
+			// are sub-perceptual creep. "Frozen" should mean what the eye —
+			// not the alpha value — says: kill the tail once every card has
+			// crept below ¼ px/tick for ~⅓ s straight. Never mid-drag: the
+			// gesture owns the stillness there.
+			if (this.dragging) {
+				this.stillTicks = 0;
+				return;
+			}
+			let vmax = 0;
+			for (const n of this.nodes) {
+				const v = Math.hypot(n.vx ?? 0, n.vy ?? 0);
+				if (v > vmax) vmax = v;
+			}
+			if (vmax < 0.25) {
+				if (++this.stillTicks >= 20) {
+					this.stillTicks = 0;
+					this.sim.alpha(0).alphaTarget(0).stop();
+					this.freeze();
+				}
+			} else {
+				this.stillTicks = 0;
+			}
+		});
 		this.sim.on('end', () => this.freeze());
 		// Baseline truth: cooler than the off-switch, not merely stopped —
 		// stop() leaves alpha hot (the spike's "stuck settling" bug).
