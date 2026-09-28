@@ -158,6 +158,25 @@ class Investigation {
    * "endpoint rate limited N×" never grows across runs and never claims
    * more than the endpoint said (spec §2). */
   rateLimitedCount = $state(0);
+  /** Lazy fill (issue #106): card ids the results surface armed as
+   * "about to be read" — the observer calls armChunk() ~2 screenfuls
+   * ahead of the viewport and the claim gate in fillInChunks reads
+   * membership SYNCHRONOUSLY. Deliberately NOT a rune: no paint derives
+   * from it, so reactivity would only buy re-renders on scroll. STICKY
+   * across a run's cycles (scrolling past never disarms — a lane never
+   * un-claims either); resetRun clears it for the next run. When a cycle
+   * settles (filling false) a new arm starts a fresh cycle. */
+  private armed = new Set<string>();
+  /** The run's captured fill context (issue #106): a scroll-armed cycle
+   * re-fills with the SAME provider + transport the run started with —
+   * never live settings, which could differ mid-run (a cycle with another
+   * model would poison the (eventId, model) cache keys). Null outside a
+   * run; set by fillInChunks, cleared by resetRun. */
+  private fillCtx: {
+    provider: ProviderOverrideInput;
+    callLLM: CallLLM;
+    stream?: StreamLLM;
+  } | null = null;
   result = $state<SearchSession | null>(null);
   /** Settled failure (never a deliberate abort); the §4 error surfaces
    * (#38) render from this. */
@@ -277,6 +296,8 @@ class Investigation {
     this.facetGroups = [];
     this.selections = {};
     this.filling = false;
+    this.armed = new Set(); // fresh run — the last cohort's arms mean nothing (#106)
+    this.fillCtx = null; // and no scroll cycle may start for it
     this.pending = new Set();
     this.failed = new Set();
     this.fillStats = { interpreted: 0, total: 0 };
@@ -427,7 +448,9 @@ class Investigation {
           this.filling = true;
           // Prod passes the gateway's streamText lane: the fill paints
           // per-record. Tests injecting only callLLM keep the batch path.
-          await this.fillInChunks(provider, callLLM, controller, streamLLM);
+          // Lazy (issue #106): the viewport + prefetch window fills now,
+          // the rest when scrolled toward — the results surface arms it.
+          await this.fillInChunks(provider, callLLM, controller, streamLLM, true);
           if (this.controller === controller) this.filling = false;
         }
       }
@@ -548,7 +571,9 @@ class Investigation {
       // card renders rule-5 now and the existing fill lane interprets it in
       // place on the session surface ("uninterpreted first", spec §8).
       this.filling = true;
-      void this.fillInChunks(provider, defaultCallLLM, controller, streamLLM)
+      // Lazy (issue #106) — a shared root is one card in practice, which
+      // is chunk 0: armed at t0, so the cold-open paint is unchanged.
+      void this.fillInChunks(provider, defaultCallLLM, controller, streamLLM, true)
         .catch(() => {})
         .finally(() => {
           if (this.controller === controller) this.filling = false;
@@ -728,8 +753,11 @@ class Investigation {
       try {
         // Stream seam defaults to the production gateway (progressive
         // per-record paint, same as start()/openShared()); tests pass
-        // explicit undefined so the injected callLLM drives the batch path.
-        await this.fillInChunks(provider, callLLM, controller, stream);
+        // explicit undefined so the injected callLLM drives the batch
+        // path. Lazy (issue #106) like the other production fills: the
+        // restored cohort's beyond-window chunks arm as the user scrolls
+        // the results surface (chunk 0 always fires).
+        await this.fillInChunks(provider, callLLM, controller, stream, true);
       } catch {
         /* per-chunk degrade lives inside fillInChunks */
       } finally {
@@ -753,6 +781,55 @@ class Investigation {
     // Selection survives an abort (ruling 10): stop() freezes the run but
     // keeps what it painted, so the dossier's evidence is still intact.
     this.controller?.abort();
+  }
+
+  /** @internal — the singleton's reset seam (same convention as
+   * `_closeForTests`): drop arming + fill context so a stale cycle can
+   * never start for a reset store (issue #106). */
+  resetArming(): void {
+    this.armed = new Set();
+    this.fillCtx = null;
+  }
+
+  /** Arming entry point for lazy fill (issue #106): the results surface's
+   * IntersectionObserver calls this as a card approaches the viewport.
+   * Sticky and idempotent: re-arming an armed id is a no-op, disarming
+   * never happens, and the set survives until the next run resets it.
+   *
+   * CYCLE MODEL (owner blocker, 2026-09-28): a lazy fill settles when no
+   * armed-with-work chunk remains (filling goes false — the §4 banner and
+   * keyArrived's guard both read it), and a NEW arm while the run is still
+   * alive starts a fresh fill cycle over the armed remainder. Lanes re-scan
+   * from scratch each cycle; claimedRanges is per-call, and only
+   * still-raw non-amber cards in armed chunks fire requests — the
+   * (eventId, model) cache pass inside fillCards swallows everything
+   * already filled (spec §6). */
+  armChunk(cardId: string): void {
+    if (this.armed.has(cardId)) return;
+    this.armed.add(cardId);
+    // Fresh cycle when no fill is running, mirroring the claim gate
+    // exactly: chunk 0 with work still counts (the t0 viewport contract),
+    // as does any armed raw non-amber card. The fill context is the RUN's
+    // captured provider — a cycle must never re-read live settings and
+    // fill with a different (endpoint, model) than the run started with.
+    const ctx = this.fillCtx;
+    if (ctx === null || this.filling) return;
+    if (this.controller === null || this.controller.signal.aborted) return;
+    const hasWork = (c: (typeof this.cards)[number]): boolean =>
+      !c.interpreted && !this.failed.has(c.id);
+    const claimable =
+      (this.cards.length > 0 && this.cards.slice(0, 3).some(hasWork)) ||
+      this.cards.some((c) => this.armed.has(c.id) && hasWork(c));
+    if (claimable) {
+      this.filling = true;
+      void this.fillInChunks(ctx.provider, ctx.callLLM, this.controller, ctx.stream, true)
+        .catch(() => {
+          /* per-chunk degrade lives inside fillInChunks */
+        })
+        .finally(() => {
+          if (this.controller !== null) this.filling = false;
+        });
+    }
   }
 
   /** Dossier-open from any surface (card row, graph node, citation). The
@@ -1127,12 +1204,28 @@ clearFacets(): void {
    * Claim-cursor is synchronous — no double-claim; each lane's merge is
    * one synchronous rewrite (disjoint indices), so lanes can't clobber
    * each other. Cached interpretations return instantly — the first
-   * chunk (viewport cards) still starts at t=0 on lane 0. */
+   * chunk (viewport cards) still starts at t=0 on lane 0.
+   *
+   * Lazy fill (issue #106): decode is the real cost (~12.5s per 3-card
+   * chunk), and on a long result a third of the cards are never scrolled
+   * to — with `lazy` the claim gate only takes ARMED chunks (the ruled
+   * next-N prefetch: the viewport plus ~2 screenfuls ahead, armed by the
+   * results surface's IntersectionObserver; chunk 0 is armed at t0 so
+   * spec §7's first-content contract holds with zero scroll). Cards
+   * beyond the armed window stay raw and UN-ambered — amber means a lane
+   * asked and lost, these were never asked (spec §2). Arming is sticky
+   * and a chunk claims at most once per fill, so scroll-back never
+   * re-pays the endpoint: a re-armed chunk's records either already
+   * painted or ride the (eventId, model) cache pass inside fillCards
+   * (spec §6). With `lazy = false` every chunk counts as armed and the
+   * gate degrades to the old linear cursor — that stays the test-seam
+   * default so fills without an arming surface behave exactly as before. */
   private async fillInChunks(
     provider: ProviderOverrideInput,
     callLLM: CallLLM,
     controller: AbortController,
     stream?: StreamLLM,
+    lazy: boolean = false,
     // 60s: a cold model on a shared BYOK gateway can take 30-60s to answer
     // at all (first-use cold-loads are common on LiteLLM-style proxies), and
     // the gateway's 429 cooldown cycle needs a lane arm longer than its
@@ -1144,16 +1237,60 @@ clearFacets(): void {
     const CHUNK = 3;
     const LANES = 4;
     const total = this.cards.length;
+    // Capture the fill context for this run (#106): a scroll-armed cycle
+    // must re-fill with the SAME provider + transport — never live
+    // settings (a mid-run model change would poison the (eventId, model)
+    // cache keys with a different model's rows).
+    this.fillCtx = { provider, callLLM, stream };
     this.fillStats = { interpreted: 0, total };
     // Issue #105: the banner's "endpoint rate limited N×" is the delta of
     // the gateway's page-lifetime 429 count across THIS fill — snapshot at
     // entry, settle at the end of the last lane.
     const seen429AtStart = surfaced429Count();
-    let next = 0;
-    const claim = (): number => {
-      const at = next;
-      next += CHUNK;
-      return at;
+    // Arming set (#106): STICKY ACROSS CYCLES within a run (a scrolled-past
+    // card must not drop back out between cycles) — resetRun clears it for
+    // the next run. Claimed ranges are per-cycle: a re-armed chunk's
+    // already-filled cards ride the (eventId, model) cache pass inside
+    // fillCards, so a second claim never re-pays the endpoint (spec §6).
+    const chunkCount = Math.ceil(total / CHUNK);
+    const claimedRanges = new Set<number>();
+    /** A card the lanes can still do work on (#106 cycle model): not yet
+     * interpreted AND not amber — a claimed-and-lost card never re-enters
+     * a cycle (the gateway already retried it; re-asking would re-pay for
+     * the same loss), and an interpreted one has nothing left to do. */
+    const hasWork = (i: number): boolean => {
+      const c = this.cards[i];
+      return c !== undefined && !c.interpreted && !this.failed.has(c.id);
+    };
+    /** Lazy claim gate (#106): a chunk is claimable when any of its cards
+     * is armed AND has work — chunk 0 included (the t0 viewport guarantee,
+     * spec §7 — but never above hasWork: an all-interpreted chunk 0 must
+     * not re-claim every cycle, and an amber one never re-pays). Eager
+     * fills short-circuit true so the cursor below is then exactly the
+     * pre-#106 smallest-unclaimed walk. */
+    const chunkArmed = (at: number): boolean => {
+      if (!lazy) return true;
+      const end = Math.min(at + CHUNK, total);
+      let hasWorkInRange = false;
+      let armedHasWork = false;
+      for (let i = at; i < end; i++) {
+        if (!hasWork(i)) continue;
+        hasWorkInRange = true;
+        if (this.armed.has(this.cards[i]?.id ?? "")) armedHasWork = true;
+      }
+      return (at === 0 && hasWorkInRange) || armedHasWork;
+    };
+    /** Smallest unclaimed ARMED chunk, claimed synchronously (no
+     * double-claim), or null when nothing armed-and-unclaimed exists.
+     * Smallest-first keeps the fill ordered the way the user reads even
+     * after a scroll jump arms a deep chunk. */
+    const claim = (): number | null => {
+      for (let at = 0; at < total; at += CHUNK) {
+        if (claimedRanges.has(at) || !chunkArmed(at)) continue;
+        claimedRanges.add(at);
+        return at;
+      }
+      return null;
     };
     const runAlive = (): boolean =>
       !controller.signal.aborted && this.controller === controller;
@@ -1272,8 +1409,21 @@ clearFacets(): void {
       return stalled;
     };
     const worker = async (): Promise<void> => {
-      for (let at = claim(); at < total; at = claim()) {
+      for (;;) {
         if (controller.signal.aborted || this.controller !== controller) return;
+        const at = claim();
+        if (at === null) {
+          // Nothing armed-and-unclaimed exists right now. With every chunk
+          // claimed the lane's work is done (the eager path always exits
+          // here — claim() only returns null once the cursor is spent).
+          // Otherwise the fill is lazy and ahead-of-viewport chunks just
+          // aren't armed yet — the CYCLE EXITS (owner blocker, 2026-09-28):
+          // fillInChunks resolves, filling goes false (the §4 banner and
+          // keyArrived's guard both read it), and the next armChunk()
+          // starts a fresh cycle over the armed remainder. A lane never
+          // spins on the gate and never hangs a stopped run (spec §8).
+          return;
+        }
         const chunk = this.cards.slice(at, at + CHUNK);
         const stalled = await runPass(chunk, (_card, i) => at + i, perChunkMs);
         if (!stalled) continue;
@@ -1313,6 +1463,10 @@ clearFacets(): void {
    * a fresh controller (so `this.controller !== controller` bail-outs stay
    * off the happy path), and runs one fillInChunks cycle against this
    * instance, optionally with a shorter per-chunk arm (issue #104).
+   * `opts.lazy` turns on the #106 claim gate — tests then drive the SAME
+   * armChunk() entry point the results surface's observer uses, no
+   * IntersectionObserver needed. Default false: no arming surface means
+   * every chunk counts as armed, exactly the pre-#106 behavior.
    * Underscore-marked like `_closeForTests`; UI callers go through
    * `start()`. */
   async _fillInChunksForTests(
@@ -1320,6 +1474,7 @@ clearFacets(): void {
     provider: ProviderOverrideInput,
     callLLM: CallLLM,
     perChunkMs?: number,
+    opts: { lazy?: boolean } = {},
   ): Promise<void> {
     const controller = new AbortController();
     this.controller = controller;
@@ -1327,7 +1482,14 @@ clearFacets(): void {
     this.filling = true;
     this.fillStats = { interpreted: 0, total: cards.length };
     this.pending = new Set();
-    await this.fillInChunks(provider, callLLM, controller, undefined, perChunkMs);
+    await this.fillInChunks(
+      provider,
+      callLLM,
+      controller,
+      undefined,
+      opts.lazy ?? false,
+      perChunkMs,
+    );
     this.filling = false;
   }
 }
@@ -1349,6 +1511,7 @@ export function resetInvestigation(): void {
   investigation.facetGroups = [];
   investigation.selections = {};
   investigation.filling = false;
+  investigation.resetArming();
   investigation.pending = new Set();
   investigation.failed = new Set();
   investigation.fillStats = { interpreted: 0, total: 0 };
