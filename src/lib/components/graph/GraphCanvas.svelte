@@ -63,6 +63,7 @@
 
 	const ZOOM_MIN = 0.25;
 	const ZOOM_MAX = 1.6;
+	const FIT_FLOOR = 0.15;
 
 	// --- engine --------------------------------------------------------------
 	// Held OUT of the reactive graph: the sim mutates per animation frame;
@@ -306,8 +307,12 @@
 		const spanW = bounds.x1 - bounds.x0;
 		const spanH = bounds.y1 - bounds.y0;
 		if (spanW < 1 && spanH < 1) return cameraK; // one card: no pan-out meaning
+		// The interaction floor (0.25) applies to GESTURES, not to fit:
+		// "everything in view" is the fit's contract — clamping fit AT the
+		// gesture floor silently crops big maps on short stages. react-flow
+		// makes this same fit-below-minZoom allowance.
 		return Math.max(
-			ZOOM_MIN,
+			FIT_FLOOR,
 			Math.min(
 				FIT_OPTIONS.maxZoom,
 				Math.min((stageW || 1) / spanW, (stageH || 1) / spanH) * (1 - FIT_OPTIONS.padding)
