@@ -580,6 +580,9 @@ export async function batchNodeInterpret(
       provider: opts.provider,
       callLLM: opts.callLLM,
       abortSignal: opts.abortSignal,
+      // Interpret lane (issue #107): cap a reasoning model's hidden
+      // thinking where the endpoint honors it.
+      reasoningEffort: "low",
     });
 
     if (!res.ok) {
