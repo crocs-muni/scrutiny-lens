@@ -671,6 +671,10 @@ export async function interpretCards(
       ],
       provider: opts.provider,
       callLLM: opts.callLLM,
+      // Interpret lane (issue #107): cap a reasoning model's hidden
+      // thinking where the endpoint honors it — the batch arm can't
+      // out-wait it.
+      reasoningEffort: "low",
     });
 
     if (!res.ok) {

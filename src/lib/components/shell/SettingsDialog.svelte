@@ -304,6 +304,12 @@
 				{:else if modelState === 'ready' && models.length === 0}
 					<p class="mt-1.5 text-[11.5px] text-ink-3">The endpoint reported no models.</p>
 				{/if}
+				<!-- Guidance (issue #107): interpretation runs inside fixed time budgets;
+					a reasoning-class model spends them on hidden thinking instead. -->
+				<p class="mt-1.5 text-[11.5px] text-ink-3">
+					Reasoning-class models think before they answer and can exceed the fill budget — a
+					fast model interprets best.
+				</p>
 			{/if}
 		</section>
 
