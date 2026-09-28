@@ -19,7 +19,7 @@ export const RELAY_MIN = 1;
 export const RELAY_MAX = 4;
 
 /** Spec §5 ships a known-good default; env overrides it, not replaces it. */
-const SPEC_ENDPOINT = 'https://llm.fi.muni.cz/v1';
+const SPEC_ENDPOINT = 'https://llm.ai.e-infra.cz/v1';
 
 /** Spec §8 default relay pool (2026-09-17 test-corpus bootstrap: the user's
  * lens-demo relay (relay.tools/newlay) holds the full JCAlgTest + sec-certs
