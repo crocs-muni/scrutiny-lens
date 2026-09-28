@@ -15,7 +15,9 @@ import { applyFacets, type FacetGroup, type ProductCard } from '$lib/pipeline/ca
 /** Semantic facet axes on top of the i-tag groups (BIBLE J2 rail): these
  * are coded group names, not prefixes — an event i-tag prefix literally
  * named 'type' would collide, accepted given the corpus's corpus vocab. */
-export const SEMANTIC_PREFIXES = new Set(['type', 'status', 'interpretation']);
+// Fill vocabulary (issue #108): the card-space fill axis is named 'fill'
+// and speaks raw / filled — "interpretation" never reaches the surface.
+export const SEMANTIC_PREFIXES: Record<string, true> = { type: true, status: true, fill: true };
 
 export function semanticGroups(events: NostrEvent[], cards: ProductCard[]): FacetGroup[] {
 	const products = events.filter((e) => tTags(e).includes('scrutiny-product')).length;
@@ -38,17 +40,17 @@ export function semanticGroups(events: NostrEvent[], cards: ProductCard[]): Face
 			]
 		},
 		{
-			prefix: 'interpretation', // card-space axis
+			prefix: 'fill', // card-space axis
 			values: [
-				{ value: 'interpreted', count: interpreted },
-				{ value: 'not interpreted', count: cards.length - interpreted }
+				{ value: 'filled', count: interpreted },
+				{ value: 'raw', count: cards.length - interpreted }
 			]
 		}
 	];
 }
 
 /** Apply the semantic selections after the i-tag filter: events narrow by
- * type; cards narrow additionally by status / interpretation (OR within an
+ * type; cards narrow additionally by status / fill (OR within an
  * axis, AND across — same rule as the i-tag groups, spec §3). */
 export function afterSemantics(
 	events: NostrEvent[],
@@ -63,16 +65,19 @@ export function afterSemantics(
 	if (status !== undefined && status.size === 1) {
 		cards = status.has('retracted') ? cards.filter((c) => c.retracted) : cards.filter((c) => !c.retracted);
 	}
-	const interp = selections['interpretation'];
+	const interp = selections['fill'];
 	if (interp !== undefined && interp.size === 1) {
-		cards = interp.has('interpreted') ? cards.filter((c) => c.interpreted) : cards.filter((c) => !c.interpreted);
+		// 'filled' keeps interpreted cards; 'raw' keeps the rule-5 faces —
+		// the selection names speak issue #108 vocabulary, the field keeps
+		// the internal name.
+		cards = interp.has('filled') ? cards.filter((c) => c.interpreted) : cards.filter((c) => !c.interpreted);
 	}
 	return { events, cards };
 }
 
 /** Selections minus the semantic axes — the i-tag filter's input. */
 export function iTagSelections(selections: Record<string, Set<string>>): Record<string, Set<string>> {
-	return Object.fromEntries(Object.entries(selections).filter(([k]) => !SEMANTIC_PREFIXES.has(k)));
+	return Object.fromEntries(Object.entries(selections).filter(([k]) => SEMANTIC_PREFIXES[k] !== true));
 }
 
 export function visibleCards(

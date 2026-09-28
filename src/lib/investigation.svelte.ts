@@ -683,7 +683,7 @@ class Investigation {
     if (settings.model !== "") {
       // Seed the trace's descriptions row (review H3d): cache paints ARE
       // rendered interpretations — the decouple counter must never read
-      // "not interpreted" beside them (spec §2 rule 6).
+      // "raw" beside them (spec §2 rule 6).
       this.fillStats = {
         interpreted: painted.filter((c) => c.interpreted).length,
         total: painted.length,
@@ -1541,9 +1541,10 @@ export function resetInvestigation(): void {
  * — CORS preflight / mixed content, spec §2), one throttling us (rate_limited
  * — a 429 IS an answer: the endpoint is up, just asking us to slow down), and
  * one that answered but produced non-conforming output (schema_failure): the
- * last two must not be mislabeled "AI unreachable" (spec §2 never-lie — in the
+ * last two must not be mislabeled "Endpoint unreachable" (spec §2 never-lie — in the
  * owner's incident the endpoint WAS reachable), and a browser block must not
- * claim the AI is down.
+ * claim the endpoint is down. User-visible text speaks issue #108's
+ * raw/filled vocabulary — never "AI" or "interpreted".
  */
 /** Fill-failure recording rule, exported for the ordering pin: schema_failure
  * and rate_limited are sticky — a later transport error can't overwrite "the
@@ -1574,18 +1575,18 @@ export function fillNote(
 ): string {
   if (total <= 0 || interpreted >= total) return "";
   if (interpreted > 0) {
-    return `AI slow — ${interpreted} of ${total} cards interpreted · uninterpreted cards show the raw events`;
+    return `Slow — ${interpreted} of ${total} cards filled · the rest show the raw events`;
   }
   const reason = message === null || message === "" ? "" : ` (${message})`;
   if (failure === "schema_failure") {
-    return `AI output didn't conform${reason} — cards show the raw events`;
+    return `Output didn't conform${reason} — cards show the raw events`;
   }
   if (failure === "rate_limited") {
     const countSuffix = rateLimitedCount > 0 ? ` · endpoint rate limited ${rateLimitedCount}×` : "";
-    return `AI endpoint rate limited — cards show the raw events${countSuffix}`;
+    return `Endpoint rate limited — cards show the raw events${countSuffix}`;
   }
   if (failure === "browser_blocked") {
-    return "AI endpoint blocked by the browser (CORS or mixed content) — cards show the raw events";
+    return "Endpoint blocked by the browser (CORS or mixed content) — cards show the raw events";
   }
-  return `AI unreachable${reason} — cards show the raw events`;
+  return `Endpoint unreachable${reason} — cards show the raw events`;
 }

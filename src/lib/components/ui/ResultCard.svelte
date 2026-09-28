@@ -7,15 +7,15 @@
 	 *                     + event-age clock + icon counts). No action buttons
 	 *                     on faces (spec §9): sharing lives in the drawer's
 	 *                     SharePopover, never on the card surface.
-	 *   not interpreted — dashed border, event's own tags + first chars,
-	 *                     "not interpreted" badge; same footer (publisher +
-	 *                     metadata/files/updates counts are deterministic,
-	 *                     never AI).
-	 *   interpreting…   — SAME dashed face, no badge: the whole card carries
+	 *   raw             — dashed border, event's own tags + first chars,
+	 *                     "raw" badge (issue #108 vocabulary); same footer
+	 *                     (publisher + metadata/files/updates counts are
+	 *                     deterministic, never model-written).
+	 *   filling         — SAME dashed face, no badge: the whole card carries
 	 *                     the shared neutral sweep (.fill-sweep, issue #82's
 	 *                     grammar) sourced from investigation.pending — a card
 	 *                     8s into a 14s call must not read identically to one
-	 *                     that will never be interpreted (spec §2). The sweep
+	 *                     that will never be filled (spec §2). The sweep
 	 *                     is chrome ON TOP of the true rule-5 face, never veils it.
 	 *   fill failed     — claimed by a lane but settled uninterpreted this
 	 *                     pass: persistent amber-tint background (the shared
@@ -189,7 +189,7 @@ const dashed = $derived(product === null || !product.interpreted);
 					? 'border-orange-line text-orange'
 					: 'border-line text-ink-3'}"
 			>
-				not interpreted
+				raw
 			</span>
 		{/if}
 	</div>
