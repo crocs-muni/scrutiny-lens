@@ -83,6 +83,15 @@
 	let cameraK = $state(1);
 	let panOX = $state(0);
 	let panOY = $state(0);
+	// FIT GLIDE (machine for the Commands): easing lives ONLY here — damped
+	// targets written by fit()/settle-correction, converged by a small rAF
+	// loop with exponential smoothing (log-space for k; multiplicative value,
+	// equal-ratio glide). Gestures (zoomAt/pan) write the live values and
+	// NULL the targets in the same line: the wheel always wins instantly,
+	// never a rubber band (scout-verified convention).
+	let kTarget: number | null = null;
+	let panTarget: [number, number] | null = null;
+	let camClaimed = false; // set by any wheel/pan gesture until the next fit
 	let boundsVersion = $state(0); // bumped by flushFrame when the center moved
 	const boundsC = $derived.by(() => {
 		void boundsVersion; // positions live outside the reactive graph — this is the pulse
@@ -161,6 +170,7 @@
 				onSelect,
 				onExpand: (target: string) => {
 					pendingExpand = target;
+					camClaimed = true; // deliberate input — the settle correction stays off
 					// The bubble's meaning is role-bound (#97): a record's bubble
 					// reveals its related products; a related's reveals its records.
 					if (n.role === 'related') investigation.expandRelated(target);
@@ -188,13 +198,18 @@
 	$effect(() => {
 		const view = graph; // the single tracked dep
 		const added = sim.applyView(view);
-		// The welcome (#102 ruling): the FIRST batch of arrivals rehearses the
-		// map into its ring grammar on-screen; the camera frames only the
-		// organized result — fitting the t0 pile-up would zoom tight, then
-		// watch everyone spread out of frame.
+		// Analytic pre-fit (#102 ruling, scout-verified Figma/Excalidraw
+		// convention): the final frame is a property of the DERIVED slot
+		// grammar — computable before the first physics tick. Set it at t=0,
+		// instantly (no glide at open), and the welcome plays out INSIDE its
+		// already-correct frame.
 		if (added.length > 0 && !firstApplyDone) {
 			firstApplyDone = true;
-			welcomeFitPending = true;
+			if (stageW > 0) {
+				const b = boundsOf(view.nodes as { x: number; y: number }[]);
+				if (b) cameraK = fitK(b);
+				preFitted = true;
+			}
 		}
 		// Mid-drag removal (live retraction, undo-expand): the card is gone, so
 		// its pointerup never lands — cool the episode down at the sync point.
@@ -263,41 +278,121 @@
 			ln.setAttribute('x2', p2.x.toFixed(2));
 			ln.setAttribute('y2', p2.y.toFixed(2));
 		}
+		// Settle correction: the sim waxes hot per episode, and slot gravity
+		// holds equilibrium NEAR the grammar, not exactly on it. At the true
+		// freeze moment (settling flips false — the only event we can hear),
+		// measure the organized bounds; if the fit drifted >10% in k from
+		// what the frame shows, glide quietly to it. Never once the user has
+		// touched the camera (camClaimed — Mapbox/Excalidraw: don't yank).
+		const wasSettling = settling;
 		settling = sim.settling();
+		if (wasSettling && !settling && !camClaimed && draggingId === null) {
+			const sb = simBounds();
+			if (sb) {
+				const nowK = fitK(sb);
+				if (Math.abs(nowK - cameraK) > 0.1 * nowK) {
+					kTarget = nowK;
+					panTarget = [0, 0];
+					ensureDampLoop();
+				}
+			}
+		}
 	}
 
 	// --- camera --------------------------------------------------------------
-	// fit is a COMMAND, never a mode (#103 ruling): hand the frame a fresh k
-	// and clear the pan offset. Welcome-end and the toolbar button are its
-	// only callers — resize does NOT invoke it (the derived translation keeps
-	// you centered at your own k, that is the whole point).
-	function fit(): void {
-		if (!stage || sim.nodes.length === 0) return;
+	/** Analytic fit-k for a node spread (slots at open, physics at settle):
+	 * the frame is a property of the grammar, computable before motion. */
+	function fitK(bounds: { x0: number; y0: number; x1: number; y1: number }): number {
+		const spanW = bounds.x1 - bounds.x0;
+		const spanH = bounds.y1 - bounds.y0;
+		if (spanW < 1 && spanH < 1) return cameraK; // one card: no pan-out meaning
+		return Math.max(
+			ZOOM_MIN,
+			Math.min(
+				FIT_OPTIONS.maxZoom,
+				Math.min((stageW || 1) / spanW, (stageH || 1) / spanH) * (1 - FIT_OPTIONS.padding)
+			)
+		);
+	}
+	function boundsOf(points: { x: number; y: number }[], padW = 140, padH = 100) {
+		if (points.length === 0) return null;
 		let x0 = Infinity,
 			y0 = Infinity,
 			x1 = -Infinity,
 			y1 = -Infinity;
-		for (const n of sim.nodes) {
-			x0 = Math.min(x0, n.x! - 140);
-			y0 = Math.min(y0, n.y! - 100);
-			x1 = Math.max(x1, n.x! + 140);
-			y1 = Math.max(y1, n.y! + 100);
+		for (const n of points) {
+			x0 = Math.min(x0, n.x - padW);
+			y0 = Math.min(y0, n.y - padH);
+			x1 = Math.max(x1, n.x + padW);
+			y1 = Math.max(y1, n.y + padH);
 		}
-		cameraK = Math.max(
-			ZOOM_MIN,
-			Math.min(
-				FIT_OPTIONS.maxZoom,
-				Math.min((stageW || 1) / (x1 - x0), (stageH || 1) / (y1 - y0)) * (1 - FIT_OPTIONS.padding)
-			)
-		);
+		return { x0, y0, x1, y1 };
+	}
+	function simBounds() {
+		return boundsOf(sim.nodes as { x: number; y: number }[]);
+	}
+	// fit is a COMMAND, never a mode (#103 ruling): hand the frame a fresh k
+	// and clear the pan offset — through the glide (≈300 ms convention), so
+	// the welcome landing and the toolbar button feel the same.
+	function fit(): void {
+		const b = simBounds();
+		if (!b) return;
+		kTarget = fitK(b);
+		panTarget = [0, 0];
+		camClaimed = false;
+		ensureDampLoop();
+	}
+	/** Instant fit at open — the Figma/Excalidraw convention (no glide at
+	 * t=0, or the map starts life smeared). */
+	function fitInstant(): void {
+		const b = simBounds();
+		if (!b) return;
+		cameraK = fitK(b);
 		panOX = 0;
 		panOY = 0;
-		flushFrame(); // bounds pulse → the derived cam snaps onto this k now
+		kTarget = null;
+		panTarget = null;
+	}
+
+	let dampRaf: number | null = null;
+	let lastStep = 0;
+	function ensureDampLoop(): void {
+		if (dampRaf !== null) return;
+		lastStep = performance.now();
+		dampRaf = requestAnimationFrame(dampStep);
+	}
+	function dampStep(now: number): void {
+		const dt = Math.min(0.1, Math.max(0.001, (now - lastStep) / 1000)); // clamp tab-switch spikes
+		lastStep = now;
+		const t = 1 - Math.exp(-4 * dt); // rate 4 → lands in ~300 ms
+		if (kTarget !== null) {
+			// log-space: k is multiplicative ⇒ equal ratio, equal glide speed
+			cameraK = Math.exp(Math.log(cameraK) + (Math.log(kTarget) - Math.log(cameraK)) * t);
+			if (Math.abs(Math.log(kTarget) - Math.log(cameraK)) < 0.005) {
+				cameraK = kTarget;
+				kTarget = null;
+			}
+		}
+		if (panTarget !== null) {
+			panOX += (panTarget[0] - panOX) * t;
+			panOY += (panTarget[1] - panOY) * t;
+			if (Math.abs(panTarget[0] - panOX) < 0.5 && Math.abs(panTarget[1] - panOY) < 0.5) {
+				panOX = panTarget[0];
+				panOY = panTarget[1];
+				panTarget = null;
+			}
+		}
+		if (kTarget !== null || panTarget !== null) {
+			dampRaf = requestAnimationFrame(dampStep);
+		} else {
+			dampRaf = null;
+		}
 	}
 
 	/** Zoom anchored at a stage point (wheel: pointer; buttons: center). Keeps
 	 * the world point under the anchor glued there — the pan OFFSET absorbs
-	 * the k change, everything else is the one derived line. */
+	 * the k change. A gesture also CLAIMS the camera and kills any in-flight
+	 * glide in the same line (gestures never rubber-band). */
 	function zoomAt(px: number, py: number, factor: number): void {
 		const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, cameraK * factor));
 		if (next === cameraK) return;
@@ -306,6 +401,9 @@
 		cameraK = next;
 		panOX = px - stageW / 2 + next * boundsC.x - next * qx;
 		panOY = py - stageH / 2 + next * boundsC.y - next * qy;
+		kTarget = null;
+		panTarget = null;
+		camClaimed = true;
 	}
 
 	// Ref actions: keep the imperative render loop's DOM map honest across
@@ -341,7 +439,7 @@
 	//     layout, ruling 4) — so the drag starts only past ≈4 screen px.
 	let dragCandidate: { id: string; pointerId: number } | null = null;
 	let firstApplyDone = false;
-	let welcomeFitPending = false;
+	let preFitted = false; // the analytic t0 fit lands exactly once (effect or RO)
 	// A drag that RELEASES off its card still fires a click on the nearest
 	// common ancestor = the stage. Untreated, paneClick would deselect the
 	// very node the drag just selected (review F1, #102) — so the episode
@@ -377,6 +475,7 @@
 		}
 		draggingId = id;
 		justDragged = true;
+		camClaimed = true; // any deliberate input owns the camera from here
 		flushFrame(); // light the chip without waiting for the first tick
 	}
 	function onWindowPointerUp(e: PointerEvent) {
@@ -409,6 +508,7 @@
 			const ny = ev.clientY - panStart[1];
 			if (!justPanned && Math.hypot(nx - panOX, ny - panOY) < 4) return;
 			justPanned = true;
+			camClaimed = true; // a pan gesture owns the camera too
 			panOX = nx;
 			panOY = ny;
 		};
@@ -438,14 +538,6 @@
 			zoomOut: () => zoomAt(stageW / 2, stageH / 2, 1 / 1.3),
 			fit
 		};
-		// The opening camera: NOT at mount (t0 pile-up), but after the first
-		// arrival episode freezes — fit frames the organized map once.
-		sim.setEnd(() => {
-			if (welcomeFitPending) {
-				welcomeFitPending = false;
-				fit();
-			}
-		});
 		// The ONLY resize work left: feed the derived camera fresh stage
 		// dims. Re-centering is free from here — it is one derived line, not
 		// a call chain.
@@ -453,6 +545,14 @@
 			const r = entries[0].contentRect;
 			stageW = r.width;
 			stageH = r.height;
+			// The first stage-size notification lands AFTER the first apply
+			// (attach→measure is async): the t0 pre-fit waits, not dies —
+			// still instant, still before the visible frames.
+			if (!preFitted && firstApplyDone && !camClaimed) {
+				const b = boundsOf(graph.nodes as { x: number; y: number }[]);
+				if (b) cameraK = fitK(b);
+				preFitted = true;
+			}
 		});
 		resizeObserver.observe(el);
 		return () => {
@@ -464,7 +564,8 @@
 			window.removeEventListener('pointerup', panUp);
 			window.removeEventListener('pointermove', onWindowPointerMove);
 			window.removeEventListener('pointerup', onWindowPointerUp);
-			sim.setEnd(null);
+			if (dampRaf !== null) cancelAnimationFrame(dampRaf);
+			dampRaf = null;
 			sim.dispose();
 			toolbarActions = null;
 		};

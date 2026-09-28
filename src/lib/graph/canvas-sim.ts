@@ -113,7 +113,6 @@ export class CanvasSim {
 	private sim: Simulation<SimNode, SimEdge>;
 	private byId = new Map<string, SimNode>();
 	private tickCb: (() => void) | null = null;
-	private endCb: (() => void) | null = null;
 	private dragging: string | null = null;
 
 	constructor() {
@@ -132,10 +131,7 @@ export class CanvasSim {
 			.force('slotY', forceY<SimNode>((n) => n.n.y).strength(0.03))
 			.stop();
 		this.sim.on('tick', () => this.tickCb?.());
-		this.sim.on('end', () => {
-			this.freeze();
-			this.endCb?.();
-		});
+		this.sim.on('end', () => this.freeze());
 		// Baseline truth: cooler than the off-switch, not merely stopped —
 		// stop() leaves alpha hot (the spike's "stuck settling" bug).
 		this.sim.alpha(0);
@@ -143,9 +139,6 @@ export class CanvasSim {
 
 	setTick(cb: (() => void) | null): void {
 		this.tickCb = cb;
-	}
-	setEnd(cb: (() => void) | null): void {
-		this.endCb = cb;
 	}
 
 	settling(): boolean {
