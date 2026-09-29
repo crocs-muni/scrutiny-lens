@@ -17,14 +17,23 @@
 	 *                     8s into a 14s call must not read identically to one
 	 *                     that will never be filled (spec §2). The sweep
 	 *                     is chrome ON TOP of the true rule-5 face, never veils it.
-	 *   fill failed     — claimed by a lane but settled uninterpreted this
-	 *                     pass: persistent amber-tint background (the shared
-	 *                     "degraded" vocabulary — trace warn cells,
-	 *                     NoticeBanner) on the DASHED face only — the
-	 *                     interpreted face never wears it, even while the
-	 *                     failed set drains mid-settle. Amber is a COLOR
-	 *                     state, so the reduced-motion floor costs honesty
-	 *                     nothing.
+ *   fill failed     — claimed by a lane but settled uninterpreted this
+ *                     pass: persistent amber-tint background (the shared
+ *                     "degraded" vocabulary — trace warn cells,
+ *                     NoticeBanner) on the DASHED face only — the
+ *                     interpreted face never wears it, even while the
+ *                     failed set drains mid-settle. Amber is a COLOR
+ *                     state, so the reduced-motion floor costs honesty
+ *                     nothing.
+ *   drafting voice  — while a card's record is still streaming (issue
+ *                     #109, spec §9), its not-yet-gated prose overlays the
+ *                     dashed face's title/snippet slots at reduced
+ *                     opacity, in sans; the dashed border and sweep STAY,
+ *                     so the card still reads as not-final. aria-hidden,
+ *                     never persisted, silently revoked on any gate
+ *                     rejection; no typewriter animation — each delta
+ *                     renders as it arrives, so the reduced-motion floor
+ *                     costs nothing on this surface either.
 	 *   retracted       — either variant + red warning pill (protocol kind-5,
 	 *                     never presentational, spec §2 rule 2); retracted
 	 *                     interpreted cards name their provenance ("as relays
@@ -60,13 +69,23 @@ interface Props {
 	 * ring marks selection on this surface — color + halo via box-shadow only,
 	 * so the ring never reflows the list. */
 	selected?: boolean;
+	/** Streaming draft prose (issue #109, spec §9 drafting voice): the
+	 * not-yet-gated record's so-far text for this card, already id-gated and
+	 * clipped to the gate's limits upstream. Dashed face ONLY. */
+	draft?: { title: string; snippet: string } | null;
 	onOpen?(): void;
 }
 
-let { card, pending = false, failed = false, onOpen, selected = false }: Props = $props();
+let { card, pending = false, failed = false, onOpen, selected = false, draft = null }: Props = $props();
 
 const product: ProductCard | null = $derived('identifiers' in card ? card : null);
 const dashed = $derived(product === null || !product.interpreted);
+
+/* Drafting voice (issue #109): a slot swaps to draft prose only once the
+ * stream has produced NON-EMPTY text for it — an id-only tail must not
+ * blank the machine fallback it previews over. */
+const draftTitle = $derived(draft !== null && draft.title !== '' ? draft.title : null);
+const draftSnippet = $derived(draft !== null && draft.snippet !== '' ? draft.snippet : null);
 
 	/* Settle bloom (issue #82): only a genuine false→true flip mid-life
 	 * earns the ~260ms whole-face crossfade; first stable paint never
@@ -170,8 +189,20 @@ const dashed = $derived(product === null || !product.interpreted);
 	<!-- fetch-stage skeleton ≡ settled rule-5 fallback ≡ AI down/timed-out
 		chunk (spec §2 rule 5): the event's own tags + first chars, badge on. -->
 	<div class="flex items-center gap-2">
-		<h3 class="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold text-ink">
-			{fallbackTitle}
+		<h3
+			class="min-w-0 flex-1 truncate {draftTitle !== null
+				? 'text-[13.5px] font-medium text-ink opacity-60'
+				: 'font-mono text-[12px] font-semibold text-ink'}"
+		>
+			{#if draftTitle !== null}
+				<!-- drafting voice (issue #109, spec §9): pre-gate prose, reduced
+					opacity + sans — the machine mono stays for the fallback it
+					previews over. aria-hidden: not-yet-gated text is never
+					announced (the #108 live region sees settled records only). -->
+				<span aria-hidden="true">{draftTitle}</span>
+			{:else}
+				{fallbackTitle}
+			{/if}
 		</h3>
 		{#if product?.retracted}
 			<span class="shrink-0 rounded-full border border-red-tint bg-red-tint px-2.5 py-0.5 font-mono text-[11px] font-medium text-red">
@@ -193,8 +224,16 @@ const dashed = $derived(product === null || !product.interpreted);
 			</span>
 		{/if}
 	</div>
-	<p class="mt-1.5 line-clamp-3 font-mono text-[11px] leading-relaxed break-all text-ink-2">
-		{fallbackRaw}
+	<p
+		class="mt-1.5 line-clamp-3 leading-relaxed break-all {draftSnippet !== null
+			? 'text-[12.5px] text-ink-2 opacity-60'
+			: 'font-mono text-[11px] text-ink-2'}"
+	>
+		{#if draftSnippet !== null}
+			<span aria-hidden="true">{draftSnippet}</span>
+		{:else}
+			{fallbackRaw}
+		{/if}
 	</p>
 	{#if product !== null}
 		<!-- publisher identity is deterministic (kind-0 of the event's own

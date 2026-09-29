@@ -140,6 +140,18 @@ class Investigation {
    * `pending`: amber must remain a live claim, not a memory, or a
    * yesterday-failed endpoint would wallpaper the rail forever. */
   failed = $state<Set<string>>(new Set());
+  /** Streaming draft prose (issue #109, spec §9 drafting voice): card id →
+   * the pre-gate record's so-far text, already id-gated and clipped to the
+   * gate's limits by fillCards. A DASHED-FACE OVERLAY ONLY: memory-only
+   * (db.ts never sees it), never announced (the #108 polite region reads
+   * fillStats, which counts SETTLED records only), and silently revoked
+   * the moment the record's verdict lands — painted, settled raw, or the
+   * pass died (runPass's settle clears its pass's ids). Copy-on-write
+   * Map, same reactivity rule as cards/pending above. RUN-scoped: a draft
+   * in flight belongs to the running pass, so resetRun clears it and no
+   * per-cycle clearing exists (a fillInChunks cycle boundary is not a
+   * verdict). */
+  drafts = $state<Map<string, { title: string; snippet: string }>>(new Map());
   fillStats = $state<{ interpreted: number; total: number }>({
     interpreted: 0,
     total: 0,
@@ -300,6 +312,7 @@ class Investigation {
     this.fillCtx = null; // and no scroll cycle may start for it
     this.pending = new Set();
     this.failed = new Set();
+    this.drafts = new Map(); // fresh run — the last cohort's drafts died with it (#109)
     this.fillStats = { interpreted: 0, total: 0 };
     this.fillFailure = null;
     this.fillErrorMessage = null;
@@ -1349,6 +1362,41 @@ clearFacets(): void {
               interpreted: merged.filter((c) => c.interpreted).length,
               total,
             };
+            // Drafting voice ends here (issue #109): the live face owns
+            // the card's text from the paint on — its pre-gate draft is
+            // removed, never persisted.
+            if (this.drafts.has(card.id)) {
+              const revoked = new Map(this.drafts);
+              revoked.delete(card.id);
+              this.drafts = revoked;
+            }
+          },
+          // Drafting voice (issue #109, spec §9): the pre-gate tail,
+          // already affinity-gated and clipped upstream — written to the
+          // run-scoped overlay the dashed face reads. A null draft revokes
+          // exactly that card (its trailing block completed: it painted
+          // above, or its verdict lands at settle below). No-op deltas
+          // (same parse twice, absent delete) keep Map identity so the
+          // cards don't re-render for nothing.
+          onDraft: (cardId, draft) => {
+            if (this.controller !== controller) return;
+            if (draft === null) {
+              if (!this.drafts.has(cardId)) return;
+              const revoked = new Map(this.drafts);
+              revoked.delete(cardId);
+              this.drafts = revoked;
+              return;
+            }
+            const prev = this.drafts.get(cardId);
+            if (
+              prev !== undefined &&
+              prev.title === draft.title &&
+              prev.snippet === draft.snippet
+            )
+              return;
+            const nextDrafts = new Map(this.drafts);
+            nextDrafts.set(cardId, draft);
+            this.drafts = nextDrafts;
           },
           signal: timer,
           // schema_failure (it answered, output didn't conform) and
@@ -1377,6 +1425,18 @@ clearFacets(): void {
       const settle = new Set(this.pending);
       for (const c of passCards) settle.delete(c.id);
       this.pending = settle;
+      // Silent revoke (issue #109, spec §9 drafting voice): whatever of
+      // this pass's drafts survived to settle ends HERE — painted, settled
+      // raw, gate-rejected, or the pass died. A draft must never outlive
+      // the settle of the block it previewed; like the pending-out above,
+      // this runs even on a superseded run so a dead run's drafts can
+      // never leak onto cards the next run owns.
+      if (this.drafts.size > 0) {
+        const revoked = new Map(this.drafts);
+        let changed = false;
+        for (const c of passCards) changed = revoked.delete(c.id) || changed;
+        if (changed) this.drafts = revoked;
+      }
       if (this.controller !== controller) return false;
       // One synchronous merge over disjoint indices — the lanes can't
       // clobber each other's writes; UI paints per chunk. Amber
@@ -1467,14 +1527,15 @@ clearFacets(): void {
    * armChunk() entry point the results surface's observer uses, no
    * IntersectionObserver needed. Default false: no arming surface means
    * every chunk counts as armed, exactly the pre-#106 behavior.
-   * Underscore-marked like `_closeForTests`; UI callers go through
-   * `start()`. */
+   * `opts.stream` arms the streamed fill (issue #64) instead of the batch
+   * path — the #109 draft-stream tests drive that seam. Underscore-marked
+   * like `_closeForTests`; UI callers go through `start()`. */
   async _fillInChunksForTests(
     cards: ProductCard[],
     provider: ProviderOverrideInput,
     callLLM: CallLLM,
     perChunkMs?: number,
-    opts: { lazy?: boolean } = {},
+    opts: { lazy?: boolean; stream?: StreamLLM } = {},
   ): Promise<void> {
     const controller = new AbortController();
     this.controller = controller;
@@ -1482,11 +1543,12 @@ clearFacets(): void {
     this.filling = true;
     this.fillStats = { interpreted: 0, total: cards.length };
     this.pending = new Set();
+    this.drafts = new Map(); // a fresh seam run owns a fresh drafting voice (#109)
     await this.fillInChunks(
       provider,
       callLLM,
       controller,
-      undefined,
+      opts.stream,
       opts.lazy ?? false,
       perChunkMs,
     );
@@ -1514,6 +1576,7 @@ export function resetInvestigation(): void {
   investigation.resetArming();
   investigation.pending = new Set();
   investigation.failed = new Set();
+  investigation.drafts = new Map();
   investigation.fillStats = { interpreted: 0, total: 0 };
   investigation.fillFailure = null;
   investigation.fillErrorMessage = null;

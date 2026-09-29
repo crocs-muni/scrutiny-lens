@@ -5,8 +5,8 @@
  * Drives the REAL pipeline (translateQuestion + fillCards via defaultCallLLM)
  * against the same-origin fake gateway (scripts/smoke-gateway.ts), whose
  * scripted lanes are keyed by model name. Checks the invariants:
- *   1. every card is interpreted OR honestly raw (no fabricated text)
- *   2. ≥1 card AI-interpreted (the happy path works)
+ *   1. every card is filled OR honestly raw (no fabricated text)
+ *   2. ≥1 card filled (the happy path works)
  *   3. no api-key fragment anywhere in the output
  *   4. zero transport failures surfaced (the 429s were retried away —
  *      rate_limited counts as one when it escapes the retry budget, #105)
@@ -78,7 +78,7 @@ export async function runSmoke(): Promise<{ lines: string[] }> {
     const okTranslate =
       t.ok && t.result.searches.some((s) => s.source === "ai");
     results.push([
-      "translate: ≥1 AI search (the 429 was retried away)",
+      "translate: ≥1 translated search (the 429 was retried away)",
       okTranslate,
       t.ok ? JSON.stringify(t.result.searches) : `${t.kind}: ${t.message}`,
     ]);
@@ -110,14 +110,14 @@ export async function runSmoke(): Promise<{ lines: string[] }> {
       (c) => c.interpreted || c.title === `BSI-DSZ-CC-000${c.id.slice(6)}`,
     );
     results.push([
-      "fill: every card interpreted-or-honestly-raw",
+      "fill: every card filled-or-honestly-raw",
       allSettled,
-      filledAll.map((c) => `${c.id}:${c.interpreted ? "AI" : "raw"}`).join(" "),
+      filledAll.map((c) => `${c.id}:${c.interpreted ? "filled" : "raw"}`).join(" "),
     ]);
 
     const anyFilled = filledAll.some((c) => c.interpreted);
     results.push([
-      "fill: ≥1 card AI-interpreted (the happy path works)",
+      "fill: ≥1 card filled (the happy path works)",
       anyFilled,
       "",
     ]);
@@ -172,15 +172,15 @@ export async function runSmoke(): Promise<{ lines: string[] }> {
     results.push([
       "fill: truncated chunk salvaged partially (per-card granularity)",
       salvagedPartial,
-      chunkA.map((c) => (c.interpreted ? "AI" : "raw")).join(" "),
+      chunkA.map((c) => (c.interpreted ? "filled" : "raw")).join(" "),
     ]);
 
     // Chunk B fully interpreted.
     const chunkB = filledAll.slice(3, 6);
     results.push([
-      "fill: complete chunk fully interpreted",
+      "fill: complete chunk fully filled",
       chunkB.every((c) => c.interpreted),
-      chunkB.map((c) => (c.interpreted ? "AI" : "raw")).join(" "),
+      chunkB.map((c) => (c.interpreted ? "filled" : "raw")).join(" "),
     ]);
 
     // ── 3. 429 storm lane (issue #105): two CONSECUTIVE throttles — the
@@ -200,7 +200,7 @@ export async function runSmoke(): Promise<{ lines: string[] }> {
     results.push([
       "storm: fill recovered after consecutive 429s (window halved, then healed)",
       stormFilled.some((c) => c.interpreted),
-      `${stormFilled.filter((c) => c.interpreted).length}/3 interpreted${stormFailures.length > 0 ? ` · ${stormFailures.join(",")}` : ""}`,
+      `${stormFilled.filter((c) => c.interpreted).length}/3 filled${stormFailures.length > 0 ? ` · ${stormFailures.join(",")}` : ""}`,
     ]);
     // Teeth for the storm: BOTH scripted 429s must have been SEEN app-side
     // — a bucket silently answering 200 would pass the line above.
@@ -216,7 +216,7 @@ export async function runSmoke(): Promise<{ lines: string[] }> {
     // the §7 ~10s bar.
     log(
       firstFillMs === null
-        ? "first fill: n/a (no card interpreted this run)"
+        ? "first fill: n/a (no card filled this run)"
         : `first fill: ${Math.round(firstFillMs)}ms (spec §7 ~10s bar)`,
     );
   } catch (err) {

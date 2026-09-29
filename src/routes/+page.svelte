@@ -624,6 +624,7 @@
 														{card}
 														pending={investigation.pending.has(card.id)}
 														failed={investigation.failed.has(card.id)}
+														draft={showCards ? (investigation.drafts.get(card.id) ?? null) : null}
 														selected={card.id === investigation.selectedEventId}
 														onOpen={showCards ? () => openDossier(card.id) : undefined}
 													/>
