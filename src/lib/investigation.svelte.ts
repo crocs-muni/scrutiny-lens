@@ -426,6 +426,9 @@ class Investigation {
     // outside the try it became an unhandled rejection with the trace
     // frozen at 5 pending rows, error and running never settling.
     let transport: Transport | null = null;
+    // Declared in the try scope so the catch below can chain its drain —
+    // a settle-path throw must not orphan the early fill cycle.
+    let earlyFill: Promise<void> | null = null;
     try {
       transport = createTransport({ urls: settings.relays });
       const session = await runSearch({
@@ -468,12 +471,17 @@ class Investigation {
         // The fill lane starts on the pre-context cohort too (issue
         // #118): cards begin interpreting while the traversal still runs.
         // NOT awaited here — the traversal must not queue behind the
-        // gateway; the leg joins below, ahead of the top-up leg. No
-        // .finally either: start() owns `filling` until the last leg's
-        // settle, and armChunk reads filling === true as "a cycle is in
-        // flight" (issue #106's cycle model) — TRUE from here to the
-        // top-up leg's end.
-        let earlyFill: Promise<void> | null = null;
+        // gateway; the leg joins below, ahead of the top-up leg.
+        //
+        // `filling` ownership (issue #106 cycle model + review on the
+        // first #118 pass): the early leg owns the flag from the kick
+        // until it drains, on EVERY path. The no-op catch keeps a
+        // fillInChunks rejection unhandled-rejection-free (per-chunk
+        // degrade lives inside); the finally chain keeps filling true
+        // through a settle-path throw — the catch below must NOT flip it
+        // while this cycle still runs, or an armChunk starts a SECOND
+        // fillInChunks with fresh claimedRanges (double-claim, re-pay,
+        // spec §6). On the happy path the join below is the drain.
         if (this.fillDesired(provider)) {
           this.filling = true;
           earlyFill = this.fillInChunks(
@@ -482,7 +490,9 @@ class Investigation {
             controller,
             streamLLM,
             true,
-          );
+          ).catch(() => {
+            /* per-chunk degrade lives inside fillInChunks */
+          });
         }
         // §8.2 settle traversal (lens #68): a text search can admit
         // ORPHAN metadata whose product roots arrive ONLY via the
@@ -572,7 +582,20 @@ class Investigation {
       // §4 error surface's input instead of an unhandled rejection.
       if (this.controller === controller && !controller.signal.aborted) {
         this.error = err instanceof Error ? err.message : String(err);
-        this.filling = false;
+        // The early fill keeps owning `filling` until it drains (issue
+        // #106): flipping it here would let an armChunk start a second
+        // fillInChunks with fresh claimedRanges while the early cycle
+        // still runs (double-claim, re-pay, spec §6). Chain the drain —
+        // no run guard inside: a superseded run's armChunk gate
+        // (controller identity) already refuses new cycles, and the
+        // flag must land false even then.
+        if (earlyFill !== null) {
+          void earlyFill.finally(() => {
+            this.filling = false;
+          });
+        } else {
+          this.filling = false;
+        }
       }
     } finally {
       // One pool per run: close its relay websockets when it settles.
