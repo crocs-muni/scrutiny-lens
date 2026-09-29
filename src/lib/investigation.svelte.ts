@@ -420,17 +420,58 @@ class Investigation {
       // the same identity guard as the sibling writes (review P1).
       if (this.controller === controller) {
         this.result = session;
-        // §8.2 settle traversal (lens #68) runs BEFORE cards/facets
-        // assembly: a text search can admit ORPHAN metadata whose product
-        // roots arrive only via the bindings+second-hop legs (measured
-        // live 2026-09-17 on lens-demo: 'fastest ECDSA JavaCard' admits
-        // 28 metadata and zero products — cards assembled pre-context
-        // were empty and the rail honestly showed 'Nothing matched'
-        // while the corpus held the answer). Made part of the settle
-        // await so the card cohort below sees the contextual full set.
         if (lensDebug()) {
           console.debug(`[lens-trace] settle: admitted-before-context=${session.admitted.length}`);
         }
+        // Card-by-arrival (issue #118): assemble the PRE-context cohort
+        // and mount it NOW, before the settle traversal — the cards'
+        // keyed ids are the skeleton rail's ids, so the keyed each keeps
+        // its blocks alive instead of tearing the skeletons down into an
+        // empty list and remounting when the context cards land. The
+        // 2026-09-17 incident (cards frozen at a pre-context assembly
+        // that was FINAL — an orphan-metadata-only search showed 'Nothing
+        // matched' while the corpus held the answer) cannot recur: the
+        // merge after the traversal below re-assembles from the full
+        // admitted set and is always the last write, and the empty-rail
+        // verdict stays `running === false`-gated (+page.svelte's
+        // emptyDone).
+        this.cards = assembleCards(
+          resolveGraph(session.admitted),
+          session.admitted,
+        );
+        this.facetGroups = computeFacets(session.admitted);
+        if (lensDebug()) {
+          console.debug(`[lens-trace] settle: cards-pre-context=${this.cards.length}`);
+        }
+        // The fill lane starts on the pre-context cohort too (issue
+        // #118): cards begin interpreting while the traversal still runs.
+        // NOT awaited here — the traversal must not queue behind the
+        // gateway; the leg joins below, ahead of the top-up leg. No
+        // .finally either: start() owns `filling` until the last leg's
+        // settle, and armChunk reads filling === true as "a cycle is in
+        // flight" (issue #106's cycle model) — TRUE from here to the
+        // top-up leg's end.
+        let earlyFill: Promise<void> | null = null;
+        if (
+          provider !== undefined &&
+          settings.model !== "" &&
+          this.cards.length > 0
+        ) {
+          this.filling = true;
+          earlyFill = this.fillInChunks(
+            provider,
+            callLLM,
+            controller,
+            streamLLM,
+            true,
+          );
+        }
+        // §8.2 settle traversal (lens #68): a text search can admit
+        // ORPHAN metadata whose product roots arrive ONLY via the
+        // bindings + second-hop legs (measured live 2026-09-17 on
+        // lens-demo: 'fastest ECDSA JavaCard' admitted 28 metadata and
+        // zero products) — the FINAL assembly waits for it so the
+        // settled cohort is the contextual full set.
         await this.refreshSessionContext();
         if (this.controller !== controller) return;
         // $state proxy trap (settle.test.ts guards the same at the guard
@@ -442,17 +483,62 @@ class Investigation {
         // 'Nothing matched'. Read the settled set from the proxy field.
         const settled = this.result;
         if (settled === null) return;
-        this.cards = assembleCards(
+        // Final assembly with merge-over (issue #118): the fill lanes
+        // write by claimed POSITION (runPass's indexOf), so the merge
+        // keeps every pre-context card's slot stable — live entries that
+        // advanced (interpreted, or pending mid-pass) win their slot and
+        // keep their paint and drafts; untouched raw cards take the
+        // fresh assembly (context arrivals can grow a card's
+        // bound-metadata/files counts — the fuller truth); amber cards
+        // are neither pending nor interpreted, so they take the fresh
+        // raw entry and keep their amber face via the failed set —
+        // never re-asked. Context arrivals append in assembly order.
+        const fresh = assembleCards(
           resolveGraph(settled.admitted),
           settled.admitted,
         );
+        const freshById = new Map<string, ProductCard>(
+          fresh.map((card): [string, ProductCard] => [card.id, card]),
+        );
+        const liveIds = new Set(this.cards.map((card) => card.id));
+        const mergedCards = this.cards.map((live) => {
+          const candidate = freshById.get(live.id);
+          return candidate !== undefined &&
+            !live.interpreted &&
+            !this.pending.has(live.id)
+            ? candidate
+            : live;
+        });
+        for (const card of fresh) {
+          if (!liveIds.has(card.id)) mergedCards.push(card);
+        }
+        this.cards = mergedCards;
         this.facetGroups = computeFacets(settled.admitted);
-        // First pin (issue #83): a crash mid-fill still leaves a restorable
-        // frontier; the finally block re-pins with the done-row timing.
+        // First pin (issue #83): AFTER the merged final assembly, so the
+        // pinned frontier carries the context arrivals — a crash mid-fill
+        // still leaves a restorable row; the finally block re-pins with
+        // the done-row timing.
         this.persistRunRecord();
         if (lensDebug()) {
           console.debug(`[lens-trace] settle: admitted-after-context=${settled.admitted.length} cards=${this.cards.length}`);
         }
+        // Join the early leg BEFORE any top-up runs: two live
+        // fillInChunks instances hold PER-CALL claimedRanges and would
+        // double-claim the same chunks (re-paying the endpoint, spec §6).
+        // This flip is one synchronous run into the top-up's own
+        // filling = true, so armChunk cannot interleave a cycle in the
+        // gap.
+        if (earlyFill !== null) {
+          await earlyFill;
+          if (this.controller !== controller) return;
+          this.filling = false;
+        }
+        // Top-up leg (issue #118): fills what the early leg could not
+        // claim — context arrivals appended past its entry horizon, or
+        // the whole cohort when the pre-context assembly was empty and
+        // no early leg fired. Already-interpreted and amber cards fail
+        // hasWork, so a covered cohort costs one claim-scan and exits —
+        // fillCards' (eventId, model) cache pass re-pays nothing (§6).
         if (
           provider !== undefined &&
           settings.model !== "" &&
@@ -1358,9 +1444,12 @@ clearFacets(): void {
             const merged = this.cards.slice();
             merged[indexOf(card, i)] = card;
             this.cards = merged;
+            // Live denominator (issue #118): the post-context merge can
+            // append arrivals mid-leg, so the banner counts against the
+            // array as it stands — never the leg-entry count.
             this.fillStats = {
               interpreted: merged.filter((c) => c.interpreted).length,
-              total,
+              total: merged.length,
             };
             // Drafting voice ends here (issue #109): the live face owns
             // the card's text from the paint on — its pre-gate draft is
@@ -1462,9 +1551,10 @@ clearFacets(): void {
       }
       this.cards = merged;
       this.failed = failedSet;
+      // Live denominator, same as onPaint above (issue #118).
       this.fillStats = {
         interpreted: merged.filter((c) => c.interpreted).length,
-        total,
+        total: merged.length,
       };
       return stalled;
     };

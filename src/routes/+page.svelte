@@ -58,6 +58,14 @@
 	// card's sweep (driven by investigation.pending, issue #82) has no
 	// meaning on the skeleton surface this gate used to keep up. */
 	const showCards = $derived(investigation.result !== null);
+	// Card-gap (issue #118): real cards may mount only at the post-context
+	// merge (an orphan-metadata-only search assembles zero PRE-context
+	// cards, so skeleton-keyed blocks MORPH into card blocks without
+	// remounting — their data-card-id attribute appears with no fresh
+	// IntersectionObserver notification). The observer effect below
+	// tracks this flip and re-sweeps, or those visible cards would never
+	// arm until a scroll reunion.
+	const railLive = $derived(showCards && viewCards.length > 0);
 
 	// — Lazy fill (issue #106): the DOM half of the next-N prefetch —
 	// The results surface owns the elements; the store owns the policy
@@ -78,9 +86,11 @@
 	let resultsScroller = $state<HTMLDivElement | null>(null);
 	let cardObserver: IntersectionObserver | null = null;
 	$effect(() => {
-		// showCards tracks the run's presence; void keeps the $state read
-		// tracked without branching on it twice.
+		// showCards tracks the run's presence, railLive the skeleton→card
+		// MORPH flip (issue #118 — re-sweep arms the morphed wrappers);
+		// void keeps the $state reads tracked without branching on either.
 		void showCards;
+		void railLive;
 		if (investigation.result === null || resultsScroller === null) return;
 		// Ancient browser without IntersectionObserver: degrade to the
 		// pre-#106 eager fill by arming the whole cohort — never starve
@@ -607,14 +617,21 @@
 												onAskDifferently={() => shell.home()}
 											/>
 										{:else}
-											{#each showCards ? viewCards : investigation.skeletons as card (card.id)}
+											<!-- Card-gap (issue #118): while the settle traversal runs,
+												the pre-context cohort can be EMPTY (an orphan-metadata-only
+												text search assembles zero product cards) — keep the
+												skeleton rail up instead of unmounting into a blank
+												column. emptyDone gates the honest zero-verdict on
+												running === false, so an empty list here can only be
+												mid-settle. -->
+											{#each railLive ? viewCards : investigation.skeletons as card (card.id)}
 												<!-- data-card-id is the lazy-fill DOM contract
 													(issue #106): the observer sweeps and arms by it.
 													Cards only — skeletons carry no fill (no admitted
 													subject yet, ruling 6). -->
 												<div
 													class="w-full max-w-[760px] shrink-0"
-													data-card-id={showCards ? card.id : undefined}
+													data-card-id={railLive ? card.id : undefined}
 													use:observeCard
 												>
 													<!-- skeletons stay inert (ruling 6 — no admitted
@@ -624,9 +641,9 @@
 														{card}
 														pending={investigation.pending.has(card.id)}
 														failed={investigation.failed.has(card.id)}
-														draft={showCards ? (investigation.drafts.get(card.id) ?? null) : null}
+														draft={railLive ? (investigation.drafts.get(card.id) ?? null) : null}
 														selected={card.id === investigation.selectedEventId}
-														onOpen={showCards ? () => openDossier(card.id) : undefined}
+														onOpen={railLive ? () => openDossier(card.id) : undefined}
 													/>
 												</div>
 											{/each}
