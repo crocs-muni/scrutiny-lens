@@ -28,6 +28,7 @@ describe('derivePhaseRows — phase transitions', () => {
 	it('interpret row runs during translate, completes with the searches as counter', () => {
 		const running = derivePhaseRows({ ...base, phase: 'translate' });
 		expect(running[0].status).toBe('running');
+		expect(running[0].label).toBe('Translating query');
 
 		const translated = derivePhaseRows({
 			...base,
@@ -188,10 +189,11 @@ describe('derivePhaseRows — honesty cells', () => {
 });
 
 describe('decouple row — no fill attempt (spec §2.1 rule 6)', () => {
-	it('completes with an honest not-interpreted counter at done, never fabricated', () => {
+	it('completes with an honest raw counter at done, never fabricated (#108 vocabulary)', () => {
 		const rows = derivePhaseRows({ ...base, phase: 'done' });
 		expect(rows[2].status).toBe('completed');
-		expect(rows[2].counter).toBe('admitted 0 · not interpreted');
+		expect(rows[2].label).toBe('Decoupling and filling the cards');
+		expect(rows[2].counter).toBe('admitted 0 · raw');
 		expect(rows[2].progress).toBeNull();
 	});
 });
@@ -204,7 +206,7 @@ describe('decouple row — descriptions fill (spec §7)', () => {
 			descriptions: { running: true, interpreted: 2, total: 9 }
 		});
 		expect(rows[2].status).toBe('running');
-		expect(rows[2].counter).toBe('admitted 0 · 2 of 9 interpreted');
+		expect(rows[2].counter).toBe('admitted 0 · 2 of 9 filled');
 		expect(rows[2].progress).toBe(2 / 9);
 	});
 
@@ -215,7 +217,7 @@ describe('decouple row — descriptions fill (spec §7)', () => {
 			descriptions: { running: false, interpreted: 7, total: 9 }
 		});
 		expect(rows[2].status).toBe('completed');
-		expect(rows[2].counter).toBe('admitted 0 · 7 of 9 interpreted');
+		expect(rows[2].counter).toBe('admitted 0 · 7 of 9 filled');
 		expect(rows[2].progress).toBeNull();
 	});
 
@@ -227,7 +229,7 @@ describe('decouple row — descriptions fill (spec §7)', () => {
 			slices: [{ url: 'wss://a', received: 3, route: 'tag:x', rejected: 0, status: 'ok' }]
 		});
 		expect(rows[2].status).toBe('running');
-		expect(rows[2].counter).toBe('admitted 0 · 2 of 9 interpreted');
+		expect(rows[2].counter).toBe('admitted 0 · 2 of 9 filled');
 		expect(rows[2].progress).toBe(2 / 9);
 	});
 });

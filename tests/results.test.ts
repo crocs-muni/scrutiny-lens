@@ -95,10 +95,10 @@ describe('visibleCards (spec §3)', () => {
 	});
 });
 
-describe('semantic facet axes (BIBLE J2: type/status/interpretation)', () => {
+describe('semantic facet axes (BIBLE J2: type/status/fill — #108 vocabulary)', () => {
 	it('semanticGroups counts events for type and cards for the card axes', () => {
 		const groups = semanticGroups(ADMITTED, ALL_CARDS);
-		expect(groups.map((g) => g.prefix)).toEqual(['type', 'status', 'interpretation']);
+		expect(groups.map((g) => g.prefix)).toEqual(['type', 'status', 'fill']);
 		expect(groups[0].values).toEqual([
 			{ value: 'product', count: 2 },
 			{ value: 'metadata', count: 0 }
@@ -108,8 +108,8 @@ describe('semantic facet axes (BIBLE J2: type/status/interpretation)', () => {
 			{ value: 'retracted', count: 1 }
 		]);
 		expect(groups[2].values).toEqual([
-			{ value: 'interpreted', count: 1 },
-			{ value: 'not interpreted', count: 1 }
+			{ value: 'filled', count: 1 },
+			{ value: 'raw', count: 1 }
 		]);
 	});
 
@@ -118,8 +118,8 @@ describe('semantic facet axes (BIBLE J2: type/status/interpretation)', () => {
 		expect(afterSemantics(ADMITTED, ALL_CARDS, { status: new Set(['active', 'retracted']) }).cards).toHaveLength(2);
 	});
 
-	it('type=metadata drains cards; interpretation selects by fill state', () => {
+	it('type=metadata drains cards; fill=raw selects by fill state', () => {
 		expect(afterSemantics(ADMITTED, ALL_CARDS, { type: new Set(['metadata']) }).cards).toHaveLength(0);
-		expect(afterSemantics(ADMITTED, ALL_CARDS, { interpretation: new Set(['not interpreted']) }).cards.map((c) => c.id)).toEqual([cardB.id]);
+		expect(afterSemantics(ADMITTED, ALL_CARDS, { fill: new Set(['raw']) }).cards.map((c) => c.id)).toEqual([cardB.id]);
 	});
 });

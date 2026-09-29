@@ -308,7 +308,7 @@
 	// "unreachable" (spec §2 never-lie).
 	// #106 lazy fill: `interpreted < total` ALONE is no longer a failure —
 	// beyond-window cards were never asked, so the honest steady state of
-	// an unscrolled result must NOT read as "AI slow". The banner fires
+	// an unscrolled result must NOT read as a fill failure. The banner fires
 	// only when a lane actually lost something: amber ids (asked and
 	// lost) or a pinned fill kind (an AIResult failure escaped the
 	// retries). Never-asked raw cards show the neutral dashed face and no
@@ -400,6 +400,43 @@
 	// Set-identity reassignment: $state tracks the reference (review finding —
 	// the lambda was spelled three times).
 	const dismiss = (key: string) => (dismissed = new Set([...dismissed, key]));
+
+	/* #108 fill announcements — ONE polite live region on the results
+	 * surface (pending cards carry aria-busy, but nothing SPOKE chunk
+	 * progress to assistive tech). Chunk granularity = re-fire when
+	 * fillStats.interpreted grows while this run's result is shown; the
+	 * text changing under aria-live="polite" IS the announcement, no
+	 * motion. The final settle says "All Y cards filled" only when the
+	 * settle left nothing raw — a settle that left raw cards stays silent
+	 * here because the banner already names the failure (announcing both
+	 * would double-report one loss). This is a dedicated div, NOT the
+	 * svelte-announcer (route changes). */
+	let lastFillAnnounced = 0;
+	let finalFillAnnounced = false;
+	let fillLive = $state('');
+	$effect(() => {
+		const filled = investigation.fillStats.interpreted;
+		const total = investigation.fillStats.total;
+		// The counters reset when a fresh fill starts (fillStats only grows
+		// within a run) — the marks reset with them.
+		if (filled < lastFillAnnounced) {
+			lastFillAnnounced = 0;
+			finalFillAnnounced = false;
+		}
+		if (investigation.result === null || total <= 0) return;
+		if (investigation.filling) {
+			if (filled > lastFillAnnounced) {
+				lastFillAnnounced = filled;
+				fillLive = `${filled} of ${total} cards filled`;
+			}
+			return;
+		}
+		if (filled === total && !finalFillAnnounced) {
+			finalFillAnnounced = true;
+			lastFillAnnounced = filled;
+			fillLive = `All ${total} cards filled`;
+		}
+	});
 </script>
 
 <svelte:window onkeydown={onShellKeydown} />
@@ -459,6 +496,11 @@
 					<!-- The results surface (#38): BIBLE J2 anatomy — 44px breadcrumb
 						bar spans the whole window; rail + cards below; §4 edge
 						states replace the body. -->
+					<!-- #108: the fill's one audible surface — visually hidden,
+						polite, chunk-granular (logic above). Kept OUTSIDE the
+						{#key} remount so announcements stay pure text diffs in a
+						persistent region. -->
+					<div aria-live="polite" class="sr-only">{fillLive}</div>
 					{#key shell.session?.id}
 						<!-- BIBLE J2 header bar: full window width, 44px hairline -->
 						<div class="flex h-11 shrink-0 items-center border-b border-line px-4">
@@ -515,7 +557,7 @@
 										not buttons. Per-class roll-up (review finding): per-leg
 										verbatim facts live in trace ticks + footer. -->
 									{@render note(capabilityNote !== '', 'capability', capabilityNote)}
-									{@render note(noKey, 'no-key', 'no AI key set — cards show raw events · set one in Settings (Ctrl+,)')}
+									{@render note(noKey, 'no-key', 'no key set — cards stay raw · set one in Settings (Ctrl+,)')}
 									{@render note(aiNote !== '', 'ai-note', aiNote)}
 									{@render note(degradedNote !== '', 'degraded', degradedNote)}
 									{@render note(traversalNote !== '', 'traversal', traversalNote)}

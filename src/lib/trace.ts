@@ -39,14 +39,15 @@ export interface TraceInput {
 	error: string | null;
 	/** Write-descriptions fill progress (#38): present once a fill attempt
 	 * started; `running` while chunks are in flight. Absent = no attempt —
-	 * row 3 then reports `not interpreted` (never a fabricated tally). */
+	 * row 3 then reports `raw` (never a fabricated tally). */
 	descriptions?: { running: boolean; interpreted: number; total: number };
 }
 
 const LABELS: Record<PhaseRow['id'], string> = {
-	interpret: 'Interpreting query',
+	interpret: 'Translating query',
 	sources: 'Querying sources',
-	decouple: 'Decoupling and interpreting the events'
+	// fill vocabulary (issue #108): one noun pair everywhere — raw / filled.
+	decouple: 'Decoupling and filling the cards'
 };
 
 function hostOf(url: string): string {
@@ -184,11 +185,11 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 								: 'pending',
 			counter:
 				d?.running
-					? `admitted ${admitted} · ${d.interpreted} of ${d.total} interpreted`
+					? `admitted ${admitted} · ${d.interpreted} of ${d.total} filled`
 					: !d && done
-						? `admitted ${admitted} · not interpreted`
+						? `admitted ${admitted} · raw`
 						: d && !d.running && done
-							? `admitted ${admitted} · ${d.interpreted} of ${d.total} interpreted`
+							? `admitted ${admitted} · ${d.interpreted} of ${d.total} filled`
 							: !d && !done && slices.length > 0
 								? `admitted ${admitted} · rejected ${rejected}`
 								: '',
