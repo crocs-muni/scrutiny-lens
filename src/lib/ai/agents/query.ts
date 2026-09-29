@@ -144,6 +144,9 @@ async function translateViaAi(
       callLLM: opts.callLLM,
       abortSignal: combined,
       temperature: 0.2,
+      // Interpret lane (issue #107): a reasoning model's hidden thinking
+      // would eat the translate budget — cap it where the endpoint honors it.
+      reasoningEffort: "low",
     });
   } catch (err) {
     if (!opts.signal?.aborted && timer.aborted) {

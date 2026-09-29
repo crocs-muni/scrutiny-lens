@@ -36,6 +36,7 @@ import { generateText, streamText, type LanguageModel, type TextStreamPart, type
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { HOST_CONCURRENCY_CEILINGS } from '$lib/config';
 import type { CallLLM, CallLLMArgs } from './output';
+import type { ProviderConfig } from './provider';
 
 /* ------------------------------------------------------------------ *
  * Limits & configuration
@@ -97,6 +98,101 @@ export function resetGateway(): void {
 	injectedFetch = null;
 	secretHashes.clear();
 	surfaced429 = 0;
+	reasoningCapability.clear();
+	reasoningProbes.clear();
+}
+
+/* ------------------------------------------------------------------ *
+ * Reasoning-effort probe (issue #107) — behavioral, cached per session
+ * ------------------------------------------------------------------ */
+
+/** A non-honoring endpoint SILENTLY IGNORES reasoning_effort (never a
+ * 400), so support can only be read behaviorally: ask for low effort on
+ * one trivial prompt and look at what came back. No reasoning surface at
+ * all = the endpoint suppressed its thinking (honored) or never had any
+ * (a non-reasoning model — the param is equally harmless there), so the
+ * param rides. Reasoning content/tokens in the answer = the endpoint
+ * ignored the ask; the param stays off from then on (spec §2: a param
+ * the endpoint discards is intent we must not keep claiming). Cached per
+ * (baseUrl, model) for the session — exactly one probe per pair. */
+const reasoningCapability = new Map<string, boolean>();
+const reasoningProbes = new Map<string, Promise<boolean>>();
+
+function reasoningProbeKey(provider: ProviderConfig): string {
+	return `${provider.baseUrl}::${provider.model}`;
+}
+
+/** The param every interpret-lane request carries — after the verdict.
+ * The probe forces it on; that param IS the question being asked. */
+function reasoningProviderOptions(
+	args: CallLLMArgs,
+	force: boolean
+): { openaiCompatible: { reasoningEffort: 'low' } } | undefined {
+	if (args.reasoningEffort !== 'low') return undefined;
+	if (!force && reasoningCapability.get(reasoningProbeKey(args.provider)) !== true) {
+		return undefined;
+	}
+	return { openaiCompatible: { reasoningEffort: 'low' } };
+}
+
+/** One cheap probe per (baseUrl, model) per session; concurrent first
+ * callers coalesce onto it, repeat calls hit the cache with zero extra
+ * requests. The probe runs through the normal call path (FIFO slot,
+ * retry, cooldowns — it queues like any call). A failed probe caches
+ * false: detection never blocks a fill — the fill just goes uncapped.
+ * Takes the full provider (the probe authenticates like any request);
+ * the cache key is per ruling (baseUrl, model) — the key never leaves. */
+export async function reasoningEffortSupported(
+	provider: ProviderConfig,
+	signal?: AbortSignal
+): Promise<boolean> {
+	const key = reasoningProbeKey(provider);
+	const known = reasoningCapability.get(key);
+	if (known !== undefined) return known;
+	let inflight = reasoningProbes.get(key);
+	if (inflight === undefined) {
+		const probeStart = Date.now();
+		// URL-derived host, never the key (same surface as records' lane logs).
+		let probeHost = provider.baseUrl;
+		try {
+			probeHost = new URL(provider.baseUrl).host;
+		} catch {
+			/* unparseable baseUrl logs verbatim */
+		}
+		inflight = callLLMInner(
+			{
+				provider,
+				messages: [{ role: 'user', content: 'Reply with exactly: ok' }],
+				temperature: 0,
+				reasoningEffort: 'low',
+				signal
+			},
+			/* probeSelf */ true
+		).then(
+			(outcome) => ({ reachable: true, reasoningObserved: outcome.reasoningObserved }),
+			// A failed probe reads as "couldn't detect" → false, never a
+			// taint on the fill it was preparing.
+			() => ({ reachable: false, reasoningObserved: true })
+		).then((verdict) => {
+			const supported = !verdict.reasoningObserved;
+			// resetGateway during flight must not resurrect a stale verdict.
+			if (reasoningProbes.get(key) === inflight) reasoningCapability.set(key, supported);
+			reasoningProbes.delete(key);
+			if (!supported && verdict.reachable) {
+				// Honest signal (issue #107's optional debug read): the
+				// MEASURED first-answer latency of this model's probe — real
+				// numbers only, host + model, never the key (spec §2/ADR-018).
+				// Only an endpoint that ANSWERED earns this line — a probe
+				// that failed says nothing about the model.
+				console.debug(
+					`[ai:probe] ${probeHost}/${provider.model} reasoned at low effort after ${String(Date.now() - probeStart)}ms — reasoning_effort off for the session`
+				);
+			}
+			return supported;
+		});
+		reasoningProbes.set(key, inflight);
+	}
+	return inflight;
 }
 
 /* ------------------------------------------------------------------ *
@@ -472,24 +568,38 @@ function buildModel(args: CallLLMArgs): LanguageModel {
 	return p(args.provider.model);
 }
 /** One transport attempt either yields the model text plus the response
- * headers (for the proactive capacity read, issue #104) or throws. */
+ * headers (for the proactive capacity read, issue #104) — and whether the
+ * answer carried reasoning (the effort probe's behavioral read, issue
+ * #107) — or throws. */
 type AttemptResult =
-	| { ok: true; text: string; headers: Record<string, string> | undefined }
+	| {
+			ok: true;
+			text: string;
+			headers: Record<string, string> | undefined;
+			reasoningObserved: boolean;
+	  }
 	| { ok: false; err: unknown };
 
 async function textAttempt(
 	args: CallLLMArgs,
-	signal: AbortSignal
-): Promise<{ text: string; headers: Record<string, string> | undefined }> {
+	signal: AbortSignal,
+	probeSelf = false
+): Promise<{ text: string; headers: Record<string, string> | undefined; reasoningObserved: boolean }> {
 	const result = await generateText({
 		model: buildModel(args),
 		system: args.system,
 		messages: args.messages,
 		temperature: args.temperature,
 		abortSignal: signal,
-		maxRetries: 0
+		maxRetries: 0,
+		providerOptions: reasoningProviderOptions(args, probeSelf)
 	});
-	return { text: result.text, headers: result.response?.headers };
+	// Reasoning surfaces as content parts or only in usage accounting —
+	// either means the endpoint kept thinking despite being asked for low.
+	const reasoningObserved =
+		result.reasoning.length > 0 ||
+		(result.usage?.outputTokenDetails?.reasoningTokens ?? 0) > 0;
+	return { text: result.text, headers: result.response?.headers, reasoningObserved };
 }
 /** Caller abort beats the attempt timeout; both end the attempt unretried. */
 function attemptSignal(args: CallLLMArgs): AbortSignal {
@@ -500,16 +610,27 @@ function attemptSignal(args: CallLLMArgs): AbortSignal {
 
 /** Shared retry loop for non-streaming calls: acquire → attempt → classify →
  * cooldown/backoff → retry. 429 waits happen in acquire (the cooldown), so a
- * retrying call re-queues behind the same parking as everyone else. */
-export const callLLM: CallLLM = async (args) => {
+ * retrying call re-queues behind the same parking as everyone else.
+ * `probeSelf` marks the effort probe's own call (issue #107): it must carry
+ * the param unconditionally and must not re-enter the gate. */
+async function callLLMInner(
+	args: CallLLMArgs,
+	probeSelf: boolean
+): Promise<{ text: string; reasoningObserved: boolean }> {
 	await primeSecrets(args.provider.apiKey);
+	// Interpret lanes (issue #107): the first low-effort call for this model
+	// awaits the endpoint's behavioral verdict. The lane holds NO slot while
+	// waiting — the probe queues through the same acquire as everyone else.
+	if (args.reasoningEffort === 'low' && !probeSelf) {
+		await reasoningEffortSupported(args.provider, args.signal);
+	}
 	for (let attempt = 1; attempt <= limits.maxAttempts; attempt++) {
 		await acquire(args.provider.baseUrl, args.signal);
 		const startMs = Date.now();
 		const signal = attemptSignal(args);
 		let outcome: AttemptResult;
 		try {
-			outcome = { ok: true, ...(await textAttempt(args, signal)) };
+			outcome = { ok: true, ...(await textAttempt(args, signal, probeSelf)) };
 		} catch (err) {
 			outcome = { ok: false, err };
 		}
@@ -521,7 +642,7 @@ export const callLLM: CallLLM = async (args) => {
 			// headroom remains, the NEXT admissions shrink — no cooldown,
 			// the endpoint has not said stop.
 			if (nearCapSignal(outcome.headers)) recordNearLimit(args.provider.baseUrl);
-			return outcome.text;
+			return outcome;
 		}
 		const err = outcome.err;
 		if (isAbort(args.signal, err)) {
@@ -545,7 +666,9 @@ export const callLLM: CallLLM = async (args) => {
 		}
 	}
 	throw new GatewayError('unreachable: exhausted attempts'); // loop always exits above
-};
+}
+
+export const callLLM: CallLLM = async (args) => (await callLLMInner(args, false)).text;
 
 /** Streaming arm (issue #104): the slot is held for the stream's ENTIRE
  * lifetime — the account-level limiter on a LiteLLM-style proxy counts
@@ -590,6 +713,12 @@ async function drainAttempt(
 
 export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<string> {
 	await primeSecrets(args.provider.apiKey);
+	// Same one-time verdict as callLLM (issue #107): the streamed fill lanes
+	// hold their slot for the stream's WHOLE lifetime, so an uncapped
+	// reasoning model burns double — hidden tokens AND open-request time.
+	if (args.reasoningEffort === 'low') {
+		await reasoningEffortSupported(args.provider, args.signal);
+	}
 	attempts: for (let attempt = 1; attempt <= limits.maxAttempts; attempt++) {
 		await acquire(args.provider.baseUrl, args.signal);
 		const startMs = Date.now();
@@ -619,7 +748,8 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 				abortSignal: args.signal
 					? AbortSignal.any([args.signal, abortCtrl.signal])
 					: abortCtrl.signal,
-				maxRetries: 0
+				maxRetries: 0,
+				providerOptions: reasoningProviderOptions(args, false)
 			});
 			// AI SDK's textStream swallows open-time errors (a 429 just ends it);
 			// the error rides a fullStream 'error' part instead. Walk fullStream —

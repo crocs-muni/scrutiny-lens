@@ -47,6 +47,14 @@ export interface CallLLMArgs {
    * card-scoped prompts — spec §5's degrade threshold follows ("AI slow
    * >60s chat"). Records/node-fill lanes keep 30s. */
   timeoutMs?: number;
+  /** Interpret lanes only (issue #107): ask a reasoning-class model for
+   * its low thinking effort — its hidden reasoning would otherwise eat
+   * the fill/translate/node time budgets. The gateway sends the param
+   * only after its per-(baseUrl, model) probe shows the endpoint honors
+   * it; an endpoint that ignores reasoning_effort answers the probe WITH
+   * reasoning, and the param stays off (always safe either way: ignored,
+   * never a 400). Chat never sets this — it keeps full power. */
+  reasoningEffort?: 'low';
 }
 
 /** Injectable transport — returns the raw model text. Throws on transport failure. */

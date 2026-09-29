@@ -361,6 +361,10 @@ export interface GenerateRecordsOptions<T> {
   provider?: ProviderOverrideInput;
   /** Test seam; defaults to the app's shared transport (output's defaultCallLLM). */
   callLLM?: CallLLM;
+  /** Interpret lanes pass 'low' (issue #107) so the gateway caps reasoning
+   * on reasoning-class models where the endpoint honors it; threaded into
+   * every transport call this generation makes (first try + one re-prompt). */
+  reasoningEffort?: 'low';
 }
 
 /** Format the model must emit — derived from the known keys. */
@@ -456,6 +460,7 @@ export async function generateRecords<T>(
     abortSignal,
     provider,
     callLLM: seam,
+    reasoningEffort,
   } = opts;
 
   const provRes = getProviderConfig(provider);
@@ -498,6 +503,7 @@ export async function generateRecords<T>(
     messages,
     temperature,
     signal: abortSignal,
+    reasoningEffort,
   };
   const run = (): Promise<
     { ok: true; text: string } | { ok: false; kind: AIKind; message: string }
@@ -726,6 +732,7 @@ export async function streamRecords<T>(
     streamLLM: seam,
     onRecord,
     onDraft,
+    reasoningEffort,
   } = opts;
 
   const provRes = getProviderConfig(provider);
@@ -770,6 +777,7 @@ export async function streamRecords<T>(
         messages: msgs,
         temperature,
         signal: abortSignal,
+        reasoningEffort,
       })) {
         full += delta;
         const complete = takeCompletedPrefix(full.slice(consumed));
