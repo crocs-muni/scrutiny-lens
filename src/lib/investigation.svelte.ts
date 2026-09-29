@@ -336,6 +336,28 @@ class Investigation {
     this.running = true;
   }
 
+  /** The fill lane's desire gate (issue #118 review): the early leg, the
+   * top-up leg, and the cold-open share the same triple — a provider (key
+   * set at run capture), a model, and cards to interpret. One helper keeps
+   * the three sites from drifting; the predicate also narrows `provider`
+   * for the fill call that follows each gate. */
+  private fillDesired(
+    provider: ProviderOverrideInput | undefined,
+  ): provider is ProviderOverrideInput {
+    return provider !== undefined && settings.model !== "" && this.cards.length > 0;
+  }
+
+  /** The trace counter's one write shape (spec §2 rule 6): interpreted
+   * count against the live denominator. Every fillStats site funnels
+   * through here — the counter must never read "raw" beside interpreted
+   * cards (issue #118 review). */
+  private syncFillStats(cards: ProductCard[]): void {
+    this.fillStats = {
+      interpreted: cards.filter((c) => c.interpreted).length,
+      total: cards.length,
+    };
+  }
+
   /** Pin the settled frontier of the CURRENT session (issue #83): on reload
    * the restore seam rebuilds the surface from this row plus the shared
    * events cache — never a re-query, so a restored session paints exactly
@@ -404,6 +426,9 @@ class Investigation {
     // outside the try it became an unhandled rejection with the trace
     // frozen at 5 pending rows, error and running never settling.
     let transport: Transport | null = null;
+    // Declared in the try scope so the catch below can chain its drain —
+    // a settle-path throw must not orphan the early fill cycle.
+    let earlyFill: Promise<void> | null = null;
     try {
       transport = createTransport({ urls: settings.relays });
       const session = await runSearch({
@@ -420,17 +445,61 @@ class Investigation {
       // the same identity guard as the sibling writes (review P1).
       if (this.controller === controller) {
         this.result = session;
-        // §8.2 settle traversal (lens #68) runs BEFORE cards/facets
-        // assembly: a text search can admit ORPHAN metadata whose product
-        // roots arrive only via the bindings+second-hop legs (measured
-        // live 2026-09-17 on lens-demo: 'fastest ECDSA JavaCard' admits
-        // 28 metadata and zero products — cards assembled pre-context
-        // were empty and the rail honestly showed 'Nothing matched'
-        // while the corpus held the answer). Made part of the settle
-        // await so the card cohort below sees the contextual full set.
         if (lensDebug()) {
           console.debug(`[lens-trace] settle: admitted-before-context=${session.admitted.length}`);
         }
+        // Card-by-arrival (issue #118): assemble the PRE-context cohort
+        // and mount it NOW, before the settle traversal — the cards'
+        // keyed ids are the skeleton rail's ids, so the keyed each keeps
+        // its blocks alive instead of tearing the skeletons down into an
+        // empty list and remounting when the context cards land. The
+        // 2026-09-17 incident (cards frozen at a pre-context assembly
+        // that was FINAL — an orphan-metadata-only search showed 'Nothing
+        // matched' while the corpus held the answer) cannot recur: the
+        // merge after the traversal below re-assembles from the full
+        // admitted set and is always the last write, and the empty-rail
+        // verdict stays `running === false`-gated (+page.svelte's
+        // emptyDone).
+        this.cards = assembleCards(
+          resolveGraph(session.admitted),
+          session.admitted,
+        );
+        this.facetGroups = computeFacets(session.admitted);
+        if (lensDebug()) {
+          console.debug(`[lens-trace] settle: cards-pre-context=${this.cards.length}`);
+        }
+        // The fill lane starts on the pre-context cohort too (issue
+        // #118): cards begin interpreting while the traversal still runs.
+        // NOT awaited here — the traversal must not queue behind the
+        // gateway; the leg joins below, ahead of the top-up leg.
+        //
+        // `filling` ownership (issue #106 cycle model + review on the
+        // first #118 pass): the early leg owns the flag from the kick
+        // until it drains, on EVERY path. The no-op catch keeps a
+        // fillInChunks rejection unhandled-rejection-free (per-chunk
+        // degrade lives inside); the finally chain keeps filling true
+        // through a settle-path throw — the catch below must NOT flip it
+        // while this cycle still runs, or an armChunk starts a SECOND
+        // fillInChunks with fresh claimedRanges (double-claim, re-pay,
+        // spec §6). On the happy path the join below is the drain.
+        if (this.fillDesired(provider)) {
+          this.filling = true;
+          earlyFill = this.fillInChunks(
+            provider,
+            callLLM,
+            controller,
+            streamLLM,
+            true,
+          ).catch(() => {
+            /* per-chunk degrade lives inside fillInChunks */
+          });
+        }
+        // §8.2 settle traversal (lens #68): a text search can admit
+        // ORPHAN metadata whose product roots arrive ONLY via the
+        // bindings + second-hop legs (measured live 2026-09-17 on
+        // lens-demo: 'fastest ECDSA JavaCard' admitted 28 metadata and
+        // zero products) — the FINAL assembly waits for it so the
+        // settled cohort is the contextual full set.
         await this.refreshSessionContext();
         if (this.controller !== controller) return;
         // $state proxy trap (settle.test.ts guards the same at the guard
@@ -442,22 +511,63 @@ class Investigation {
         // 'Nothing matched'. Read the settled set from the proxy field.
         const settled = this.result;
         if (settled === null) return;
-        this.cards = assembleCards(
+        // Final assembly with merge-over (issue #118): the fill lanes
+        // write by claimed POSITION (runPass's indexOf), so the merge
+        // keeps every pre-context card's slot stable — live entries that
+        // advanced (interpreted, or pending mid-pass) win their slot and
+        // keep their paint and drafts; untouched raw cards take the
+        // fresh assembly (context arrivals can grow a card's
+        // bound-metadata/files counts — the fuller truth); amber cards
+        // are neither pending nor interpreted, so they take the fresh
+        // raw entry and keep their amber face via the failed set —
+        // never re-asked. Context arrivals append in assembly order.
+        const fresh = assembleCards(
           resolveGraph(settled.admitted),
           settled.admitted,
         );
+        const freshById = new Map<string, ProductCard>(
+          fresh.map((card): [string, ProductCard] => [card.id, card]),
+        );
+        const liveIds = new Set(this.cards.map((card) => card.id));
+        const mergedCards = this.cards.map((live) => {
+          const candidate = freshById.get(live.id);
+          return candidate !== undefined &&
+            !live.interpreted &&
+            !this.pending.has(live.id)
+            ? candidate
+            : live;
+        });
+        for (const card of fresh) {
+          if (!liveIds.has(card.id)) mergedCards.push(card);
+        }
+        this.cards = mergedCards;
         this.facetGroups = computeFacets(settled.admitted);
-        // First pin (issue #83): a crash mid-fill still leaves a restorable
-        // frontier; the finally block re-pins with the done-row timing.
+        // First pin (issue #83): AFTER the merged final assembly, so the
+        // pinned frontier carries the context arrivals — a crash mid-fill
+        // still leaves a restorable row; the finally block re-pins with
+        // the done-row timing.
         this.persistRunRecord();
         if (lensDebug()) {
           console.debug(`[lens-trace] settle: admitted-after-context=${settled.admitted.length} cards=${this.cards.length}`);
         }
-        if (
-          provider !== undefined &&
-          settings.model !== "" &&
-          this.cards.length > 0
-        ) {
+        // Join the early leg BEFORE any top-up runs: two live
+        // fillInChunks instances hold PER-CALL claimedRanges and would
+        // double-claim the same chunks (re-paying the endpoint, spec §6).
+        // This flip is one synchronous run into the top-up's own
+        // filling = true, so armChunk cannot interleave a cycle in the
+        // gap.
+        if (earlyFill !== null) {
+          await earlyFill;
+          if (this.controller !== controller) return;
+          this.filling = false;
+        }
+        // Top-up leg (issue #118): fills what the early leg could not
+        // claim — context arrivals appended past its entry horizon, or
+        // the whole cohort when the pre-context assembly was empty and
+        // no early leg fired. Already-interpreted and amber cards fail
+        // hasWork, so a covered cohort costs one claim-scan and exits —
+        // fillCards' (eventId, model) cache pass re-pays nothing (§6).
+        if (this.fillDesired(provider)) {
           this.filling = true;
           // Prod passes the gateway's streamText lane: the fill paints
           // per-record. Tests injecting only callLLM keep the batch path.
@@ -472,7 +582,20 @@ class Investigation {
       // §4 error surface's input instead of an unhandled rejection.
       if (this.controller === controller && !controller.signal.aborted) {
         this.error = err instanceof Error ? err.message : String(err);
-        this.filling = false;
+        // The early fill keeps owning `filling` until it drains (issue
+        // #106): flipping it here would let an armChunk start a second
+        // fillInChunks with fresh claimedRanges while the early cycle
+        // still runs (double-claim, re-pay, spec §6). Chain the drain —
+        // no run guard inside: a superseded run's armChunk gate
+        // (controller identity) already refuses new cycles, and the
+        // flag must land false even then.
+        if (earlyFill !== null) {
+          void earlyFill.finally(() => {
+            this.filling = false;
+          });
+        } else {
+          this.filling = false;
+        }
       }
     } finally {
       // One pool per run: close its relay websockets when it settles.
@@ -578,7 +701,7 @@ class Investigation {
             model: settings.model,
             apiKey: settings.apiKey,
           };
-    if (provider !== undefined && settings.model !== "" && this.cards.length > 0) {
+    if (this.fillDesired(provider)) {
       // Fire-and-forget, deliberately NOT awaited: the cold open's caller
       // (the event route) must hand over to the shell immediately — the
       // card renders rule-5 now and the existing fill lane interprets it in
@@ -697,10 +820,7 @@ class Investigation {
       // Seed the trace's descriptions row (review H3d): cache paints ARE
       // rendered interpretations — the decouple counter must never read
       // "raw" beside them (spec §2 rule 6).
-      this.fillStats = {
-        interpreted: painted.filter((c) => c.interpreted).length,
-        total: painted.length,
-      };
+      this.syncFillStats(painted);
     }
     this.running = false;
     // #84's other half (ruling: caused, not derived): a key being present
@@ -1255,8 +1375,12 @@ clearFacets(): void {
     // settings (a mid-run model change would poison the (eventId, model)
     // cache keys with a different model's rows).
     this.fillCtx = { provider, callLLM, stream };
-    this.fillStats = { interpreted: 0, total };
-    // Issue #105: the banner's "endpoint rate limited N×" is the delta of
+    // Seed from the live array, never zero (review P2 on the first #118
+    // pass): the top-up leg re-enters here AFTER the early leg interpreted
+    // cards, and a 0-seed leaves "0 of N filled" on the trace row and the
+    // aria-live verdict forever — the decouple counter must never read raw
+    // beside interpreted cards (spec §2 rule 6).
+    this.syncFillStats(this.cards);
     // the gateway's page-lifetime 429 count across THIS fill — snapshot at
     // entry, settle at the end of the last lane.
     const seen429AtStart = surfaced429Count();
@@ -1358,10 +1482,10 @@ clearFacets(): void {
             const merged = this.cards.slice();
             merged[indexOf(card, i)] = card;
             this.cards = merged;
-            this.fillStats = {
-              interpreted: merged.filter((c) => c.interpreted).length,
-              total,
-            };
+            // Live denominator (issue #118): the post-context merge can
+            // append arrivals mid-leg, so the banner counts against the
+            // array as it stands — never the leg-entry count.
+            this.syncFillStats(merged);
             // Drafting voice ends here (issue #109): the live face owns
             // the card's text from the paint on — its pre-gate draft is
             // removed, never persisted.
@@ -1462,10 +1586,8 @@ clearFacets(): void {
       }
       this.cards = merged;
       this.failed = failedSet;
-      this.fillStats = {
-        interpreted: merged.filter((c) => c.interpreted).length,
-        total,
-      };
+      // Live denominator, same as onPaint above (issue #118).
+      this.syncFillStats(merged);
       return stalled;
     };
     const worker = async (): Promise<void> => {
