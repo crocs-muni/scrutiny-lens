@@ -102,9 +102,12 @@ interface FetchLog {
 	startMs: number;
 	headers: Record<string, string>;
 	signal?: AbortSignal;
+	/** Parsed JSON request body (chat-completions payloads), for assertions
+	 * about what the provider actually put on the wire (issue #107). */
+	body?: Record<string, unknown>;
 }
 
-function chatCompletion(text: string) {
+function chatCompletion(text: string, reasoning?: string) {
 	return {
 		id: 'c1',
 		object: 'chat.completion',
@@ -113,7 +116,14 @@ function chatCompletion(text: string) {
 		choices: [
 			{
 				index: 0,
-				message: { role: 'assistant' as const, content: text },
+				// reasoning_content: the DeepSeek/vLLM convention the
+				// openai-compatible provider decodes into result.reasoning
+				// (the behavioral signal for the effort probe, issue #107).
+				message: {
+					role: 'assistant' as const,
+					content: text,
+					...(reasoning === undefined ? {} : { reasoning_content: reasoning })
+				},
 				finish_reason: 'stop' as const
 			}
 		],
@@ -171,11 +181,20 @@ function scriptedFetch(steps: Step[]): { fetch: typeof fetch; log: FetchLog[] } 
 		if (step === undefined) {
 			throw new Error(`fail-closed: unexpected fetch #${next} to ${url}`);
 		}
+		let requestBody: Record<string, unknown> | undefined;
+		if (typeof init?.body === 'string') {
+			try {
+				requestBody = JSON.parse(init.body) as Record<string, unknown>;
+			} catch {
+				requestBody = undefined;
+			}
+		}
 		log.push({
 			url,
 			startMs: Date.now(),
 			headers: (init?.headers as Record<string, string>) ?? {},
-			signal: init?.signal ?? undefined
+			signal: init?.signal ?? undefined,
+			body: requestBody
 		});
 		if (step.delayMs) await delay(step.delayMs, init?.signal ?? undefined);
 		if (step.hang) {
@@ -836,5 +855,131 @@ describe('fetchModels through the gateway', () => {
 		const { fetch: f } = scriptedFetch([{ status: 401 }]);
 		setBaseFetch(f);
 		expect(await fetchModels('https://api.test/v1', KEY)).toEqual({ ok: false, kind: 'http', status: 401 });
+	});
+});
+
+/* ------------------------------------------------------------------ *
+ * Reasoning effort (issue #107): interpret lanes ask for
+ * reasoning_effort=low; the gateway's behavioral probe — one cheap call
+ * per (baseUrl, model) per session — decides whether the endpoint honors
+ * it, and the param rides only while the probe said so. Detection is
+ * behavioral because a non-honoring endpoint silently IGNORES the param
+ * (never a 400): reasoning_content / reasoning tokens on the probed
+ * answer is the only honest "didn't honor" signal.
+ * ------------------------------------------------------------------ */
+
+describe('reasoning effort probe (issue #107)', () => {
+	it('a clean probe sends reasoning_effort=low on the probe AND the lane; a repeat call hits the cache with zero extra probe fetches', async () => {
+		const { fetch: f, log } = scriptedFetch([{}, {}, {}]);
+		setBaseFetch(f);
+		await expect(callLLM(args({ reasoningEffort: 'low' }))).resolves.toBe('T');
+		await expect(callLLM(args({ reasoningEffort: 'low' }))).resolves.toBe('T');
+		expect(log).toHaveLength(3); // one probe + two lanes
+		expect(log[0].body?.reasoning_effort).toBe('low'); // the probe asks
+		expect(log[1].body?.reasoning_effort).toBe('low'); // honored lane
+		expect(log[2].body?.reasoning_effort).toBe('low'); // cached lane
+	});
+
+	it('a flagless call never carries the key and never probes', async () => {
+		const { fetch: f, log } = scriptedFetch([{}]);
+		setBaseFetch(f);
+		await expect(callLLM(args())).resolves.toBe('T');
+		expect(log).toHaveLength(1);
+		expect(log[0].body).not.toHaveProperty('reasoning_effort');
+	});
+
+	it('an endpoint answering the probe with reasoning_content gets the param skipped on every lane call', async () => {
+		// Asked for low, the endpoint still reasoned → it ignores the param;
+		// keep sending it would be a pointless lie of intent (spec §2).
+		const { fetch: f, log } = scriptedFetch([
+			{ body: chatCompletion('T', 'deliberating out loud…') },
+			{},
+			{}
+		]);
+		setBaseFetch(f);
+		await expect(callLLM(args({ reasoningEffort: 'low' }))).resolves.toBe('T');
+		await expect(callLLM(args({ reasoningEffort: 'low' }))).resolves.toBe('T');
+		expect(log).toHaveLength(3);
+		expect(log[0].body?.reasoning_effort).toBe('low');
+		expect(log[1].body).not.toHaveProperty('reasoning_effort');
+		expect(log[2].body).not.toHaveProperty('reasoning_effort');
+	});
+
+	it('reasoning visible only through usage.completion_tokens_details also marks the endpoint unhonoring', async () => {
+		// Some endpoints report reasoning purely in usage accounting — the
+		// behavioral read must cover that shape too or it misses the class.
+		const reasoningUsage = {
+			...chatCompletion('T'),
+			usage: {
+				prompt_tokens: 1,
+				completion_tokens: 9,
+				total_tokens: 10,
+				completion_tokens_details: { reasoning_tokens: 8 }
+			}
+		};
+		const { fetch: f, log } = scriptedFetch([{ body: reasoningUsage }, {}]);
+		setBaseFetch(f);
+		await expect(callLLM(args({ reasoningEffort: 'low' }))).resolves.toBe('T');
+		expect(log).toHaveLength(2);
+		expect(log[1].body).not.toHaveProperty('reasoning_effort');
+	});
+
+	it('a failing probe caches false for the session and never blocks the lane', async () => {
+		// The probe is detection, not a gate: its failure must not kill the
+		// fill — the lane proceeds, just without the param (issue #107).
+		const { fetch: f, log } = scriptedFetch([{ status: 400 }, {}, {}]);
+		setBaseFetch(f);
+		await expect(callLLM(args({ reasoningEffort: 'low' }))).resolves.toBe('T');
+		await expect(callLLM(args({ reasoningEffort: 'low' }))).resolves.toBe('T');
+		expect(log).toHaveLength(3);
+		expect(log[0].body?.reasoning_effort).toBe('low');
+		expect(log[1].body).not.toHaveProperty('reasoning_effort');
+		expect(log[2].body).not.toHaveProperty('reasoning_effort');
+	});
+
+	it('the cache keys on (baseUrl, model): a different model re-probes', async () => {
+		const { fetch: f, log } = scriptedFetch([{}, {}, {}, {}]);
+		setBaseFetch(f);
+		await expect(callLLM(args({ reasoningEffort: 'low' }))).resolves.toBe('T');
+		await expect(
+			callLLM(args({ reasoningEffort: 'low', provider: { ...provider, model: 'm2' } }))
+		).resolves.toBe('T');
+		expect(log).toHaveLength(4); // two probes + two lanes
+		expect(log[0].body?.reasoning_effort).toBe('low');
+		expect(log[2].body?.reasoning_effort).toBe('low');
+		// The second probe was asked about m2.
+		expect(log[2].body?.model).toBe('m2');
+	});
+
+	it('concurrent first callers coalesce into ONE probe', async () => {
+		const { fetch: f, log } = scriptedFetch([{}, {}, {}, {}]);
+		setBaseFetch(f);
+		const texts = await Promise.all(
+			Array.from({ length: 3 }, () => callLLM(args({ reasoningEffort: 'low' })))
+		);
+		expect(texts).toEqual(['T', 'T', 'T']);
+		expect(log).toHaveLength(4); // ONE probe + three lanes
+	});
+
+	it('streamText path: the param rides after a clean probe', async () => {
+		const { fetch: f, log } = scriptedFetch([{}, { stream: ['he', 'llo'] }]);
+		setBaseFetch(f);
+		const chunks: string[] = [];
+		for await (const c of streamLLM(args({ reasoningEffort: 'low' }))) chunks.push(c);
+		expect(chunks.join('')).toBe('hello');
+		expect(log).toHaveLength(2);
+		expect(log[1].body?.reasoning_effort).toBe('low');
+	});
+
+	it('streamText path: an endpoint that reasoned through the probe gets no param', async () => {
+		const { fetch: f, log } = scriptedFetch([
+			{ body: chatCompletion('T', 'chain…') },
+			{ stream: ['ok'] }
+		]);
+		setBaseFetch(f);
+		const chunks: string[] = [];
+		for await (const c of streamLLM(args({ reasoningEffort: 'low' }))) chunks.push(c);
+		expect(chunks.join('')).toBe('ok');
+		expect(log[1].body).not.toHaveProperty('reasoning_effort');
 	});
 });

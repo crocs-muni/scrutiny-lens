@@ -288,6 +288,12 @@ export async function fillCards(
     provider: opts.provider,
     abortSignal: opts.signal,
     temperature: 0.2,
+    // Fill lane (issue #107): a reasoning model's hidden thinking eats the
+    // fill budget whole — cap it where the endpoint honors it. Hardcoded
+    // for every fillCards caller (no per-caller knob: interpretation is
+    // always the capped lane; chat — which keeps full power — never
+    // passes through here).
+    reasoningEffort: "low" as const,
   };
   const result =
     opts.streamLLM !== undefined
