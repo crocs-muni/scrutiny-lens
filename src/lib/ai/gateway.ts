@@ -8,8 +8,13 @@
  * hash — upstream LiteLLM issue #27884), and the AI SDK's default retry
  * (maxRetries=2) multiplied our fill lanes into request storms. So the
  * gateway owns:
- *   - a FIFO semaphore (default cap 2 — conservative against unknown
- *     endpoint ceilings and key-sharing consumers; configurable),
+ *   - a per-baseUrl FIFO admission window (issue #104): seeded at 1, grown
+ *     +1 per 4 consecutive clean answers up to the per-host ceiling
+ *     (HOST_CONCURRENCY_CEILINGS, e.g. e-infra's measured 4-parallel
+ *     account cap), generic fallback maxConcurrent for unknown hosts,
+ *     halved (floor 1) on a 429 or a proactive remaining-requests ≤ 1
+ *     header. Streams hold their slot for their WHOLE lifetime — the
+ *     endpoint counts open requests server-side.
  *   - the ONLY retry loop (generateText/streamText are called with
  *     maxRetries: 0; provider-config maxRetries is ignored by the SDK —
  *     probe-verified), retrying just 429/5xx/network a bounded number of
@@ -17,7 +22,7 @@
  *   - a per-baseUrl cooldown: one 429 parks every queued ticket for that
  *     endpoint until Retry-After elapses — this is ALSO the only cross-tab
  *     safety, because a per-tab semaphore cannot see other tabs' requests
- *     (3 tabs × cap 2 > 4),
+ *     (3 tabs × window 2 > 4),
  *   - ADR-018 scrubbing: every message leaving this module masks the api key,
  *     its JSON-escaped form, its sha256 (what LiteLLM echoes), and any
  *     `api_key:`-labeled token.
@@ -27,8 +32,9 @@
  * reliability only. A 5xx or network error does NOT set a cooldown (per-call
  * backoff only); only a 429 speaks for the endpoint's capacity.
  */
-import { generateText, streamText, type LanguageModel, type TextStreamPart } from 'ai';
+import { generateText, streamText, type LanguageModel, type TextStreamPart, type ToolSet } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { HOST_CONCURRENCY_CEILINGS } from '$lib/config';
 import type { CallLLM, CallLLMArgs } from './output';
 
 /* ------------------------------------------------------------------ *
@@ -36,11 +42,14 @@ import type { CallLLM, CallLLMArgs } from './output';
  * ------------------------------------------------------------------ */
 
 export interface GatewayLimits {
-	/** In-flight requests across ALL LLM calls (default 2). Seeded under
+	/** Generic per-host FALLBACK ceiling for the adaptive pacing window
+	 * (issue #104): how far a baseUrl's window may grow when the host is
+	 * NOT in HOST_CONCURRENCY_CEILINGS (default 2). No longer a global cap
+	 * — windows are per baseUrl and seed at 1 regardless. Seeded low under
 	 * BROAD BYOK practice — a BYOK caller can't know its endpoint's true
-	 * ceiling, so the floor stays low and a 429 shrinks the window further;
-	 * a 429 proves the endpoint reached the gateway's request, so it is never
-	 * a reason to go ABOVE this static start (spec §2 never-lie). */
+	 * ceiling, so the fallback stays low and a 429 shrinks the window
+	 * further; a 429 proves the endpoint reached the gateway's request, so
+	 * it is never a reason to go ABOVE the fallback (spec §2 never-lie). */
 	maxConcurrent?: number;
 	/** Total attempts per logical call (default 3). */
 	maxAttempts?: number;
@@ -116,38 +125,53 @@ interface Waiter {
 }
 
 const queue: Waiter[] = [];
-let active = 0;
 const cooldowns = new Map<string, number>();
 const cooldownTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /* ------------------------------------------------------------------ *
- * Adaptive pacing (issue #64)
+ * Adaptive pacing (issues #64, #104)
  *
  * Per-key proxy limits are CONCURRENCY ceilings, not rate quotas —
  * measured runs showed 429s falling exactly when lanes burst and stopping
  * when solo. A static cap + cooldown answers a storm with polite
  * re-attacks at the same size. This layer instead lets the gateway ADMIT
- * adaptively: a per-baseUrl window seeded at the static cap, halved
- * (floor 1) on every 429, grown +1 (ceiling — the static cap) per K
- * consecutive clean answers.
- * In-memory only, resetting with each page load: a bad evening for one run
- * never pins the next one slow. The global maxConcurrent remains the hard
- * ceiling; the window can only subtract from it, never exceed it.
+ * adaptively: a per-baseUrl window SEEDED AT 1 (issue #104 — presume no
+ * headroom, earn it), halved (floor 1) on every 429 or on a proactive
+ * x-ratelimit-remaining ≤ 1 success header, grown +1 per K consecutive
+ * clean answers up to the PER-HOST ceiling (HOST_CONCURRENCY_CEILINGS:
+ * e-infra's LiteLLM account cap measured at 4 parallel open requests)
+ * with limits.maxConcurrent as the generic fallback for unknown hosts.
+ * In-memory only, resetting with each page load: a bad evening for one
+ * run never pins the next one slow. There is NO global cap anymore —
+ * different endpoints never share admission (a busy e-infra must not
+ * starve a localhost Ollama, and one host's window tells the gateway
+ * nothing about another's capacity — spec §2).
  * ------------------------------------------------------------------ */
 
 const paceWindows = new Map<string, { window: number; streak: number }>();
 const activeByBase = new Map<string, number>();
 const PACE_GROWTH_K = 4; // consecutive successes needed to grow the window by one
 
+/** The host's pacing ceiling (issue #104): the config pin for a known
+ * host, else the generic fallback. A baseUrl that won't parse gets the
+ * fallback — a malformed URL must not invent headroom (spec §2). */
+function ceilingFor(baseUrl: string): number {
+	try {
+		return HOST_CONCURRENCY_CEILINGS[new URL(baseUrl).hostname] ?? limits.maxConcurrent;
+	} catch {
+		return limits.maxConcurrent;
+	}
+}
+
 function paceWindow(baseUrl: string): number {
 	const entry = paceWindows.get(baseUrl);
-	return entry ? entry.window : limits.maxConcurrent;
+	return entry ? entry.window : 1;
 }
 
 function paceState(baseUrl: string): { window: number; streak: number } {
 	let entry = paceWindows.get(baseUrl);
 	if (!entry) {
-		entry = { window: limits.maxConcurrent, streak: 0 };
+		entry = { window: 1, streak: 0 }; // seed 1 per baseUrl (issue #104)
 		paceWindows.set(baseUrl, entry);
 	}
 	return entry;
@@ -158,14 +182,44 @@ function recordSuccess(baseUrl: string): void {
 	s.streak += 1;
 	if (s.streak >= PACE_GROWTH_K) {
 		s.streak = 0;
-		s.window = Math.min(limits.maxConcurrent, s.window + 1);
+		s.window = Math.min(ceilingFor(baseUrl), s.window + 1);
 	}
 }
 
-function recordRateLimited(baseUrl: string): void {
+/** Halve the admission window (floor 1) and drop the clean streak — the
+ * shared reaction to capacity pressure (issue #104). */
+function halveWindow(baseUrl: string): void {
 	const s = paceState(baseUrl);
 	s.streak = 0;
 	s.window = Math.max(1, Math.floor(s.window / 2));
+}
+
+function recordRateLimited(baseUrl: string): void {
+	halveWindow(baseUrl);
+}
+
+/** Proactive shave (issue #104): a success header says the account is
+ * nearly out of headroom — halve what the NEXT burst admits. Unlike
+ * recordRateLimited this arms NO cooldown: the endpoint has not said
+ * stop, and #105 counts real 429s separately from this gentler signal. */
+function recordNearLimit(baseUrl: string): void {
+	halveWindow(baseUrl);
+}
+
+/** The value of x-ratelimit-remaining-requests, tolerating absence and
+ * unparseable values — a missing capacity hint never invents one
+ * (spec §2). ≤ 1 means the next burst meets the wall. */
+function readNearCap(value: string | null | undefined): boolean {
+	if (value === undefined || value === null || value === '') return false;
+	const n = Number(value);
+	return Number.isInteger(n) && n <= 1;
+}
+
+/** Case-insensitive lookup for the SDK's response-headers record. */
+function nearCapSignal(headers: Record<string, string> | undefined): boolean {
+	if (headers === undefined) return false;
+	const key = Object.keys(headers).find((k) => k.toLowerCase() === 'x-ratelimit-remaining-requests');
+	return key === undefined ? false : readNearCap(headers[key]);
 }
 
 function pacingAdmits(baseUrl: string): boolean {
@@ -173,12 +227,10 @@ function pacingAdmits(baseUrl: string): boolean {
 }
 
 function admitFor(baseUrl: string): void {
-	active++;
 	activeByBase.set(baseUrl, (activeByBase.get(baseUrl) ?? 0) + 1);
 }
 
 function pump(): void {
-	if (active >= limits.maxConcurrent) return;
 	const now = Date.now();
 	for (let i = 0; i < queue.length; ) {
 		const w = queue[i];
@@ -198,7 +250,6 @@ function pump(): void {
 		queue.splice(i, 1);
 		admitFor(w.baseUrl);
 		w.run();
-		if (active >= limits.maxConcurrent) return;
 	}
 }
 
@@ -226,11 +277,7 @@ function acquire(baseUrl: string, signal?: AbortSignal): Promise<void> {
 		reject(abortError());
 		return promise;
 	}
-	if (
-		active < limits.maxConcurrent &&
-		pacingAdmits(baseUrl) &&
-		(cooldowns.get(baseUrl) ?? 0) <= Date.now()
-	) {
+	if (pacingAdmits(baseUrl) && (cooldowns.get(baseUrl) ?? 0) <= Date.now()) {
 		admitFor(baseUrl);
 		waiter.run();
 		return promise;
@@ -240,7 +287,6 @@ function acquire(baseUrl: string, signal?: AbortSignal): Promise<void> {
 }
 
 function release(baseUrl: string): void {
-	active--;
 	activeByBase.set(baseUrl, Math.max(0, (activeByBase.get(baseUrl) ?? 0) - 1));
 	pump();
 }
@@ -405,10 +451,16 @@ function buildModel(args: CallLLMArgs): LanguageModel {
 	});
 	return p(args.provider.model);
 }
-/** One transport attempt either yields the model text or throws. */
-type AttemptResult = { ok: true; text: string } | { ok: false; err: unknown };
+/** One transport attempt either yields the model text plus the response
+ * headers (for the proactive capacity read, issue #104) or throws. */
+type AttemptResult =
+	| { ok: true; text: string; headers: Record<string, string> | undefined }
+	| { ok: false; err: unknown };
 
-async function textAttempt(args: CallLLMArgs, signal: AbortSignal): Promise<string> {
+async function textAttempt(
+	args: CallLLMArgs,
+	signal: AbortSignal
+): Promise<{ text: string; headers: Record<string, string> | undefined }> {
 	const result = await generateText({
 		model: buildModel(args),
 		system: args.system,
@@ -417,7 +469,7 @@ async function textAttempt(args: CallLLMArgs, signal: AbortSignal): Promise<stri
 		abortSignal: signal,
 		maxRetries: 0
 	});
-	return result.text;
+	return { text: result.text, headers: result.response?.headers };
 }
 /** Caller abort beats the attempt timeout; both end the attempt unretried. */
 function attemptSignal(args: CallLLMArgs): AbortSignal {
@@ -437,13 +489,18 @@ export const callLLM: CallLLM = async (args) => {
 		const signal = attemptSignal(args);
 		let outcome: AttemptResult;
 		try {
-			outcome = { ok: true, text: await textAttempt(args, signal) };
+			outcome = { ok: true, ...(await textAttempt(args, signal)) };
 		} catch (err) {
 			outcome = { ok: false, err };
 		}
 		release(args.provider.baseUrl);
 		if (outcome.ok) {
 			recordSuccess(args.provider.baseUrl);
+			// Proactive shave (issue #104): the clean answer counts toward
+			// growth either way; when its header says ≤ 1 request of account
+			// headroom remains, the NEXT admissions shrink — no cooldown,
+			// the endpoint has not said stop.
+			if (nearCapSignal(outcome.headers)) recordNearLimit(args.provider.baseUrl);
 			return outcome.text;
 		}
 		const err = outcome.err;
@@ -470,21 +527,30 @@ export const callLLM: CallLLM = async (args) => {
 	throw new GatewayError('unreachable: exhausted attempts'); // loop always exits above
 };
 
-/** Streaming arm: the slot is held ONLY until the first byte, then released —
- * a long chat answer never starves the fill lanes (issue #53). A failure
- * before the first byte retries through the same rules as callLLM; a
- * mid-stream failure surfaces honestly (spec §2) as a scrubbed GatewayError. */
-/** Classify a failed attempt and put the call to bed: record, scrub, and
- * either throw-honestly or set the retry gate. Shared by callLLM and
- * streamLLM — the retry rules live exactly once. Returns the thrown/steer
- * decision; callers release() and then follow it. */
+/** Streaming arm (issue #104): the slot is held for the stream's ENTIRE
+ * lifetime — the account-level limiter on a LiteLLM-style proxy counts
+ * OPEN requests server-side, so releasing at first byte let 4 decoding
+ * streams + 4 fresh requests hit the endpoint at once (the measured 429
+ * storm). Each attempt acquires once and releases exactly once, in the
+ * per-attempt finally, fired however the generator finishes — normal end,
+ * throw, retry, or consumer break/.return(). A failure before the first
+ * byte retries through the same rules as callLLM — and a backing-off
+ * stream holds NO slot: the finally releases before the cooldown/
+ * backoff wait. A mid-stream failure surfaces honestly (spec §2) as a
+ * scrubbed GatewayError. */
+
+/** Classify a failed streaming attempt and steer: scrub + record + either
+ * throw-honestly or decide how the retry waits. Pure classify-and-steer —
+ * it never touches the slot (the caller's per-attempt finally owns that,
+ * issue #104). Returns null when a 429 armed the endpoint's cooldown (the
+ * re-acquire parks there); otherwise the per-call backoff the caller
+ * sleeps AFTER the release, so a backing-off stream never holds a slot. */
 async function drainAttempt(
 	args: CallLLMArgs,
 	attempt: number,
 	startMs: number,
 	err: unknown
-): Promise<'retry' | never> {
-	release(args.provider.baseUrl);
+): Promise<number | null> {
 	if (isAbort(args.signal, err)) {
 		throw err; // caller cancellation / attempt timeout — never retried
 	}
@@ -497,8 +563,9 @@ async function drainAttempt(
 	if (status === 429) {
 		recordRateLimited(args.provider.baseUrl);
 		setCooldown(args.provider.baseUrl, Date.now() + waitMs(status, err, attempt));
-	} else await sleep(waitMs(status, err, attempt), args.signal);
-	return 'retry';
+		return null;
+	}
+	return waitMs(status, err, attempt);
 }
 
 export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<string> {
@@ -515,6 +582,14 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 		// the try once the iterator exists): the finally MUST see it, so it
 		// hoists above the try scope. No-op until the iterator is born.
 		let drainIterator: () => Promise<void> = async () => {};
+		// Retry steering (issue #104): the try body never `continue`s the
+		// attempts loop — a labeled continue from inside the try jumps PAST
+		// the post-finally backoff sleep, and a skipped backoff is a tight
+		// retry loop manufacturing the exact 429 storms this issue exists
+		// to prevent. Retry paths set `backoffMs` and fall out of the try;
+		// the finally releases the slot, THEN the sleep runs, THEN the next
+		// attempt acquires fresh — only live streams hold slots.
+		let backoffMs: number | null = null;
 		try {
 			const stream = streamText({
 				model: buildModel(args),
@@ -546,7 +621,7 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 				]).catch(() => {});
 			};
 			for (;;) {
-				let part: Awaited<ReturnType<typeof events.next>>['value'] | undefined;
+				let part: TextStreamPart<ToolSet> | undefined;
 				try {
 					// First byte races the attempt timeout; after the first byte,
 					// the attempt abort fires only when this attempt exits.
@@ -557,28 +632,30 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 					firstP.catch(() => {});
 					const first = await withTimeout(firstP, firstByteMs, args.signal);
 					if (first.done) {
-						release(args.provider.baseUrl);
-						return; // empty response — nothing to interpret, no lie to tell
+						return; // empty response — nothing to interpret, no lie to tell (the finally frees the slot)
 					}
 					part = first.value;
 				} catch (err) {
-					if ((await drainAttempt(args, attempt, startMs, err)) === 'retry') continue attempts;
+					backoffMs = await drainAttempt(args, attempt, startMs, err);
+					break;
 				}
 				if (part === undefined) {
-					// Unreachable safety (first.done was false, so part was assigned)
-					// — but the slot must not be held across the next attempt either way.
-					release(args.provider.baseUrl);
-					continue attempts;
+					// Unreachable safety (first.done was false, so part was
+					// assigned) — belt-and-braces retry; the per-attempt
+					// finally frees the slot either way.
+					break;
 				}
 				if (part.type === 'error') {
-					if ((await drainAttempt(args, attempt, startMs, part.error)) === 'retry') continue attempts;
+					backoffMs = await drainAttempt(args, attempt, startMs, part.error);
+					break;
 				}
 				if (part.type !== 'text-delta') continue; // protocol part — keep reading
 
-				// First byte = a successful attempt for the pacing window (issue #64):
-				// count it BEFORE giving the slot back.
+				// First byte = a successful attempt for the pacing window
+				// (issue #64): the endpoint answered. The slot STAYS held for
+				// the stream's whole lifetime (issue #104) — the endpoint
+				// counts open requests server-side.
 				recordSuccess(args.provider.baseUrl);
-				release(args.provider.baseUrl); // bytes are flowing — give the lane back
 				yield part.text;
 				// Mid-stream: no retry (output already delivered); errors surface
 				// honestly as their scrubbed text (spec §2).
@@ -602,7 +679,16 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 					const next = await withTimeout(nextP, args.timeoutMs ?? limits.inactivityTimeoutMs, args.signal);
 					if (next.done) return;
 					if (next.value.type === 'text-delta') yield next.value.text;
-					else if (next.value.type === 'error') {
+					else if (next.value.type === 'finish-step') {
+						// Proactive capacity read (issue #104): the step's
+						// response headers arrive while the slot is still held —
+						// when the proxy says ≤ 1 request of account headroom
+						// remains, what the NEXT admissions allow shrinks (this
+						// stream runs to its end regardless). Other protocol
+						// parts stay ignored.
+						if (nearCapSignal(next.value.response.headers))
+							recordNearLimit(args.provider.baseUrl);
+					} else if (next.value.type === 'error') {
 						throw new GatewayError(
 							scrubSecrets(
 								String((next.value.error as Error | null)?.message ?? next.value.error),
@@ -613,15 +699,31 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 					}
 				}
 			}
+			// (A 'steer' break falls through to the finally: release, then the
+			// backoff sleep below, then the next attempt acquires fresh.)
 		} finally {
 			// Settle the abandoned iterator first (its pending next() resolves
-			// done — silence; decision 2026-09-17), THEN kill the fetch.
+			// done — silence; decision 2026-09-17), THEN kill the fetch, THEN
+			// free the slot — exactly once per acquire, however the attempt
+			// exits: normal end, first-byte retry, honest throw, or consumer
+			// break (issue #104: a dead stream must never leak admission).
 			// Reason-carrying cleanup: the kill that ends a first-byte-timeout
 			// or mid-stream-silence fetch must not read as an anonymous reason —
 			// downstream listeners and DevTools show signal.reason verbatim.
-			await drainIterator();
-			abortCtrl.abort(callerReason(args.signal) ?? new DOMException('stream cleaned up (first-byte timeout, retry, or consumer exit)', 'AbortError')); // never leave a first-byte-timeout stream in flight
+			try {
+				await drainIterator();
+				abortCtrl.abort(callerReason(args.signal) ?? new DOMException('stream cleaned up (first-byte timeout, retry, or consumer exit)', 'AbortError')); // never leave a first-byte-timeout stream in flight
+			} finally {
+				release(args.provider.baseUrl);
+			}
 		}
+		// The retry's own backoff sleeps AFTER the release above — the slot
+		// belongs to live streams only (issue #104). A 429 instead parks the
+		// next acquire in the endpoint's cooldown (drainAttempt returned
+		// null — nothing to sleep here). The `!` is sound: nothing between
+		// the check and the call can reassign backoffMs, and the finally
+		// only releases the slot.
+		if (backoffMs !== null) await sleep(backoffMs, args.signal);
 	}
 };
 
@@ -664,7 +766,13 @@ export async function gatewayFetch(
 		}
 		release(baseUrl);
 		if (response.ok || !isRetryable(response.status, { status: response.status })) {
-			if (response.ok) recordSuccess(baseUrl);
+			if (response.ok) {
+				recordSuccess(baseUrl);
+				// Same proactive shave as the callLLM arm (issue #104) —
+				// Headers.get() is already case-insensitive.
+				if (readNearCap(response.headers.get('x-ratelimit-remaining-requests')))
+					recordNearLimit(baseUrl);
+			}
 			return response;
 		}
 		if (attempt === limits.maxAttempts) {

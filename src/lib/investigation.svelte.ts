@@ -82,14 +82,21 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return promise;
 }
 
-/** Per-lane first-fire pause (issue #59): staggers the four fill lanes so
- * the endpoint never sees 4 chunks in one tick — 1.5s × laneIndex (0 / 1.5
- * / 3 / 4.5s) against the all-at-once burst that measured the 429 slowness
- * this morning. Set this to 0 once the gateway (PR #56) lands
- * serialized-pacing at the transport layer: its cap-2 FIFO then serializes
- * the lanes itself and this is dead weight. Until then the value is a
- * UI-lane cap, not a transport cap — the gateway owns the real pacing. */
-const LANE_STAGGER_MS = 1_500;
+/** Abort classification for the fill lanes (issue #104): a throw escaping
+ * fillCards is a STALL only when abort-shaped — the chunk arm's
+ * AbortSignal.timeout firing (TimeoutError reason), a direct AbortError,
+ * or the gateway's attempt timeout surfacing through records' rethrow
+ * (a plain transport failure is an AIResult and never throws). Mirrors the
+ * error shapes of records.ts isAbort; the signal-state half of that check
+ * is the run-alive test at the catch site. Anything else that somehow
+ * escapes is a real failure, not a stall — never re-issued. */
+function isAbortShaped(err: unknown): boolean {
+  const name = String((err as { name?: string } | null)?.name ?? "");
+  if (name === "AbortError" || name === "TimeoutError") return true;
+  return String((err as Error | null)?.message ?? "")
+    .toLowerCase()
+    .includes("abort");
+}
 
 class Investigation {
   phase = $state<Phase | "idle">("idle");
@@ -414,13 +421,7 @@ class Investigation {
           this.filling = true;
           // Prod passes the gateway's streamText lane: the fill paints
           // per-record. Tests injecting only callLLM keep the batch path.
-          await this.fillInChunks(
-            provider,
-            callLLM,
-            controller,
-            LANE_STAGGER_MS,
-            streamLLM,
-          );
+          await this.fillInChunks(provider, callLLM, controller, streamLLM);
           if (this.controller === controller) this.filling = false;
         }
       }
@@ -541,13 +542,7 @@ class Investigation {
       // card renders rule-5 now and the existing fill lane interprets it in
       // place on the session surface ("uninterpreted first", spec §8).
       this.filling = true;
-      void this.fillInChunks(
-        provider,
-        defaultCallLLM,
-        controller,
-        LANE_STAGGER_MS,
-        streamLLM
-      )
+      void this.fillInChunks(provider, defaultCallLLM, controller, streamLLM)
         .catch(() => {})
         .finally(() => {
           if (this.controller === controller) this.filling = false;
@@ -728,7 +723,7 @@ class Investigation {
         // Stream seam defaults to the production gateway (progressive
         // per-record paint, same as start()/openShared()); tests pass
         // explicit undefined so the injected callLLM drives the batch path.
-        await this.fillInChunks(provider, callLLM, controller, LANE_STAGGER_MS, stream);
+        await this.fillInChunks(provider, callLLM, controller, stream);
       } catch {
         /* per-chunk degrade lives inside fillInChunks */
       } finally {
@@ -1111,11 +1106,18 @@ clearFacets(): void {
    * output-token decode dominates wall clock (fix was researched against
    * many-small-parallel practice — see PR #42 review-round record), so
    * lanes interleave requests instead of one serial 100-150s walk.
-   * Each chunk keeps its own 25s arm — past the gateway's 429-cooldown
-   * horizon (Retry-After capped at 15s, issue #53) so a lane survives one
-   * cooldown cycle in-queue instead of expiring on its timer. A timed-out
-   * chunk degrades to rule-5 on ITS 3 cards only (spec §4: degrade only
-   * the unfinished items), and a stuck lane never holds the cursor hostage.
+   * Pacing is the gateway's job now (issue #104): no lane stagger, no
+   * scheduling here — the gateway's per-baseUrl window shapes what the
+   * endpoint sees. Each chunk keeps its own 60s arm (perChunkMs; tests
+   * drive it down through the seam) — past the gateway's 429-cooldown
+   * horizon (Retry-After capped at 15s, issue #53) so a lane survives
+   * one cooldown cycle in-queue instead of expiring on its timer. An
+   * arm that fires mid-hang on an ALIVE run is a STALL: the lane
+   * re-issues the chunk's still-unfilled cards ONCE on a fresh arm
+   * (issue #104 — a hang must not park cards to raw while anything
+   * still answers). A second stall, or any endpoint-answered failure,
+   * degrades to rule-5 on ITS cards only (spec §4: degrade only the
+   * unfinished items), and a stuck lane never holds the cursor hostage.
    * Claim-cursor is synchronous — no double-claim; each lane's merge is
    * one synchronous rewrite (disjoint indices), so lanes can't clobber
    * each other. Cached interpretations return instantly — the first
@@ -1124,18 +1126,17 @@ clearFacets(): void {
     provider: ProviderOverrideInput,
     callLLM: CallLLM,
     controller: AbortController,
-    laneStaggerMs: number = LANE_STAGGER_MS,
     stream?: StreamLLM,
-  ): Promise<void> {
-    const CHUNK = 3;
-    const LANES = 4;
     // 60s: a cold model on a shared BYOK gateway can take 30-60s to answer
     // at all (first-use cold-loads are common on LiteLLM-style proxies), and
     // the gateway's 429 cooldown cycle needs a lane arm longer than its
     // Retry-After horizon (capped at 15s, issue #53) — 10s mislabeled honest
     // waits as timeouts (every fill chunk died at exactly ~10s on a
     // measured-fast endpoint, owner incident).
-    const PER_CHUNK_MS = 60_000;
+    perChunkMs: number = 60_000,
+  ): Promise<void> {
+    const CHUNK = 3;
+    const LANES = 4;
     const total = this.cards.length;
     this.fillStats = { interpreted: 0, total };
     let next = 0;
@@ -1144,109 +1145,153 @@ clearFacets(): void {
       next += CHUNK;
       return at;
     };
-    const worker = async (laneIndex: number): Promise<void> => {
+    const runAlive = (): boolean =>
+      !controller.signal.aborted && this.controller === controller;
+    /** One fill pass over `passCards`: claim → pending, a fresh arm, the
+     * fillCards call (onPaint mapping via indexOf), the pending-out
+     * settle, the amber failed-set bookkeeping, and the fillStats
+     * recompute — the per-chunk lifecycle, parameterized so the worker
+     * can re-run it for a stalled chunk's remainder (issue #104).
+     * Returns true when the pass STALLED: an abort-shaped throw escaped
+     * fillCards while the run is alive (the chunk arm fired on a hang,
+     * or the gateway's attempt timeout surfaced through records'
+     * rethrow). */
+    const runPass = async (
+      passCards: ProductCard[],
+      indexOf: (card: ProductCard, i: number) => number,
+      armMs: number,
+    ): Promise<boolean> => {
+      // Claim → pending: the pass's ids flip to `interpreting…` NOW —
+      // before the fetch fire — so a card mid-fire never reads
+      // identically to one that will never be interpreted (spec §2).
+      // Copy-on-write Set so the badge re-fires per claim.
+      const claimed = new Set(this.pending);
+      for (const c of passCards) claimed.add(c.id);
+      this.pending = claimed;
+      const timer = AbortSignal.any([
+        controller.signal,
+        AbortSignal.timeout(armMs),
+      ]);
+      let filled = passCards;
+      let stalled = false;
+      try {
+        // A chunk timing out (or its interpretation read failing)
+        // aborts ONLY its own combined signal — generateRecords
+        // rethrows aborted-signal errors, so without this catch the
+        // timer's abort would escape into start()'s error path on a
+        // healthy run and pin filling=true forever (spec §4).
+        filled = await fillCards(passCards, {
+          provider,
+          callLLM,
+          // Streamed fill (issue #64): the chunk's cards paint ONE RECORD
+          // AT A TIME as its blocks decode inside the open stream —
+          // the first filled card lands near that card's own decode time
+          // instead of after the whole 3-card batch. The streamed view
+          // passes the same id-affinity gate as the settle pass, so the
+          // two views of a card can never disagree.
+          streamLLM: stream,
+          // Lanes write disjoint index ranges (one claim chunk each) and
+          // this is one synchronous array-rewrite per paint — the same
+          // clobber-free contract as the settle merge below, just earlier.
+          onPaint: (card, i) => {
+            if (this.controller !== controller) return;
+            const merged = this.cards.slice();
+            merged[indexOf(card, i)] = card;
+            this.cards = merged;
+            this.fillStats = {
+              interpreted: merged.filter((c) => c.interpreted).length,
+              total,
+            };
+          },
+          signal: timer,
+          // schema_failure (it answered, output didn't conform) and
+          // rate_limited (it answered 429, asking us to slow down) both
+          // prove the endpoint was REACHABLE — sticky, so a later
+          // transport failure on another lane can't overwrite that truth
+          // (spec §2 never-lie). recordFillFailure pins the pairing.
+          onFailure: (kind, message) => {
+            recordFillFailure(this, kind, message);
+          },
+        });
+      } catch (err) {
+        // Stall vs stop (issue #104): what escapes fillCards is
+        // abort-shaped by construction (records rethrows aborts; an
+        // endpoint-answered failure is an AIResult). On an ALIVE run
+        // that's a stalled pass and the worker re-issues its remainder
+        // once; on a stopped run it's the §8 abort lifecycle — settle
+        // quietly here, flag down.
+        stalled = runAlive() && isAbortShaped(err);
+      }
+      // Merge → pending-out: the pass's ids leave regardless of outcome
+      // — a settle (interpreted, rule-5 fallback, or lane drop under an
+      // abort) is a settle, never a mid-flight lie (spec §2). Runs even
+      // when the controller swapped out mid-flight so a dead run's
+      // leaked ids can't pin `interpreting…` forever.
+      const settle = new Set(this.pending);
+      for (const c of passCards) settle.delete(c.id);
+      this.pending = settle;
+      if (this.controller !== controller) return false;
+      // One synchronous merge over disjoint indices — the lanes can't
+      // clobber each other's writes; UI paints per chunk. Amber
+      // bookkeeping (issue #82) rides the same pass: a claimed card that
+      // settled WITHOUT an interpretation marks `failed`; one the pass
+      // interpreted (live or cache-hit) drains. This runs only on the
+      // current controller's path — a superseded run returned above,
+      // so stopped runs never mark (killed ≠ failed — §8 abort
+      // lifecycle; §2 never-lie). */
+      const merged = this.cards.slice();
+      const failedSet = new Set(this.failed);
+      for (let i = 0; i < filled.length; i++) {
+        const at = indexOf(filled[i], i);
+        const live = merged[at];
+        // A stalled pass resolves with the ORIGINAL raw cards — its
+        // onPaint-painted cards are already merged and are strictly more
+        // advanced truth (issue #104: painted cards never revert to raw;
+        // the re-issue only asks for the still-unfilled remainder).
+        if (live !== undefined && live.interpreted && !filled[i].interpreted) continue;
+        merged[at] = filled[i];
+        if (filled[i].interpreted) failedSet.delete(filled[i].id);
+        else failedSet.add(filled[i].id);
+      }
+      this.cards = merged;
+      this.failed = failedSet;
+      this.fillStats = {
+        interpreted: merged.filter((c) => c.interpreted).length,
+        total,
+      };
+      return stalled;
+    };
+    const worker = async (): Promise<void> => {
       for (let at = claim(); at < total; at = claim()) {
         if (controller.signal.aborted || this.controller !== controller) return;
-        // First-fire stagger (issue #59): lane k sleeps k·laneStaggerMs
-        // before its FIRST claim (at === laneIndex·CHUNK is true on exactly
-        // one iteration per lane) — later claims fire the moment the
-        // previous chunk settles, or the wall-clock penalty would outgrow
-        // the pacing win. Lane 0 (viewport cards first) still fires at t=0.
-        if (laneIndex > 0 && at === laneIndex * CHUNK) {
-          await sleep(laneIndex * laneStaggerMs, controller.signal);
-          if (controller.signal.aborted || this.controller !== controller) return;
-        }
         const chunk = this.cards.slice(at, at + CHUNK);
-        // Claim → pending: the chunk's ids flip to `interpreting…` NOW —
-        // before the fetch fire — so a card mid-fire never reads
-        // identically to one that will never be interpreted (spec §2).
-        // Copy-on-write Set so the badge re-fires per claim.
-        const claimed = new Set(this.pending);
-        for (const c of chunk) claimed.add(c.id);
-        this.pending = claimed;
-        const timer = AbortSignal.any([
-          controller.signal,
-          AbortSignal.timeout(PER_CHUNK_MS),
-        ]);
-        let filled = chunk;
-        try {
-          // A chunk timing out (or its interpretation read failing)
-          // aborts ONLY its own combined signal — generateRecords
-          // rethrows aborted-signal errors, so without this catch the
-          // timer's abort would escape into start()'s error path on a
-          // healthy run and pin filling=true forever (spec §4).
-          filled = await fillCards(chunk, {
-            provider,
-            callLLM,
-            // Streamed fill (issue #64): the chunk's cards paint ONE RECORD
-            // AT A TIME as its blocks decode inside the open stream —
-            // the first filled card lands near that card's own decode time
-            // instead of after the whole 3-card batch. The streamed view
-            // passes the same id-affinity gate as the settle pass, so the
-            // two views of a card can never disagree.
-            streamLLM: stream,
-            // Lanes write disjoint index ranges (one claim chunk each) and
-            // this is one synchronous array-rewrite per paint — the same
-            // clobber-free contract as the settle merge below, just earlier.
-            onPaint: (card, i) => {
-              if (this.controller !== controller) return;
-              const merged = this.cards.slice();
-              merged[at + i] = card;
-              this.cards = merged;
-              this.fillStats = {
-                interpreted: merged.filter((c) => c.interpreted).length,
-                total,
-              };
-            },
-            signal: timer,
-            // schema_failure (it answered, output didn't conform) and
-            // rate_limited (it answered 429, asking us to slow down) both
-            // prove the endpoint was REACHABLE — sticky, so a later
-            // transport failure on another lane can't overwrite that truth
-            // (spec §2 never-lie). recordFillFailure pins the pairing.
-            onFailure: (kind, message) => {
-              recordFillFailure(this, kind, message);
-            },
-          });
-        } catch {
-          // rule-5 fallback for this chunk; the lane keeps going.
-        }
-        // Merge → pending-out: the chunk's ids leave regardless of outcome
-        // — a settle (interpreted, rule-5 fallback, or lane drop under an
-        // abort) is a settle, never a mid-flight lie (spec §2). Runs even
-        // when the controller swapped out mid-flight so a dead run's
-        // leaked ids can't pin `interpreting…` forever.
-        const settle = new Set(this.pending);
-        for (const c of chunk) settle.delete(c.id);
-        this.pending = settle;
-        if (this.controller !== controller) return;
-        // One synchronous merge over disjoint indices — the lanes can't
-        // clobber each other's writes; UI paints per chunk. Amber
-        // bookkeeping (issue #82) rides the same pass: a claimed card that
-        // settled WITHOUT an interpretation marks `failed`; one the pass
-        // interpreted (live or cache-hit) drains. This runs only on the
-        // current controller's path — a deliberate abort returned above,
-        // so stopped runs never mark (killed ≠ failed — §8 abort
-        // lifecycle; §2 never-lie). */
-        const merged = this.cards.slice();
-        const failedSet = new Set(this.failed);
-        for (let i = 0; i < filled.length; i++) {
-          merged[at + i] = filled[i];
-          if (filled[i].interpreted) failedSet.delete(filled[i].id);
-          else failedSet.add(filled[i].id);
-        }
-        this.cards = merged;
-        this.failed = failedSet;
-        this.fillStats = {
-          interpreted: merged.filter((c) => c.interpreted).length,
-          total,
-        };
+        const stalled = await runPass(chunk, (_card, i) => at + i, perChunkMs);
+        if (!stalled) continue;
+        if (controller.signal.aborted || this.controller !== controller) return;
+        // Kill-and-reissue (issue #104): the pass stalled on a live run —
+        // re-issue ONLY the chunk's still-unfilled cards, once, on a fresh
+        // arm. Cards painted via onPaint before the kill keep their paint
+        // (they are interpreted and drop out of `remaining`), and the
+        // (eventId, model) cache semantics are unchanged — fillCards' own
+        // cache pass runs as usual. If this pass stalls or fails too, the
+        // remainder settles raw: the gateway already retried
+        // endpoint-answered failures, and a twice-hung chunk is not ours
+        // to keep hammering (spec §2/§4).
+        const rangeCards = this.cards.slice(at, at + CHUNK);
+        const remaining = rangeCards.filter((c) => !c.interpreted);
+        if (remaining.length === 0) continue;
+        const byId = new Map(rangeCards.map((c, i) => [c.id, at + i]));
+        await runPass(
+          remaining,
+          (c) => byId.get(c.id) ?? at, // remaining ⊆ the chunk range — the miss branch is unreachable
+          perChunkMs,
+        );
       }
     };
     await Promise.all(
       Array.from(
         { length: Math.min(LANES, Math.ceil(total / CHUNK)) },
-        (_, i) => worker(i),
+        () => worker(),
       ),
     );
   }
@@ -1254,13 +1299,14 @@ clearFacets(): void {
   /** @internal — test seam for the fill lane (issue #59): seeds cards, arms
    * a fresh controller (so `this.controller !== controller` bail-outs stay
    * off the happy path), and runs one fillInChunks cycle against this
-   * instance with a caller-chosen stagger. Underscore-marked like
-   * `_closeForTests`; UI callers go through `start()`. */
+   * instance, optionally with a shorter per-chunk arm (issue #104).
+   * Underscore-marked like `_closeForTests`; UI callers go through
+   * `start()`. */
   async _fillInChunksForTests(
     cards: ProductCard[],
     provider: ProviderOverrideInput,
     callLLM: CallLLM,
-    laneStaggerMs: number = 0,
+    perChunkMs?: number,
   ): Promise<void> {
     const controller = new AbortController();
     this.controller = controller;
@@ -1268,7 +1314,7 @@ clearFacets(): void {
     this.filling = true;
     this.fillStats = { interpreted: 0, total: cards.length };
     this.pending = new Set();
-    await this.fillInChunks(provider, callLLM, controller, laneStaggerMs);
+    await this.fillInChunks(provider, callLLM, controller, undefined, perChunkMs);
     this.filling = false;
   }
 }

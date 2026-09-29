@@ -1,9 +1,11 @@
 // Fill-lane pacing + per-card pending state (issue #59, spec §2 never-lie).
 // A card mid-fill must read `interpreting…` — never identically to a card
-// that will never be interpreted — and the four lanes must stagger their
-// FIRST fires so the endpoint never sees 4 simultaneous requests. These
-// tests drive fillInChunks through the _fillInChunksForTests seam with a
-// real fake-indexeddb cache so fillCards's persistence path runs for real.
+// that will never be interpreted. Since issue #104 the four lanes fire at
+// t0 together (pacing is the gateway's per-baseUrl window, not a UI-lane
+// stagger) and a chunk whose arm kills a stalled pass is re-issued once on
+// a fresh arm. These tests drive fillInChunks through the
+// _fillInChunksForTests seam with a real fake-indexeddb cache so
+// fillCards's persistence path runs for real.
 
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -53,7 +55,7 @@ function kvAnswer(callLLMArgs: Parameters<CallLLM>[0]): string {
 	return fillKv(...asked.map((a) => ({ id: a.id, title: `T-${a.id}`, snippet: `S-${a.id}` })));
 }
 
-describe("fillInChunks — lane stagger (issue #59)", () => {
+describe("fillInChunks — lanes fire at t0; a stalled chunk re-issues once (issue #104)", () => {
 	beforeEach(async () => {
 		await initPersistence();
 		await clearAllLocalData();
@@ -63,39 +65,84 @@ describe("fillInChunks — lane stagger (issue #59)", () => {
 		_closeForTests();
 	});
 
-	it("staggers each lane's first fire by laneIndex × laneStaggerMs", async () => {
+	it("fires every lane at t0 — pacing is the gateway's job now, not the lane's", async () => {
 		const fired: number[] = [];
 		const callLLM: CallLLM = vi.fn(async (args) => {
 			fired.push(performance.now());
 			return kvAnswer(args);
 		});
+		// 12 cards / 3 per chunk → 4 lanes, one chunk each. The repealed
+		// first-fire stagger (issue #59) spread these by laneIndex × 1.5s;
+		// since #104 the gateway's per-baseUrl pacing window shapes what the
+		// endpoint sees, so nothing here may spread the fires.
 		const cards = Array.from({ length: 12 }, (_, i) => card(`c${i}`));
-		const STAGGER = 30;
-		await investigation._fillInChunksForTests(cards, PROVIDER, callLLM, STAGGER);
-
-		// 12 cards / 3 per chunk → 4 lanes fire once each. Lane 0 fires at
-		// t0 and lane 3 no earlier than 3× the stagger later — generous
-		// tolerance: the assertion exists to catch the all-at-once burst
-		// (which lands all four fires within ~15ms, not ±75ms).
+		await investigation._fillInChunksForTests(cards, PROVIDER, callLLM);
 		expect(fired.length).toBe(4);
-		expect(fired[3] - fired[0]).toBeGreaterThanOrEqual(STAGGER * 3 - 15);
+		expect(Math.max(...fired) - Math.min(...fired)).toBeLessThan(500);
 	});
 
-	it("a lane's later claims are NOT re-staggered (pacing win only on first fire)", async () => {
-		const fired: number[] = [];
-		const callLLM: CallLLM = vi.fn(async (args) => {
-			fired.push(performance.now());
+	it("re-issues a stalled chunk once on a fresh arm when the run stays alive — the still-unfilled cards fill", async () => {
+		let calls = 0;
+		const callLLM: CallLLM = async (args) => {
+			calls += 1;
+			// The first pass hangs and its chunk arm kills it — simulated as
+			// the abort-classified throw records rethrows out of fillCards.
+			// The run stays ALIVE (no stop(), controller intact), so the
+			// chunk's cards get exactly one fresh pass instead of settling
+			// raw.
+			if (calls === 1)
+				throw new DOMException("The operation was aborted.", "AbortError");
 			return kvAnswer(args);
-		});
-		// 15 cards / 3 per chunk = 5 chunks over 4 lanes — lane 0 re-claims
-		// the 5th chunk immediately after its first settles, long before
-		// lane 3's stagger elapses. If re-claims ate a stagger pause, the
-		// second invocation would trail the first by ≥ STAGGER.
-		const cards = Array.from({ length: 15 }, (_, i) => card(`c${i}`));
-		const STAGGER = 150;
-		await investigation._fillInChunksForTests(cards, PROVIDER, callLLM, STAGGER);
-		expect(fired.length).toBe(5);
-		expect(fired[1] - fired[0]).toBeLessThan(STAGGER);
+		};
+		const cards = Array.from({ length: 3 }, (_, i) => card(`c-${i}`));
+		await investigation._fillInChunksForTests(cards, PROVIDER, callLLM);
+		expect(calls).toBe(2);
+		expect(investigation.cards.every((c) => c.interpreted)).toBe(true);
+		expect(investigation.failed.size).toBe(0);
+		expect(investigation.pending.size).toBe(0);
+	});
+
+	it("a partial-paint stall keeps the painted cards filled — the re-issue asks only for the remainder (issue #104)", async () => {
+		// Review-of-#104 regression: onPaint painted card 0's record before
+		// the chunk arm killed the pass. The stalled pass resolves with the
+		// ORIGINAL raw cards; writing them back would revert the painted
+		// card to raw (amber), and the re-issue would re-pay the LLM for a
+		// card that already has its record. Painted truth is final.
+		let calls = 0;
+		const callLLM: CallLLM = async (args) => {
+			calls += 1;
+			if (calls === 1) throw new DOMException("The operation was aborted.", "AbortError");
+			return kvAnswer(args);
+		};
+		const cards = Array.from({ length: 3 }, (_, i) => card(`c-${i}`));
+		const done = investigation._fillInChunksForTests(cards, PROVIDER, callLLM);
+		// Simulate the onPaint that landed before the stall: merge card 0
+		// as interpreted, exactly as the streamed view does.
+		await vi.waitFor(() => expect(investigation.pending.size).toBe(3));
+		const merged = investigation.cards.slice();
+		merged[0] = { ...merged[0], title: "Painted Title", snippet: "Painted.", interpreted: true };
+		investigation.cards = merged;
+		await done;
+		// All three settle filled; the painted card kept its own paint.
+		expect(investigation.cards.every((c) => c.interpreted)).toBe(true);
+		expect(investigation.cards[0].title).toBe("Painted Title");
+		expect(investigation.failed.size).toBe(0);
+	});
+
+	it("settles raw + amber when the re-issue stalls too — the honest degrade stands (spec §2)", async () => {
+		let calls = 0;
+		const callLLM: CallLLM = async () => {
+			calls += 1;
+			throw new DOMException("The operation was aborted.", "AbortError");
+		};
+		const cards = Array.from({ length: 3 }, (_, i) => card(`c-${i}`));
+		await investigation._fillInChunksForTests(cards, PROVIDER, callLLM);
+		// Exactly one re-issue — a twice-stalled chunk is never a hammer
+		// loop.
+		expect(calls).toBe(2);
+		expect(investigation.cards.every((c) => !c.interpreted)).toBe(true);
+		expect([...investigation.failed].sort()).toEqual(["c-0", "c-1", "c-2"]);
+		expect(investigation.pending.size).toBe(0);
 	});
 });
 
