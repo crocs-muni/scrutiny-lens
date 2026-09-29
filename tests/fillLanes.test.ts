@@ -3,7 +3,11 @@
 // that will never be interpreted. Since issue #104 the four lanes fire at
 // t0 together (pacing is the gateway's per-baseUrl window, not a UI-lane
 // stagger) and a chunk whose arm kills a stalled pass is re-issued once on
-// a fresh arm. These tests drive fillInChunks through the
+// a fresh arm. Issue #106 gates the claim cursor on viewport arming (lazy
+// fill) — the seam's `{ lazy: true }` opt-in drives the same armChunk
+// entry point the results surface's IntersectionObserver uses, while the
+// default stays the pre-#106 eager behavior (no arming surface = every
+// chunk armed). These tests drive fillInChunks through the
 // _fillInChunksForTests seam with a real fake-indexeddb cache so
 // fillCards's persistence path runs for real.
 
@@ -262,5 +266,132 @@ describe("fillInChunks — per-card pending lifecycle (issue #59)", () => {
 		const cards = Array.from({ length: 6 }, (_, i) => card(`c-${i}`));
 		await investigation._fillInChunksForTests(cards, PROVIDER, callLLM);
 		expect(investigation.pending.size).toBe(0);
+	});
+});
+
+describe("fillInChunks — lazy fill: the claim gate only takes armed chunks (issue #106)", () => {
+	beforeEach(async () => {
+		await initPersistence();
+		await clearAllLocalData();
+	});
+	afterEach(() => {
+		resetInvestigation();
+		_closeForTests();
+	});
+
+	/** Ids a callLLM invocation was asked about (same prompt shape as
+	 * kvAnswer). */
+	const idsOf = (args: Parameters<CallLLM>[0]): string[] =>
+		(JSON.parse(args.messages[0].content as string) as { id: string }[]).map((a) => a.id);
+
+	it("claims only armed chunks — chunk 0 fires at t0 (spec §7), a post-cycle arm starts a fresh cycle, beyond-window stays raw and UN-ambered (spec §2)", async () => {
+		const asked: string[][] = [];
+		const callLLM: CallLLM = async (args) => {
+			asked.push(idsOf(args));
+			return kvAnswer(args);
+		};
+		const cards = Array.from({ length: 9 }, (_, i) => card(`c-${i}`));
+		const done = investigation._fillInChunksForTests(cards, PROVIDER, callLLM, undefined, {
+			lazy: true,
+		});
+		// t0: chunk 0 needs no arming surface — the zero-scroll
+		// first-content contract (spec §7) survives the gate. The cycle
+		// then EXITS (nothing else armed): filling goes false while the
+		// run stays alive — the parked-lane model is gone (owner blocker
+		// 2026-09-28: filling=true forever hung the §4 banner and the
+		// late-key refill guard).
+		await done;
+		expect(asked.length).toBe(1);
+		expect(asked[0]!.slice().sort()).toEqual(["c-0", "c-1", "c-2"]);
+		expect(investigation.filling).toBe(false);
+		// Scroll-approach AFTER the cycle: arming chunk 1's first id
+		// starts a fresh cycle that claims the whole chunk.
+		investigation.armChunk("c-3");
+		await vi.waitFor(() => expect(asked.length).toBe(2));
+		expect(asked[1]!.slice().sort()).toEqual(["c-3", "c-4", "c-5"]);
+		await vi.waitFor(() => expect(investigation.cards.filter((c) => c.interpreted).length).toBe(6));
+		// Chunk 2 never armed: never asked, its cards stay raw — and NOT
+		// amber: amber is a lane asked and lost; these were never asked
+		// (spec §2 never-lie).
+		expect(asked.length).toBe(2);
+		expect(
+			investigation.cards
+				.filter((c) => !c.interpreted)
+				.map((c) => c.id)
+				.sort(),
+		).toEqual(["c-6", "c-7", "c-8"]);
+		expect(investigation.failed.size).toBe(0);
+		expect(investigation.pending.size).toBe(0);
+	});
+
+	it("a fully-armed lazy run completes across cycles — no abort needed, filling settles false", async () => {
+		const asked: string[][] = [];
+		const callLLM: CallLLM = async (args) => {
+			asked.push(idsOf(args));
+			return kvAnswer(args);
+		};
+		const cards = Array.from({ length: 9 }, (_, i) => card(`c-${i}`));
+		await investigation._fillInChunksForTests(cards, PROVIDER, callLLM, undefined, {
+			lazy: true,
+		});
+		await vi.waitFor(() => expect(asked.length).toBe(1));
+		// Arms land after the first cycle exits: each new arm starts a
+		// fresh cycle (the observer's per-scroll-entry shape), every chunk
+		// gets claimed in turn, and once nothing armed-with-work remains
+		// the cycle exits by itself — the fill settles without a stop().
+		investigation.armChunk("c-4"); // chunk 1 → cycle 2
+		await vi.waitFor(() => expect(asked.length).toBe(2));
+		investigation.armChunk("c-7"); // chunk 2 → cycle 3
+		await vi.waitFor(() => expect(asked.length).toBe(3));
+		// The armRefill cycles are fire-and-forget: wait for the last
+		// cycle's settle (filling false + everything interpreted).
+		await vi.waitFor(() => expect(investigation.filling).toBe(false));
+		expect(investigation.cards.every((c) => c.interpreted)).toBe(true);
+	});
+
+	it("a stopped run never hangs — the cycle exits on abort, killed ≠ failed (spec §8)", async () => {
+		const gate = Promise.withResolvers<void>();
+		let calls = 0;
+		const callLLM: CallLLM = async (args) => {
+			calls += 1;
+			// Hold chunk 0 in flight so the abort lands mid-pass; with the
+			// cycle model there is nothing parked, but the abort must
+			// still tear the in-flight pass down without hanging.
+			await gate.promise;
+			return kvAnswer(args);
+		};
+		const cards = Array.from({ length: 9 }, (_, i) => card(`c-${i}`));
+		const done = investigation._fillInChunksForTests(cards, PROVIDER, callLLM, undefined, {
+			lazy: true,
+		});
+		await vi.waitFor(() => expect(calls).toBe(1));
+		investigation.stop();
+		gate.resolve();
+		// The run resolving at all is the pin: the abort exits the lane
+		// instead of hanging the fill promise forever.
+		await done;
+		expect(investigation.pending.size).toBe(0);
+		expect(investigation.failed.size).toBe(0);
+	});
+
+	it("re-arming an already-filled chunk rides the (eventId, model) cache — no second endpoint ask (spec §6)", async () => {
+		let calls = 0;
+		const callLLM: CallLLM = async (args) => {
+			calls += 1;
+			return kvAnswer(args);
+		};
+		// First fill: the three cards interpret and persist per-record.
+		const cards = Array.from({ length: 3 }, (_, i) => card(`c-${i}`));
+		await investigation._fillInChunksForTests(cards, PROVIDER, callLLM);
+		expect(calls).toBe(1);
+		// Scroll-back shape: a fresh raw cohort with the SAME ids arms its
+		// chunk — the gate lets the claim through, but fillCards' cache-hit
+		// pass swallows every record; the endpoint is never re-asked.
+		const fresh = Array.from({ length: 3 }, (_, i) => card(`c-${i}`));
+		await investigation._fillInChunksForTests(fresh, PROVIDER, callLLM, undefined, {
+			lazy: true,
+		});
+		expect(calls).toBe(1);
+		expect(investigation.cards.every((c) => c.interpreted)).toBe(true);
 	});
 });

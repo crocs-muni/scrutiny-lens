@@ -58,6 +58,76 @@
 	// card's sweep (driven by investigation.pending, issue #82) has no
 	// meaning on the skeleton surface this gate used to keep up. */
 	const showCards = $derived(investigation.result !== null);
+
+	// — Lazy fill (issue #106): the DOM half of the next-N prefetch —
+	// The results surface owns the elements; the store owns the policy
+	// (armChunk → the claim gate in fillInChunks). While a RUN is live on
+	// this surface, an IntersectionObserver rooted on the results scroller
+	// arms each card's chunk ~2 screenfuls BEFORE the card scrolls into
+	// view (rootMargin '200% 0px' — vertical only, and symmetric because
+	// scroll-BACK into a never-armed region must fill just as instantly as
+	// scroll-forward; arming is sticky in the store, so the extra direction
+	// costs nothing steady-state).
+	// Gating on the RUN, never on `filling` (cycle model, owner blocker
+	// 2026-09-28): a fill cycle EXITS when nothing armed-with-work remains
+	// (filling goes false) and a new arm starts the next cycle — an
+	// observer torn down with the cycle could never fire that arm. The
+	// observer lives as long as the surface holds the run's cards; an arm
+	// with no claimable work is a no-op in the store, so a settled run's
+	// scroll events cost nothing.
+	let resultsScroller = $state<HTMLDivElement | null>(null);
+	let cardObserver: IntersectionObserver | null = null;
+	$effect(() => {
+		// showCards tracks the run's presence; void keeps the $state read
+		// tracked without branching on it twice.
+		void showCards;
+		if (investigation.result === null || resultsScroller === null) return;
+		// Ancient browser without IntersectionObserver: degrade to the
+		// pre-#106 eager fill by arming the whole cohort — never starve
+		// cards silently.
+		if (typeof IntersectionObserver === 'undefined') {
+			for (const el of resultsScroller.querySelectorAll('[data-card-id]')) {
+				const id = el.getAttribute('data-card-id');
+				if (id !== null) investigation.armChunk(id);
+			}
+			return;
+		}
+		const scroller = resultsScroller;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					if (!entry.isIntersecting) continue;
+					const id = entry.target.getAttribute('data-card-id');
+					if (id !== null) investigation.armChunk(id);
+					// Arming is sticky — once armed, watching buys nothing.
+					observer.unobserve(entry.target);
+				}
+			},
+			{ root: scroller, rootMargin: '200% 0px' }
+		);
+		cardObserver = observer;
+		// Wrappers can mount before this effect runs (the fill starts in the
+		// same flush the cards paint) — sweep what's already mounted; later
+		// mounts and re-registers arrive through use:observeCard below.
+		for (const el of scroller.querySelectorAll('[data-card-id]')) observer.observe(el);
+		return () => {
+			observer.disconnect();
+			if (cardObserver === observer) cardObserver = null;
+		};
+	});
+	// Ref action (same convention as GraphCanvas's registerWrapper): card
+	// wrappers register with the live observer across keyed-each rebuilds
+	// and facet-driven list swaps. A no-op while no fill owns an observer —
+	// the effect's sweep above observes already-mounted wrappers when a
+	// fill starts.
+	function observeCard(el: HTMLElement) {
+		cardObserver?.observe(el);
+		return {
+			destroy() {
+				cardObserver?.unobserve(el);
+			}
+		};
+	}
 	const railGroups = $derived.by(() => {
 		if (investigation.result === null) return investigation.facetGroups;
 		return [
@@ -231,16 +301,24 @@
 		(investigation.error !== null && !anyRelayOk) ||
 			(investigation.phase === 'done' && allRefused && investigation.skeletons.length === 0)
 	);
-	// The fill settled with fewer interpretations than cards (AI down, slow,
-	// or garbage on that chunk) — spec §4: fallback + dismissible banner, full
-	// OR partial degradation. Message stays numeric — never "broken" — and the
-	// zero-interpreted text is keyed on the real fill kind: an endpoint that
-	// answered but didn't conform is not "unreachable" (spec §2 never-lie).
+	// The fill settled with REAL failures — spec §4: fallback + dismissible
+	// banner, full OR partial degradation. Message stays numeric — never
+	// "broken" — and the zero-interpreted text is keyed on the real fill
+	// kind: an endpoint that answered but didn't conform is not
+	// "unreachable" (spec §2 never-lie).
+	// #106 lazy fill: `interpreted < total` ALONE is no longer a failure —
+	// beyond-window cards were never asked, so the honest steady state of
+	// an unscrolled result must NOT read as "AI slow". The banner fires
+	// only when a lane actually lost something: amber ids (asked and
+	// lost) or a pinned fill kind (an AIResult failure escaped the
+	// retries). Never-asked raw cards show the neutral dashed face and no
+	// banner (spec §2).
 	const aiNote = $derived(
 		investigation.result !== null &&
 			!investigation.filling &&
 			investigation.fillStats.total > 0 &&
-			investigation.fillStats.interpreted < investigation.fillStats.total
+			investigation.fillStats.interpreted < investigation.fillStats.total &&
+			(investigation.failed.size > 0 || investigation.fillFailure !== null)
 			? fillNote(
 					investigation.fillStats.interpreted,
 					investigation.fillStats.total,
@@ -471,7 +549,10 @@
 										p-1: shadow-card's 1px ring is painted OUTSIDE the border
 										box — flush children lose that ring to the overflow clip
 										(owner report, issue #36). -->
-									<div class="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto p-1 pb-3">
+									<div
+										class="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto p-1 pb-3"
+										bind:this={resultsScroller}
+									>
 										<div class="w-full max-w-[760px] shrink-0">
 											<TaskTrace />
 										</div>
@@ -485,7 +566,15 @@
 											/>
 										{:else}
 											{#each showCards ? viewCards : investigation.skeletons as card (card.id)}
-												<div class="w-full max-w-[760px] shrink-0">
+												<!-- data-card-id is the lazy-fill DOM contract
+													(issue #106): the observer sweeps and arms by it.
+													Cards only — skeletons carry no fill (no admitted
+													subject yet, ruling 6). -->
+												<div
+													class="w-full max-w-[760px] shrink-0"
+													data-card-id={showCards ? card.id : undefined}
+													use:observeCard
+												>
 													<!-- skeletons stay inert (ruling 6 — no admitted
 														subject behind them); settled cards open the
 														dossier, the selected one wears the ring. -->
