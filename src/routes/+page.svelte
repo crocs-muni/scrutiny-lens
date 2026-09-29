@@ -56,16 +56,17 @@
 	// Cards render while the fill lands (issue #59): the per-chunk paint
 	// needs the product surface live DURING fillInChunks, and a mid-fill
 	// card's sweep (driven by investigation.pending, issue #82) has no
-	// meaning on the skeleton surface this gate used to keep up. */
-	const showCards = $derived(investigation.result !== null);
-	// Card-gap (issue #118): real cards may mount only at the post-context
-	// merge (an orphan-metadata-only search assembles zero PRE-context
-	// cards, so skeleton-keyed blocks MORPH into card blocks without
-	// remounting — their data-card-id attribute appears with no fresh
-	// IntersectionObserver notification). The observer effect below
-	// tracks this flip and re-sweeps, or those visible cards would never
-	// arm until a scroll reunion.
-	const railLive = $derived(showCards && viewCards.length > 0);
+	// meaning on the skeleton surface this gate used to keep up. Card-gap
+	// (issue #118): the run's presence is the OBSERVER's gate — the card
+	// list itself keys on railLive below, because real cards may mount only
+	// at the post-context merge (an orphan-metadata-only search assembles
+	// zero PRE-context cards, so skeleton-keyed blocks MORPH into card
+	// blocks without remounting — their data-card-id appears with no fresh
+	// IntersectionObserver notification; the observer effect tracks that
+	// flip and re-sweeps, or those visible cards would never arm until a
+	// scroll reunion).
+	const runLive = $derived(investigation.result !== null);
+	const railLive = $derived(runLive && viewCards.length > 0);
 
 	// — Lazy fill (issue #106): the DOM half of the next-N prefetch —
 	// The results surface owns the elements; the store owns the policy
@@ -86,10 +87,10 @@
 	let resultsScroller = $state<HTMLDivElement | null>(null);
 	let cardObserver: IntersectionObserver | null = null;
 	$effect(() => {
-		// showCards tracks the run's presence, railLive the skeleton→card
+		// runLive tracks the run's presence, railLive the skeleton→card
 		// MORPH flip (issue #118 — re-sweep arms the morphed wrappers);
 		// void keeps the $state reads tracked without branching on either.
-		void showCards;
+		void runLive;
 		void railLive;
 		if (investigation.result === null || resultsScroller === null) return;
 		// Ancient browser without IntersectionObserver: degrade to the

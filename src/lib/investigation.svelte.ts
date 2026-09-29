@@ -336,6 +336,28 @@ class Investigation {
     this.running = true;
   }
 
+  /** The fill lane's desire gate (issue #118 review): the early leg, the
+   * top-up leg, and the cold-open share the same triple — a provider (key
+   * set at run capture), a model, and cards to interpret. One helper keeps
+   * the three sites from drifting; the predicate also narrows `provider`
+   * for the fill call that follows each gate. */
+  private fillDesired(
+    provider: ProviderOverrideInput | undefined,
+  ): provider is ProviderOverrideInput {
+    return provider !== undefined && settings.model !== "" && this.cards.length > 0;
+  }
+
+  /** The trace counter's one write shape (spec §2 rule 6): interpreted
+   * count against the live denominator. Every fillStats site funnels
+   * through here — the counter must never read "raw" beside interpreted
+   * cards (issue #118 review). */
+  private syncFillStats(cards: ProductCard[]): void {
+    this.fillStats = {
+      interpreted: cards.filter((c) => c.interpreted).length,
+      total: cards.length,
+    };
+  }
+
   /** Pin the settled frontier of the CURRENT session (issue #83): on reload
    * the restore seam rebuilds the surface from this row plus the shared
    * events cache — never a re-query, so a restored session paints exactly
@@ -452,11 +474,7 @@ class Investigation {
         // flight" (issue #106's cycle model) — TRUE from here to the
         // top-up leg's end.
         let earlyFill: Promise<void> | null = null;
-        if (
-          provider !== undefined &&
-          settings.model !== "" &&
-          this.cards.length > 0
-        ) {
+        if (this.fillDesired(provider)) {
           this.filling = true;
           earlyFill = this.fillInChunks(
             provider,
@@ -539,11 +557,7 @@ class Investigation {
         // no early leg fired. Already-interpreted and amber cards fail
         // hasWork, so a covered cohort costs one claim-scan and exits —
         // fillCards' (eventId, model) cache pass re-pays nothing (§6).
-        if (
-          provider !== undefined &&
-          settings.model !== "" &&
-          this.cards.length > 0
-        ) {
+        if (this.fillDesired(provider)) {
           this.filling = true;
           // Prod passes the gateway's streamText lane: the fill paints
           // per-record. Tests injecting only callLLM keep the batch path.
@@ -664,7 +678,7 @@ class Investigation {
             model: settings.model,
             apiKey: settings.apiKey,
           };
-    if (provider !== undefined && settings.model !== "" && this.cards.length > 0) {
+    if (this.fillDesired(provider)) {
       // Fire-and-forget, deliberately NOT awaited: the cold open's caller
       // (the event route) must hand over to the shell immediately — the
       // card renders rule-5 now and the existing fill lane interprets it in
@@ -783,10 +797,7 @@ class Investigation {
       // Seed the trace's descriptions row (review H3d): cache paints ARE
       // rendered interpretations — the decouple counter must never read
       // "raw" beside them (spec §2 rule 6).
-      this.fillStats = {
-        interpreted: painted.filter((c) => c.interpreted).length,
-        total: painted.length,
-      };
+      this.syncFillStats(painted);
     }
     this.running = false;
     // #84's other half (ruling: caused, not derived): a key being present
@@ -1341,8 +1352,12 @@ clearFacets(): void {
     // settings (a mid-run model change would poison the (eventId, model)
     // cache keys with a different model's rows).
     this.fillCtx = { provider, callLLM, stream };
-    this.fillStats = { interpreted: 0, total };
-    // Issue #105: the banner's "endpoint rate limited N×" is the delta of
+    // Seed from the live array, never zero (review P2 on the first #118
+    // pass): the top-up leg re-enters here AFTER the early leg interpreted
+    // cards, and a 0-seed leaves "0 of N filled" on the trace row and the
+    // aria-live verdict forever — the decouple counter must never read raw
+    // beside interpreted cards (spec §2 rule 6).
+    this.syncFillStats(this.cards);
     // the gateway's page-lifetime 429 count across THIS fill — snapshot at
     // entry, settle at the end of the last lane.
     const seen429AtStart = surfaced429Count();
@@ -1447,10 +1462,7 @@ clearFacets(): void {
             // Live denominator (issue #118): the post-context merge can
             // append arrivals mid-leg, so the banner counts against the
             // array as it stands — never the leg-entry count.
-            this.fillStats = {
-              interpreted: merged.filter((c) => c.interpreted).length,
-              total: merged.length,
-            };
+            this.syncFillStats(merged);
             // Drafting voice ends here (issue #109): the live face owns
             // the card's text from the paint on — its pre-gate draft is
             // removed, never persisted.
@@ -1552,10 +1564,7 @@ clearFacets(): void {
       this.cards = merged;
       this.failed = failedSet;
       // Live denominator, same as onPaint above (issue #118).
-      this.fillStats = {
-        interpreted: merged.filter((c) => c.interpreted).length,
-        total: merged.length,
-      };
+      this.syncFillStats(merged);
       return stalled;
     };
     const worker = async (): Promise<void> => {

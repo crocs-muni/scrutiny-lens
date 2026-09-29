@@ -30,6 +30,7 @@ import {
 } from '$lib/net/transport';
 import type { CallLLM } from '$lib/ai/output';
 import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
+import type { Filter } from 'nostr-tools/filter';
 import type { NostrEvent } from 'nostr-tools/core';
 
 vi.mock('$lib/net/transport', async (importOriginal) => {
@@ -127,7 +128,7 @@ class GatedTransport implements Transport {
 	fetch(_filters: unknown[]): Promise<FetchResult> {
 		return Promise.reject(new Error('unused'));
 	}
-	fetchProgressive(filters: unknown[], onSlice: (s: FetchSlice) => void): Promise<FetchResult> {
+	fetchProgressive(filters: Filter[], onSlice: (s: FetchSlice) => void): Promise<FetchResult> {
 		return this.fetchRouted([{ label: 'default', urls: this.urls, filters }], onSlice);
 	}
 	count(_filters: unknown[]): Promise<CountResult> {
@@ -191,6 +192,12 @@ describe('start() — early fill fires while the settle traversal still runs (is
 
 		expect(investigation.cards.every((c) => c.interpreted)).toBe(true);
 		expect(investigation.pending.size).toBe(0);
+		// The banner counter survives the top-up leg's entry reset (review
+		// P2 on the first #118 pass): a second fillInChunks entry must not
+		// zero fillStats below cards that already interpreted — the trace
+		// row and the aria-live fill verdict both read it (spec §2 rule 6).
+		expect(investigation.fillStats.interpreted).toBe(3);
+		expect(investigation.fillStats.total).toBe(3);
 	});
 
 	it('the merge keeps slot order and mid-flight paint — a card interpreted before the gate stays interpreted after', async () => {
