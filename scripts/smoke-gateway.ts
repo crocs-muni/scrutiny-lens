@@ -131,6 +131,11 @@ const BUCKETS: Record<string, ScriptedResponse[]> = {
   ],
   // Fill lane B: complete.
   "smoke-fill-b": [fillOk(["smoke-3", "smoke-4", "smoke-5"])],
+  // 429 storm (issue #105): TWO consecutive throttles — the gateway halves
+  // its admission window on each (floor 1), then the third attempt (the
+  // last of maxAttempts 3) recovers and fills. Retry-After 1s keeps the
+  // lane at ~2-3s wall clock, far under the 60s chunk arm.
+  "smoke-storm": [RATE_LIMITED, RATE_LIMITED, fillOk(["smoke-6", "smoke-7", "smoke-8"])],
 };
 
 /** Append a raw model response to the corpus (one file per model). */

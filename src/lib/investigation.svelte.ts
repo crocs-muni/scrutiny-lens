@@ -15,7 +15,7 @@
 // it is never persisted (spec §6).
 
 import { defaultCallLLM, type AIKind, type CallLLM } from "$lib/ai/output";
-import { streamLLM } from "$lib/ai/gateway";
+import { streamLLM, surfaced429Count } from "$lib/ai/gateway";
 import type { StreamLLM } from "$lib/ai/records";
 import type { ProviderOverrideInput } from "$lib/ai/provider";
 import { createTransport, type Transport } from "$lib/net/transport";
@@ -153,6 +153,11 @@ class Investigation {
    * provider.ts). The banner appends this so a bare kind can't hide the
    * cause (PR #50's incident: "(unreachable)" told you nothing). */
   fillErrorMessage = $state<string | null>(null);
+  /** 429s the gateway SAW during this run's fill (issue #105): a delta off
+   * the page-lifetime counter captured at fill-settle, so the banner's
+   * "endpoint rate limited N×" never grows across runs and never claims
+   * more than the endpoint said (spec §2). */
+  rateLimitedCount = $state(0);
   result = $state<SearchSession | null>(null);
   /** Settled failure (never a deliberate abort); the §4 error surfaces
    * (#38) render from this. */
@@ -277,6 +282,7 @@ class Investigation {
     this.fillStats = { interpreted: 0, total: 0 };
     this.fillFailure = null;
     this.fillErrorMessage = null;
+    this.rateLimitedCount = 0;
     this.elapsedMs = null;
     this.selectedEventId = null;
     this.graphSubjectId = null;
@@ -1139,6 +1145,10 @@ clearFacets(): void {
     const LANES = 4;
     const total = this.cards.length;
     this.fillStats = { interpreted: 0, total };
+    // Issue #105: the banner's "endpoint rate limited N×" is the delta of
+    // the gateway's page-lifetime 429 count across THIS fill — snapshot at
+    // entry, settle at the end of the last lane.
+    const seen429AtStart = surfaced429Count();
     let next = 0;
     const claim = (): number => {
       const at = next;
@@ -1294,6 +1304,9 @@ clearFacets(): void {
         () => worker(),
       ),
     );
+    // Settle the #105 count: what the endpoint actually said across this
+    // fill's lanes (reissue passes included — they ride the same gateway).
+    this.rateLimitedCount = surfaced429Count() - seen429AtStart;
   }
 
   /** @internal — test seam for the fill lane (issue #59): seeds cards, arms
@@ -1341,6 +1354,7 @@ export function resetInvestigation(): void {
   investigation.fillStats = { interpreted: 0, total: 0 };
   investigation.fillFailure = null;
   investigation.fillErrorMessage = null;
+  investigation.rateLimitedCount = 0;
   investigation.lastQuestion = "";
   investigation.sessionId = null;
   investigation.restoredEvicted = null;
@@ -1390,6 +1404,10 @@ export function fillNote(
   total: number,
   failure: AIKind | null,
   message: string | null = null,
+  /** 429s the gateway saw during this run (issue #105). Rides as a
+   * trailing suffix so #108's rewording of the head sentence leaves it
+   * intact; 0 = the retries cleared everything, nothing to add. */
+  rateLimitedCount = 0,
 ): string {
   if (total <= 0 || interpreted >= total) return "";
   if (interpreted > 0) {
@@ -1400,7 +1418,8 @@ export function fillNote(
     return `AI output didn't conform${reason} — cards show the raw events`;
   }
   if (failure === "rate_limited") {
-    return "AI endpoint rate limited — cards show the raw events";
+    const countSuffix = rateLimitedCount > 0 ? ` · endpoint rate limited ${rateLimitedCount}×` : "";
+    return `AI endpoint rate limited — cards show the raw events${countSuffix}`;
   }
   if (failure === "browser_blocked") {
     return "AI endpoint blocked by the browser (CORS or mixed content) — cards show the raw events";

@@ -22,7 +22,8 @@ import {
 	setBaseFetch,
 	setLimits,
 	primeSecrets,
-	scrubSecrets
+	scrubSecrets,
+	surfaced429Count
 } from '$lib/ai/gateway';
 import { generateRecords } from '$lib/ai/records';
 import { fetchModels } from '$lib/ai/models';
@@ -522,6 +523,40 @@ describe('429 + Retry-After', () => {
 		await slow;
 		expect(a.log).toHaveLength(2);
 		expect(b.log).toHaveLength(1);
+	});
+});
+
+/* ------------------------------------------------------------------ *
+ * Surfaced-429 counter (issue #105): every 429 the gateway SEES lands in
+ * one total the smoke and the results banner can read as the endpoint's
+ * own "too many" votes (spec §2 — never claim more or less than the
+ * endpoint actually said).
+ * ------------------------------------------------------------------ */
+
+describe('surfaced-429 counter (issue #105)', () => {
+	it('starts at 0, counts exactly the 429s served mid-retry, and zeroes on reset', async () => {
+		expect(surfaced429Count()).toBe(0);
+		// Two scripted throttles, then the retry clears it: the counter must
+		// name 2 — the endpoint SAID 429 twice even though the call succeeded.
+		const { fetch: f } = scriptedFetch([rateLimited('0'), rateLimited('0'), {}]);
+		setBaseFetch(f);
+		await expect(callLLM(args())).resolves.toBe('T');
+		expect(surfaced429Count()).toBe(2);
+		resetGateway();
+		expect(surfaced429Count()).toBe(0);
+	});
+
+	it('counts across arms: a callLLM 429 and a streamLLM 429 land in the same total', async () => {
+		// One funnel (recordRateLimited) serves every transport arm — a
+		// counter wired into only one arm would under-report a run whose
+		// throttles all hit the streaming lane.
+		const { fetch: f } = scriptedFetch([rateLimited('0'), {}, rateLimited('0'), { stream: ['ok'] }]);
+		setBaseFetch(f);
+		await expect(callLLM(args())).resolves.toBe('T');
+		const chunks: string[] = [];
+		for await (const c of streamLLM(args())) chunks.push(c);
+		expect(chunks.join('')).toBe('ok');
+		expect(surfaced429Count()).toBe(2);
 	});
 });
 
