@@ -1,82 +1,42 @@
 # SCRUTINY Lens
 
-A static, serverless web app for exploring SCRUTINY Fabric security metadata.
-The browser talks to Nostr relays and your own OpenAI-compatible LLM endpoint
-directly. No app server, no accounts, no telemetry. Built on SvelteKit 2 +
-Svelte 5 (runes) + TypeScript strict. Spec: `docs/spec.md`.
+SCRUTINY Lens is a client for the [SCRUTINY Fabric](https://github.com/crocs-muni/scrutiny-fabric-tools) protocol, built as a static web application. It is the reference implementation that exercises the protocol's SDK, `@scrutiny-fabric/core`, in production.
 
-## Quickstart
+An analyst asks a question in plain English or pastes an identifier such as a CVE, a package URL, or a certificate id. Identifiers go directly to tag queries. An AI endpoint the user chooses translates free-text questions to searches. The app verifies every event it receives (Schnorr signature and id recompute), builds the product graph through the SDK, and presents a results page with cards, facets, a detail drawer, and a chat whose citations are verified against the event content.
 
-Requires Node >=22.12 and the sibling `scrutiny-fabric-tools` checkout beside
-this repo (`@scrutiny-fabric/core` is a `file:` dependency — see spec §8). The
-sibling's `packages/core` must be **built** (`pnpm install && pnpm build`
-inside it) — its exports point at `dist/`.
-A second sibling, `scrutiny-design-system` (beautiful-ui-svelte), is also a
-`file:` dependency (spec §9): zero-mutation canon components are imported by
-source path from it, and Tailwind scans its `src/` (`@source` in `app.css`).
-Any deploy before these repos move to a public pin needs both checkouts
-present at build time.
+The application runs without an app server. The browser talks only to the Nostr relays and to the user's own AI endpoint. There are no accounts, and there is no first-party telemetry. The API key stays in the memory of the open tab and goes only to the configured endpoint.
+
+## Use the app
+
+Live instance: <https://crocs-muni.github.io/scrutiny-lens>
+
+Searching and browsing need no setup. The optional AI features (search translation, card texts, chat answers with verbatim-verified citations) need an OpenAI-compatible endpoint, a model name, and an API key. These are entered in the Settings dialog (`Ctrl+,`) and persist across sessions except the key, which is never stored. The full set of first-run env variables lives in `.env.example`.
+
+AI writes only the prose layer. Every counter, status pill, facet, and date comparison is computed from the event data. When an AI item fails its shape check, the card falls back to the event's own tags and opening text, marked raw.
+
+## Develop
+
+Prerequisites: Node >=22.12, pnpm, and two sibling checkouts next to this repository. `@scrutiny-fabric/core` and `beautiful-ui-svelte` are `file:` dependencies, so both repositories must be present at build time, and the SDK's `packages/core` must be built (`pnpm install && pnpm build` inside it).
 
 ```sh
 pnpm install
-pnpm dev          # http://localhost:5173
-pnpm check        # type-check (svelte-check)
-pnpm test         # vitest run
-pnpm build        # static bundle -> ./build (adapter-static)
+pnpm dev      # http://localhost:5173
+pnpm check    # type-check (svelte-check)
+pnpm test     # vitest
+pnpm build    # static bundle -> ./build (adapter-static)
 ```
 
 ## Deploy
 
-The build is a pure SPA: `build/index.html` is the fallback page for every URL
-(spec §8), so the site runs on any static file server at root mount. A postbuild
-step also copies it to `build/404.html` for GitHub Pages, and
-`static/.nojekyll` ships so `_app/` assets are published.
+The build is a pure SPA. Any static file server can host it at domain root. GitHub Pages is the documented target: `build/404.html` boots deep links, and `static/.nojekyll` keeps `_app/` assets published. A project-site mount (such as `/scrutiny-lens/`) requires `BASE_PATH=/<repo>` at build time. Caching: `_app/immutable/*` is content-hashed and safe for long cache headers; `index.html` must revalidate. The full recipe, including the nginx fallback rule and this repository's automated Pages pipeline, is in [`docs/deploy.md`](docs/deploy.md).
 
-- **Automated deploys:** every green push to `main` publishes this repo's
-  project site at `https://crocs-muni.github.io/scrutiny-lens` — no secrets,
-  no extra repo; see [`docs/deploy.md`](docs/deploy.md) for the pipeline and
-  the one-time Settings flip.
-- **GitHub Pages:** serve `build/` as-is (decision record: issue #16). Deep
-  links (`/event/nevent1…`) boot via `404.html` (unmatched paths return HTTP
-  404 status — a soft-404). Project-site deployments
-  (`<org>.github.io/<repo>`) must build with `BASE_PATH=/<repo>` so asset and
-  router paths are prefixed.
-- **nginx:** one host rule serves deep links:
+Two environment variables seed the first-run defaults: `PUBLIC_RELAY_URLS` (comma-separated relay list) and `PUBLIC_LLM_ENDPOINT` (AI endpoint override). All further configuration lives in the Settings dialog.
 
-  ```nginx
-  location / {
-      try_files $uri $uri/ /index.html;
-  }
-  ```
+## Documentation
 
-Share links `${origin}${base}event/<nevent1…>` deep-link straight into the
-detail drawer through the same fallback: the nginx rule above covers them
-identically, and GitHub Pages boots them via `404.html`. Chat apps unfurling
-a shared link show the generic site card — per-event og meta needs a running
-server, which this one doesn't have (see [`docs/research-nostr-sharing.md`](docs/research-nostr-sharing.md)).
-
-- **Apache:** the shipped `static/.htaccess` (`FallbackResource /index.html`)
-  handles it without mod_rewrite.
-
-Caching contract: `_app/immutable/*` is content-hashed — long-cache it
-(`immutable, max-age=31536000`); `index.html` must revalidate
-(`no-cache, must-revalidate`), or redeploys serve a stale module graph.
-
-Subpath hosting anywhere (`/~user/lens/`) requires rebuilding with
-`BASE_PATH` set — `kit.paths.base` is a build-time constant.
-
-## Configuration
-
-All configuration lives in the app's Settings dialog (endpoint, API key,
-model, relay pool, appearance). Two env vars seed first-run defaults —
-copy `.env.example` to `.env`:
-
-- `PUBLIC_RELAY_URLS` — comma-separated 2–4 default relay URLs.
-- `PUBLIC_LLM_ENDPOINT` — optional override of the spec §5 AI endpoint.
-
-The API key is entered in settings only, kept in memory for the tab, and
-sent only to the endpoint the user configures (spec §6).
+- [`docs/spec.md`](docs/spec.md) is the single source of truth for the build cycle. Code that disagrees with the spec is wrong, and the spec changes through its own edit ritual.
+- [`AGENTS.md`](AGENTS.md) states the rules for contributors and coding agents; [`CONTEXT.md`](CONTEXT.md) fixes the domain vocabulary that issues, code, and comments use.
 
 ## License
 
-See `LICENSE`.
+MIT. See [`LICENSE`](LICENSE).

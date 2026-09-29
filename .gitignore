@@ -29,6 +29,7 @@ vite.config.ts.timestamp-*
 # local design + research material (not published)
 research/
 docs/*.html
+docs/pr-artifacts/
 fixtures/RELAY-NOTES.md
 .claude/
 screens.pen
