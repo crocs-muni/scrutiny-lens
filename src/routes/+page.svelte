@@ -325,19 +325,25 @@
 	// lost) or a pinned fill kind (an AIResult failure escaped the
 	// retries). Never-asked raw cards show the neutral dashed face and no
 	// banner (spec §2).
+	// The settle verdict sentence is shared by the visible banner AND the
+	// fillLive region (one derivation, so the two surfaces can't drift —
+	// review finding on the a11y slice).
+	const fillSettleNote = $derived(
+		fillNote(
+			investigation.fillStats.interpreted,
+			investigation.fillStats.total,
+			investigation.fillFailure,
+			investigation.fillErrorMessage,
+			investigation.rateLimitedCount
+		)
+	);
 	const aiNote = $derived(
 		investigation.result !== null &&
 			!investigation.filling &&
 			investigation.fillStats.total > 0 &&
 			investigation.fillStats.interpreted < investigation.fillStats.total &&
 			(investigation.failed.size > 0 || investigation.fillFailure !== null)
-			? fillNote(
-					investigation.fillStats.interpreted,
-					investigation.fillStats.total,
-					investigation.fillFailure,
-					investigation.fillErrorMessage,
-					investigation.rateLimitedCount
-				)
+			? fillSettleNote
 			: ''
 	);
 	// §4 translate-fallback is surfaced by the pipeline's capability notice
@@ -418,10 +424,16 @@
 	 * progress to assistive tech). Chunk granularity = re-fire when
 	 * fillStats.interpreted grows while this run's result is shown; the
 	 * text changing under aria-live="polite" IS the announcement, no
-	 * motion. The final settle says "All Y cards filled" only when the
-	 * settle left nothing raw — a settle that left raw cards stays silent
-	 * here because the banner already names the failure (announcing both
-	 * would double-report one loss). This is a dedicated div, NOT the
+	 * motion.
+	 *
+	 * #93 W1: the region also carries the SETTLE verdict — a completed
+	 * fill says "All Y cards filled"; a settle that lost cards speaks the
+	 * same deterministic sentence the visual banner renders (fillNote),
+	 * so a sighted-only degradation now reaches assistive tech too. The
+	 * sentence is gated exactly like the banner (real failure: a pinned
+	 * fill kind or amber ids) so a merely never-asked lazy remainder
+	 * announces neutral progress, never a failure it did not have
+	 * (spec §2 never-lie). This is a dedicated div, NOT the
 	 * svelte-announcer (route changes). */
 	let lastFillAnnounced = 0;
 	let finalFillAnnounced = false;
@@ -443,11 +455,26 @@
 			}
 			return;
 		}
-		if (filled === total && !finalFillAnnounced) {
-			finalFillAnnounced = true;
-			lastFillAnnounced = filled;
-			fillLive = `All ${total} cards filled`;
+		// #106 cycle model: a lazy fill settles per arm, then re-arms on
+		// scroll — a mid-run settle is not final. Only a complete fill may
+		// latch (until the fillStats reset of a new run); an early partial
+		// settle must not silence the later completion announcement.
+		if (filled === total) {
+			if (!finalFillAnnounced) {
+				finalFillAnnounced = true;
+				lastFillAnnounced = filled;
+				fillLive = `All ${total} cards filled`;
+			}
+			return;
 		}
+		if (investigation.failed.size > 0 || investigation.fillFailure !== null) {
+			fillLive = fillSettleNote;
+			return;
+		}
+		// Settled with cards left raw and no real loss: a lazy never-asked
+		// remainder speaks the neutral count it already spoke mid-fill
+		// (spec §2 — never a failure the run didn't have).
+		fillLive = `${filled} of ${total} cards filled`;
 	});
 </script>
 
@@ -456,6 +483,13 @@
 <Tooltip.Provider delayDuration={350}>
 	<!-- inert while settings is open: keyboard focus stays inside the modal. -->
 	<div class="flex h-dvh w-full gap-3 p-3" inert={shell.settingsOpen ? true : undefined}>
+		<!-- #93 W1 (WCAG 2.4.1): the shell's tab order walks the recents rail
+			first, so this bypass is the shell's first focusable and jumps
+			straight to <main id="main">. Hidden until keyboard-focused. -->
+		<a href="#main" class="skip-link">Skip to content</a>
+		<!-- #93 W1: the recents rail is a nav landmark; display:contents keeps
+			the box tree identical so the flexible rail layout is untouched. -->
+		<nav aria-label="Recent sessions" class="contents">
 		<SidebarRecents
 			collapsed={!shell.railOpen}
 			sessions={shell.sessions}
@@ -488,8 +522,15 @@
 		}}
 			onSettings={() => shell.toggleSettings()}
 		/>
+		</nav>
 
-		<div
+		<!-- #93 W1: the center column is the page's main landmark; the skip
+			link targets this id. tabindex=-1 lets fragment navigation move
+			focus here (browsers skip non-focusable targets), without adding
+			main to the Tab order. -->
+		<main
+			id="main"
+			tabindex="-1"
 			bind:clientHeight={centerHeight}
 			class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-window bg-surface shadow-card"
 		>
@@ -732,7 +773,7 @@
 					onResize={(next) => (shell.drawerHeight = next)}
 				/>
 			{/if}
-		</div>
+		</main>
 
 		{#if shell.view === 'session'}
 			<ChatColumn

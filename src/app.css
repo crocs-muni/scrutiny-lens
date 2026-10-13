@@ -76,6 +76,39 @@ select:focus-visible,
 	outline: none;
 }
 
+/* #93 W1 (WCAG 2.4.1): the shell's rail nav is tabbed through first, so a
+ * bypass link is the shell's first focusable. Fixed, so it never joins the
+ * shell's flex row; hidden until keyboard-focused, then it lands over the
+ * top-left corner in the accent token (settings modal traps its own focus,
+ * and the link sits inside the inert shell, so it can't be reached there). */
+.skip-link {
+	position: fixed;
+	top: 0.5rem;
+	left: 0.5rem;
+	z-index: 60;
+	padding: 0.375rem 0.75rem;
+	border-radius: var(--radius-control);
+	background: var(--accent);
+	color: var(--surface);
+	font-size: 12.5px;
+	font-weight: 600;
+	transform: translateY(-200%);
+	transition: transform 150ms var(--ease-link);
+}
+.skip-link:focus-visible {
+	transform: translateY(0);
+}
+
+/* #93 W1 (#39): the canvas subject card is keyboard-reachable (GraphNode
+ * role=button tabindex=0) but its SELECTED state already paints an --accent
+ * border + citation ring, so the generic :focus-visible ring sat flush to
+ * that border and focus read as selection. Lift the keyboard ring clear of
+ * the card; keyboard-only (:focus-visible), never pointer-focus. */
+.stage [role="button"]:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+}
+
 /* ── shared helpers — the subset of canon's primitive-* classes the
  * vendored components use; same vendoring contract as tokens.css ─── */
 .primitive-icon-button {

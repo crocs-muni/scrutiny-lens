@@ -79,6 +79,27 @@
 		chat.live?.raw;
 		scrollEl?.scrollTo({ top: scrollEl.scrollHeight });
 	});
+
+	/* #93 W1: announce stream milestones to assistive tech. ONE polite
+	 * region mounted with the column (never keyed away mid-turn). Facts
+	 * only, from real state — and only on turn TRANSITIONS: a per-delta
+	 * region would chatter, so it speaks when a turn starts and when it
+	 * settles (the transcript message count is the settle fact). Same
+	 * idiom as +page.svelte's fillLive (issue #108). */
+	let streamLive = $state('');
+	let wasStreaming = false;
+	$effect(() => {
+		const streaming = chat.live !== null;
+		if (streaming === wasStreaming) return;
+		wasStreaming = streaming;
+		if (streaming) {
+			streamLive = 'Answer streaming';
+		} else if (chat.error !== null) {
+			streamLive = 'Answer failed';
+		} else {
+			streamLive = `${chat.messages.length} messages`;
+		}
+	});
 </script>
 
 <aside
@@ -92,6 +113,9 @@
 	style:--chat-copy-offset="{MOTION.copyOffset}px"
 	style:--chat-easing={MOTION.easing}
 >
+	<!-- #93 W1: persistent polish live region — lives outside the inert
+	 * copy/stub frames so it survives collapse and stream updates. -->
+	<div aria-live="polite" class="sr-only">{streamLive}</div>
 	<!-- open-width content: fixed 320px, clipped by the frame (no reflow) -->
 	<div class="chat-copy flex h-full w-[320px] shrink-0 flex-col" inert={collapsed}>
 		<header class="flex h-11 shrink-0 items-center border-b border-line px-3">

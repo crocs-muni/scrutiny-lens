@@ -84,7 +84,12 @@
 
 	// spec §9: 32px collapsed handle.
 	const COLLAPSED = 32;
+	/** Open-height floor — the lower clamp shared by the pointer and keyboard
+	 * resize paths (APG window splitter, #93 W1). */
 	const MIN_OPEN = 168;
+	/** Keyboard resize granularity (#93 W1): 16px per arrow press — fine
+	 * enough to be precise, coarse enough to be usable without a pointer. */
+	const STEP = 16;
 
 	const SECTIONS: Section[] = [
 		{ key: 'summary', label: 'Summary' },
@@ -105,13 +110,18 @@
 	const active = $derived(shell.drawerSection);
 	let dragging = $state(false);
 
+	/** One clamp for both input paths — pointer drag and keyboard steps must
+	 * land on identical bounds (APG window splitter, #93 W1). */
+	function resize(next: number) {
+		onResize(Math.round(Math.min(Math.max(next, MIN_OPEN), maxHeight)));
+	}
+
 	function startDrag(event: PointerEvent) {
 		event.preventDefault();
 		const startY = event.clientY;
 		const startHeight = height;
 		dragging = true;
-		const move = (e: PointerEvent) =>
-			onResize(Math.round(Math.min(Math.max(startHeight + (startY - e.clientY), MIN_OPEN), maxHeight)));
+		const move = (e: PointerEvent) => resize(startHeight + (startY - e.clientY));
 		const up = () => {
 			dragging = false;
 			window.removeEventListener('pointermove', move);
@@ -119,6 +129,25 @@
 		};
 		window.addEventListener('pointermove', move);
 		window.addEventListener('pointerup', up);
+	}
+
+	/** APG window-splitter keys (#93 W1): ArrowUp grows the drawer,
+	 * ArrowDown shrinks it (matching the drag direction), Home/End jump to
+	 * the clamp bounds. Same clamped path as the pointer drag. */
+	function onSplitterKey(event: KeyboardEvent) {
+		const next =
+			event.key === 'ArrowUp'
+				? height + STEP
+				: event.key === 'ArrowDown'
+					? height - STEP
+					: event.key === 'Home'
+						? MIN_OPEN
+						: event.key === 'End'
+							? maxHeight
+							: null;
+		if (next === null) return;
+		event.preventDefault();
+		resize(next);
 	}
 
 	/** BIBLE's hover convention: relative clock, absolute ISO on hover. */
@@ -172,12 +201,23 @@
 	style:--drawer-copy-duration="{COLLAPSE.copyDuration}ms"
 >
 	{#if open}
-		<!-- splitter: drag between canvas and dossier -->
+		<!-- splitter: drag between canvas and dossier. Focusable window
+		 * splitter (APG window splitter pattern, #93 W1): role=separator +
+		 * aria-value* + tabindex is the prescribed shape; svelte-check flags
+		 * it as noninteractive — false positive, pattern is WAI-ARIA canon. -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<div
 			role="separator"
+			tabindex="0"
 			aria-orientation="horizontal"
 			aria-label="Resize detail drawer"
+			aria-controls="drawer-region"
+			aria-valuenow={height}
+			aria-valuemin={MIN_OPEN}
+			aria-valuemax={maxHeight}
 			onpointerdown={startDrag}
+			onkeydown={onSplitterKey}
 			class="group flex h-2.5 w-full shrink-0 cursor-row-resize touch-none items-center justify-center"
 		>
 			<span
@@ -240,7 +280,7 @@
 
 	<!-- Body stays mounted while collapsed (citation-ring persistence, header
 	 * comment); the frame clips it and the copy fades ahead of the height. -->
-	<div class="drawer-copy min-h-0 flex-1 overflow-y-auto px-3 pt-1 pb-3">
+	<div id="drawer-region" class="drawer-copy min-h-0 flex-1 overflow-y-auto px-3 pt-1 pb-3">
 		{#if hiddenByFilter}
 			<!-- ADR 0001: the subject outlives the filter, and says so. -->
 			<div
