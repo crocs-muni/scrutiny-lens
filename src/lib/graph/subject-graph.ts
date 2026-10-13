@@ -161,6 +161,27 @@ const R_STEP = 250;
 const R_DIRECT = 252;
 /** Fan step between an expanded related product's own records (rad). */
 const FAN_STEP = 0.5;
+/** Cap on a related-product fan's total angular span (rad, #87): at FAN_STEP
+ * = 0.5 a group of >5 would sweep into its neighbors' dyadic rays; the step
+ * shrinks so the span never exceeds this. */
+const MAX_SPAN = 1.2;
+
+/** Place ids symmetrically around `base` at `radius`, one `step` apart — the
+ * fan shape shared by the related-products ring and the records ring. `place`
+ * records each id's angle and point (the two sites register them differently). */
+function fanAround(
+	base: number,
+	ids: string[],
+	radius: number,
+	step: number,
+	place: (id: string, angle: number, x: number, y: number) => void,
+): void {
+	const mid = (ids.length - 1) / 2;
+	ids.forEach((id, k) => {
+		const angle = base + (k - mid) * step;
+		place(id, angle, radius * Math.cos(angle), radius * Math.sin(angle));
+	});
+}
 /** Dyadic slot grid (ruling 3's append-only, done honestly): a record's
  * slot is its ADMISSION ORDER among the subject's own records, never its
  * rank in a verb sort — a sort recomputes every existing angle when a new
@@ -368,9 +389,37 @@ export function deriveSubjectGraph(
 		// Circular mean keeps bridges on opposite sides from averaging to 0.
 		const mx = angles.reduce((s, a) => s + Math.cos(a), 0) / angles.length;
 		const my = angles.reduce((s, a) => s + Math.sin(a), 0) / angles.length;
-		const angle = Math.atan2(my, mx);
-		relatedAngle.set(relatedId, angle);
-		placed.set(relatedId, { x: r2 * Math.cos(angle), y: r2 * Math.sin(angle) });
+		relatedAngle.set(relatedId, Math.atan2(my, mx));
+	}
+
+	/* #87: products bridged only to the SAME record resolve to the identical
+	 * circular mean and would stack text-on-text at one point. Group
+	 * near-identical angles (~1.7°, float-noise tolerance) and fan each group
+	 * symmetrically along its shared ray by id-sorted index — the stable
+	 * order the dyadic grid already trusts. Offsets derive from a group-local
+	 * id order, never a global count, so a fresh derivation over the same
+	 * admitted set reproduces every position and an unrelated admission
+	 * never moves these nodes (append-only, ruling 3). */
+	const ANGLE_EPS = 0.03;
+	const order = [...relatedAngle.keys()].sort(
+		(a, b) => (relatedAngle.get(a) ?? 0) - (relatedAngle.get(b) ?? 0) || a.localeCompare(b)
+	);
+	const groups: { base: number; ids: string[] }[] = [];
+	for (const id of order) {
+		const angle = relatedAngle.get(id) ?? 0;
+		const last = groups[groups.length - 1];
+		if (last !== undefined && Math.abs(angle - last.base) <= ANGLE_EPS) last.ids.push(id);
+		else groups.push({ base: angle, ids: [id] });
+	}
+	for (const { base, ids } of groups) {
+		ids.sort((a, b) => a.localeCompare(b));
+		// #87: a group wider than the cap shrinks its step so the whole fan
+		// stays inside MAX_SPAN (never sweeping a neighbor's dyadic ray).
+		const step = ids.length > 1 ? Math.min(FAN_STEP, MAX_SPAN / (ids.length - 1)) : FAN_STEP;
+		fanAround(base, ids, r2, step, (id, angle, x, y) => {
+			relatedAngle.set(id, angle);
+			placed.set(id, { x, y });
+		});
 	}
 
 	// The records ring: an expanded related product's own records, fanned
@@ -387,10 +436,9 @@ export function deriveSubjectGraph(
 	for (const [anchor, leaves] of byAnchor) {
 		const anchorAngle = relatedAngle.get(anchor) ?? 0;
 		leaves.sort((a, b) => (admission.get(a) ?? 0) - (admission.get(b) ?? 0));
-		leaves.forEach((id, i) => {
-			const angle = anchorAngle + (i - (leaves.length - 1) / 2) * FAN_STEP;
+		fanAround(anchorAngle, leaves, r3, FAN_STEP, (id, angle, x, y) => {
 			angleOf.set(id, angle);
-			placed.set(id, { x: r3 * Math.cos(angle), y: r3 * Math.sin(angle) });
+			placed.set(id, { x, y });
 		});
 	}
 

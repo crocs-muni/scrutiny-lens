@@ -53,11 +53,36 @@ export interface ProductCard {
  * Deterministic assembly
  * ------------------------------------------------------------------ */
 
+/** Word cap for the rule-5 lead line: long enough to tell two records about
+ * one subject apart, short enough for a card face. */
+const LEAD_WORDS = 8;
+
+/** The event's own lead line — first non-empty line, whitespace-normalized,
+ * word-capped. The fallback never invents text (spec §2 rule 5). */
+function leadLine(content: string): string {
+  const line = content.split("\n").find((l) => l.trim().length > 0);
+  if (line === undefined) return "";
+  const words = line.trim().split(/\s+/);
+  const head = words.slice(0, LEAD_WORDS).join(" ");
+  return words.length > LEAD_WORDS ? `${head}…` : head;
+}
+
+/** Rule-5 fallback title (spec §2 rule 5) — deterministic and event-derived
+ * only; an AI title, when one exists, comes from the fill lanes.
+ *
+ * A product leads with its identifier: it names the product and nothing else
+ * does. A record must not — every record about one subject carries that
+ * subject's i-tag, so an i-tag-only title collapsed six distinct nodes into
+ * what read as duplication (issue #86). A record leads with its own text
+ * instead: exactly the "the event speaks for itself" rule. */
 export function deriveFallbackTitle(event: NostrEvent): string {
   const identifiers = tagValues(event, "i");
-  if (identifiers.length > 0) return identifiers[0];
-  const head = event.content.trim().split(/\s+/).slice(0, 5).join(" ");
-  return head || event.id;
+  if (tTags(event).includes("scrutiny-product") && identifiers.length > 0) {
+    return identifiers[0];
+  }
+  return (
+    clip(leadLine(event.content), CLIP_LIMIT.title) || identifiers[0] || event.id
+  );
 }
 
 export function assembleCards(
