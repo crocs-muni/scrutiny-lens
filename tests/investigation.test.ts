@@ -6,8 +6,14 @@
 // is the owner's incident. User-visible text speaks issue #108's raw/filled
 // vocabulary — never "AI" or "interpreted".
 
-import { describe, expect, it } from 'vitest';
-import { fillNote, recordFillFailure } from '../src/lib/investigation.svelte';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+	fillNote,
+	investigation,
+	recordFillFailure,
+	resetInvestigation,
+} from '../src/lib/investigation.svelte';
+import type { SearchSession } from '../src/lib/pipeline';
 import type { AIKind } from '../src/lib/ai/output';
 
 describe('fillNote — says the truth about why cards stayed raw', () => {
@@ -112,5 +118,107 @@ describe('recordFillFailure — kind and message stay paired under stickiness', 
 		expect(s.fillErrorMessage).toHaveLength(140);
 		expect(s.fillErrorMessage?.endsWith('…')).toBe(true);
 		expect(s.fillErrorMessage).not.toContain('sk-secret-123');
+	});
+});
+
+// issue #85 (spec §9 glossary): selecting another PRODUCT while on the
+// session surface re-anchors the subject graph on it; a metadata selection
+// moves only the ring + dossier. The classification is core's own
+// scrutinyEventType — the same t-tag predicate deriveSubjectGraph gates on —
+// so these events carry only the t tags the classifier reads.
+describe('selectSubject — product re-anchor (issue #85, spec §9)', () => {
+	const event = (id: string, type: 'scrutiny-product' | 'scrutiny-metadata') => ({
+		id,
+		kind: 1,
+		created_at: 1_780_000_000,
+		content: '',
+		sig: '',
+		tags: [
+			['t', 'scrutiny-fabric'],
+			['t', 'scrutiny-v0.8.1'],
+			['t', type],
+		],
+	});
+	const session = (admitted: unknown[]): SearchSession =>
+		({
+			searches: [],
+			admitted,
+			invalidSkipped: 0,
+			notices: [],
+			relays: [],
+		}) as unknown as SearchSession;
+
+	beforeEach(() => resetInvestigation());
+	afterEach(() => resetInvestigation());
+
+	it('first product selection anchors the graph', () => {
+		investigation.result = session([event('p1', 'scrutiny-product')]);
+		investigation.selectSubject('p1');
+		expect(investigation.graphSubjectId).toBe('p1');
+		expect(investigation.selectedEventId).toBe('p1');
+	});
+
+	it('a second product selection re-anchors on it', () => {
+		investigation.result = session([
+			event('p1', 'scrutiny-product'),
+			event('p2', 'scrutiny-product'),
+		]);
+		investigation.selectSubject('p1');
+		investigation.selectSubject('p2');
+		expect(investigation.graphSubjectId).toBe('p2');
+		expect(investigation.selectedEventId).toBe('p2');
+	});
+
+	it('a metadata selection never moves the anchor (ring + dossier only)', () => {
+		investigation.result = session([
+			event('p1', 'scrutiny-product'),
+			event('m1', 'scrutiny-metadata'),
+		]);
+		investigation.selectSubject('p1');
+		investigation.selectSubject('m1');
+		// The dossier follows the click; the graph stays anchored on p1.
+		expect(investigation.selectedEventId).toBe('m1');
+		expect(investigation.graphSubjectId).toBe('p1');
+	});
+
+	it('a metadata-first session still gets a subject graph (#29b ruling 4)', () => {
+		investigation.result = session([event('m1', 'scrutiny-metadata')]);
+		investigation.selectSubject('m1');
+		expect(investigation.graphSubjectId).toBe('m1');
+	});
+
+	it('an event outside the admitted set keeps the old first-subject rule (never anchors on a guess)', () => {
+		investigation.result = session([event('p1', 'scrutiny-product')]);
+		// Unknown kind: the anchor is only filled when still empty.
+		investigation.selectSubject('ghost');
+		expect(investigation.graphSubjectId).toBe('ghost');
+		investigation.selectSubject('lone-product');
+		expect(investigation.graphSubjectId).toBe('ghost');
+	});
+
+	it('expansion state clears on re-anchor and survives a same-anchor repeat', () => {
+		investigation.result = session([
+			event('p1', 'scrutiny-product'),
+			event('p2', 'scrutiny-product'),
+		]);
+		investigation.selectSubject('p1');
+		investigation.expandRelated('r1');
+		investigation.expandBridge('b1');
+		expect(investigation.expandedRelated).toEqual(['r1']);
+		expect(investigation.expandedBridges).toEqual(['b1']);
+		expect(investigation.expansionLog).toEqual(['related', 'bridge']);
+
+		// Re-clicking the SAME anchor is not a swap — the neighborhood survives.
+		investigation.selectSubject('p1');
+		expect(investigation.expandedRelated).toEqual(['r1']);
+		expect(investigation.expandedBridges).toEqual(['b1']);
+		expect(investigation.expansionLog).toEqual(['related', 'bridge']);
+
+		// A real swap drops the old anchor's neighborhood (#29b ruling 8, #97).
+		investigation.selectSubject('p2');
+		expect(investigation.graphSubjectId).toBe('p2');
+		expect(investigation.expandedRelated).toEqual([]);
+		expect(investigation.expandedBridges).toEqual([]);
+		expect(investigation.expansionLog).toEqual([]);
 	});
 });

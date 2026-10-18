@@ -8,9 +8,10 @@
 	 *    multihop ends; deriveSubjectGraph owns topology, canvas-sim owns
 	 *    motion, this file owns paint. Slots seed the world; live nodes keep
 	 *    their frozen positions across re-derives.
-	 *  - Fixed root, free selection (4): selection never moves the layout;
-	 *    the {#key} on the root (in +page) remounts the canvas when a NEW
-	 *    root anchors, so fit frames one fresh map per anchor.
+	 *  - Anchored root (4 → #85): a metadata selection never moves the
+	 *    layout, but selecting another PRODUCT re-anchors the graph (spec §9
+	 *    glossary); the {#key} on the root (in +page) remounts the canvas
+	 *    when the anchor changes, so fit frames one fresh map per anchor.
 	 *  - Drawer-only click (6) / empty-pane deselect (7): node click →
 	 *    onSelect (the same path the results cards take), empty-canvas
 	 *    click → onDeselect; Esc is the page's. The accent ring is

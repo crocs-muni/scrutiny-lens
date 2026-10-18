@@ -246,6 +246,48 @@ describe('deriveSubjectGraph — related products and expansion (ruling 8 → #9
 		// a bare mono id), so it counts here too.
 		expect(view.nodes[0]).toMatchObject({ boundMetadata: 2 });
 	});
+
+	it('fans co-angle related products apart — never stacked on one point (#87)', () => {
+		// Three products share ONE bridge record (m1, on the EAST ray): their
+		// circular mean is identical (0 rad), the #87 stacking class.
+		const root = product('root\n', 1000, [], 'root');
+		const m1 = metadata('advisory', 1100, [], 'm1');
+		const p2 = product('p2\n', 1200, [], 'p2');
+		const p3 = product('p3\n', 1300, [], 'p3');
+		const p4 = product('p4\n', 1400, [], 'p4');
+		const b1 = binding('root', 'm1', 'affected by', 1500, 'b1');
+		const b2 = binding('p2', 'm1', 'affects', 1600, 'b2');
+		const b3 = binding('p3', 'm1', 'affects', 1700, 'b3');
+		const b4 = binding('p4', 'm1', 'affects', 1800, 'b4');
+		const events = [root, m1, p2, p3, p4, b1, b2, b3, b4];
+		const opts = {
+			showDeleted: false,
+			expanded: NO_EXPAND,
+			expandedBridges: new Set(['m1']),
+			cards: []
+		};
+		const view = deriveSubjectGraph(events, 'root', opts);
+		const related = ['p2', 'p3', 'p4'].map((id) => view.nodes.find((n) => n.id === id));
+		for (const n of related) expect(n?.role).toBe('related');
+		// Every co-angle product still sits on the r2 ring, one step past the
+		// east bridge ray (ring1 = [m1] → outerRing 252; r2 = 502).
+		const r2 = 252 + 250;
+		for (const n of related) expect(Math.hypot(n!.x, n!.y)).toBeCloseTo(r2, 3);
+		// …and pairwise distinct by at least a card-width (no text-on-text).
+		for (let a = 0; a < related.length; a++) {
+			for (let b = a + 1; b < related.length; b++) {
+				const d = Math.hypot(related[a]!.x - related[b]!.x, related[a]!.y - related[b]!.y);
+				expect(d).toBeGreaterThanOrEqual(100);
+			}
+		}
+		// Prefix stability: an UNRELATED admission (an orphan metadata bound to
+		// nothing) reproduces every fan position exactly.
+		const orphan = metadata('orphan', 1900, [], 'orphan');
+		const grown = deriveSubjectGraph([...events, orphan], 'root', opts);
+		for (const n of related) {
+			expect(grown.nodes.find((g) => g.id === n!.id)).toMatchObject({ x: n!.x, y: n!.y });
+		}
+	});
 });
 
 describe('deriveSubjectGraph — retraction (ruling 10)', () => {
@@ -345,8 +387,10 @@ describe('deriveSubjectGraph — node voice', () => {
 		const root = view.nodes.find((n) => n.id === 'root');
 		expect(root).toMatchObject({ title: 'AI title', interpreted: true, snippet: 'AI description' });
 		const m1 = view.nodes.find((n) => n.id === 'm1');
-		// rule-5: first i-tag value wins the fallback title.
-		expect(m1).toMatchObject({ title: 'cve:CVE-2017-15361', interpreted: false, snippet: undefined });
+		// rule-5 (#86): a record leads with its own first line, not the i-tag
+		// it shares with its subject — that shared id was the "duplicate
+		// nodes" bug six nodes deep.
+		expect(m1).toMatchObject({ title: 'CVE-2017-15361 advisory.', interpreted: false, snippet: undefined });
 	});
 
 	it('node tiles interpret the records and hand the icon token through; the card surface still wins on products (#29c ruling C)', () => {

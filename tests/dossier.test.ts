@@ -158,10 +158,12 @@ describe('cache-first title (never a drawer-private alternate)', () => {
 		expect(d.snippet).toBeUndefined();
 	});
 
-	it('uninterpreted card in cache still yields the rule-5 title', () => {
-		const root = productRoot('first five words of the content body\n', [], 'root');
+	it('uninterpreted card in cache still yields the rule-5 lead-line title', () => {
+		const root = productRoot('first five words of the content body\nignored second line\n', [], 'root');
 		const d = deriveDossier('root', [root], [cardFor(root, { interpreted: false })])!;
-		expect(d.title).toEqual({ text: 'first five words of the', interpreted: false });
+		// rule-5 (#86): the record's own lead line (first line, 8-word cap) —
+		// an i-tag alone collapsed distinct records about one subject.
+		expect(d.title).toEqual({ text: 'first five words of the content body', interpreted: false });
 	});
 
 	it('unknown i-prefix passes through opaque (IR-4), verbatim in Summary', () => {

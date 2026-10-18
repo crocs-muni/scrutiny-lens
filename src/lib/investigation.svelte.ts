@@ -232,10 +232,12 @@ class Investigation {
    * (#29b ruling 7 — see clearSelection). */
   selectedEventId = $state<string | null>(null);
 
-  /** The subject graph's fixed subject (issue #29b ruling 4): the FIRST
-   * subject opened this investigation. Later selections move the ring and
-   * the dossier, never the layout — a re-anchoring click would destroy the
-   * ring's spatial memory. Dies with the investigation like the selection. */
+  /** The subject graph's anchor (spec §9 glossary): a PRODUCT selection
+   * re-anchors it (issue #85, superseding #29b ruling 4's first-subject-stays
+   * rule); metadata selections move only the ring and the dossier. The FIRST
+   * subject of an investigation still anchors whatever its kind (#29b ruling 4
+   * — a metadata-first session keeps a subject graph). Dies with the
+   * investigation like the selection. */
   graphSubjectId = $state<string | null>(null);
 
   /** Expansion stack (issue #29b ruling 8): related products the user
@@ -320,9 +322,7 @@ class Investigation {
     this.elapsedMs = null;
     this.selectedEventId = null;
     this.graphSubjectId = null;
-    this.expandedRelated = [];
-    this.expandedBridges = [];
-    this.expansionLog = [];
+    this._resetExpansions();
     this.contextFetched = new Set();
     this.shareHints = [];
     this.hasShareHints = false;
@@ -965,12 +965,29 @@ class Investigation {
     }
   }
 
-  /** Dossier-open from any surface (card row, graph node, citation). The
-   * FIRST subject of an investigation also anchors the graph subject (#29b
-   * ruling 4); later opens move ring + dossier only. */
+  /** Dossier-open from any surface (card row, graph node, citation). A
+   * PRODUCT subject re-anchors the graph on it (spec §9 glossary, issue #85);
+   * a metadata record moves only the ring and the dossier. The FIRST subject
+   * of an investigation anchors whatever its kind (#29b ruling 4 — a
+   * metadata-first session still gets a subject graph). */
   selectSubject(id: string): void {
     this.selectedEventId = id;
-    if (this.graphSubjectId === null) this.graphSubjectId = id;
+    const subject = this.result?.admitted.find((e) => e.id === id);
+    // Same t-tag classification deriveSubjectGraph/deriveDossier gate on (spec
+    // §9): 'product' re-anchors, 'metadata' never does. An event outside the
+    // admitted set (undefined kind) keeps the old first-subject rule — the
+    // anchor is never moved on a guess (spec §2).
+    const kind =
+      subject === undefined ? undefined : scrutinyEventType(subject as unknown as FabricEvent);
+    if (kind === "product" && this.graphSubjectId !== id) {
+      this.graphSubjectId = id;
+      // Expansions belong to the OLD anchor's neighborhood (#29b ruling 8,
+      // #97): carried across an anchor swap they would paint another
+      // subject's ring; _resetExpansions drops the trio atomically.
+      this._resetExpansions();
+    } else if (kind !== "product" && this.graphSubjectId === null) {
+      this.graphSubjectId = id;
+    }
   }
 
   /** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc clear the
@@ -1138,6 +1155,19 @@ class Investigation {
     const last = this.expansionLog.pop();
     if (last === 'bridge') this.expandedBridges.pop();
     else if (last === 'related') this.expandedRelated.pop();
+  }
+
+  /** Expansion state dies with its anchor (#29b ruling 8, #97; issue #85):
+   * the log is the compound LIFO across both lists, so the trio clears
+   * together — any subset would corrupt undoExpandRelated's pop pairing.
+   * resetRun, selectSubject's anchor swap, and the module reset all call
+   * this (the _resetNodeFill shape for the expansion concept).
+   * @internal — resetInvestigation calls this on the instance, like
+   * _resetNodeFill; it is not part of the gesture API. */
+  _resetExpansions(): void {
+    this.expandedRelated = [];
+    this.expandedBridges = [];
+    this.expansionLog = [];
   }
 
   /** @internal — the module-level reset seam (reload/close) clears the
@@ -1709,9 +1739,7 @@ export function resetInvestigation(): void {
   investigation.restoreMissId = null;
   investigation.selectedEventId = null;
   investigation.graphSubjectId = null;
-  investigation.expandedRelated = [];
-  investigation.expandedBridges = [];
-  investigation.expansionLog = [];
+  investigation._resetExpansions();
   investigation.hasShareHints = false;
   investigation.contextFetched = new Set();
   investigation.shareHints = [];

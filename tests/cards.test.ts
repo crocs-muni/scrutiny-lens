@@ -14,6 +14,7 @@ import {
   applyFacets,
   cohortLine,
   computeFacets,
+  deriveFallbackTitle,
   fillCards,
   type ProductCard,
 } from "../src/lib/pipeline/cards";
@@ -180,9 +181,61 @@ describe("assembleCards (issue #28)", () => {
     expect(cards[0].files).toBe(1);
   });
 
-  it("derives fallback title from first i-tag value, never from LLM output", () => {
+  it("derives the PRODUCT fallback title from its first i-tag value, never from LLM output", () => {
     const cards = assembleCards(graphWith(["prod-1"]), [event("prod-1")]);
     expect(cards[0].title).toBe("cve:CVE-2017-15361");
+  });
+});
+
+// ── Rule-5 fallback titles (spec §2 rule 5, issue #86) ─────────────────────
+// Six nodes about one subject all carried its i-tag; an i-tag-only title read
+// as duplication. Records now lead with their own text; products keep the id.
+
+describe("deriveFallbackTitle (issue #86)", () => {
+  const sharedId: [string, string] = ["i", "cc:EUCC-3090-2026-18"];
+  const metaTags = (): string[][] => [
+    ["t", "scrutiny-fabric"],
+    ["t", "scrutiny-metadata"],
+    sharedId,
+  ];
+
+  it("gives distinct records sharing one i-tag distinct titles from their own lead line", () => {
+    const report = event("rec-report", {
+      tags: metaTags(),
+      content: "Certification report for NesLib smartcard\nsecond line is ignored",
+    });
+    const target = event("rec-target", {
+      tags: metaTags(),
+      content: "Security target for the NesLib cryptographic library",
+    });
+    const titles = [report, target].map(deriveFallbackTitle);
+    expect(titles).toEqual([
+      "Certification report for NesLib smartcard",
+      "Security target for the NesLib cryptographic library",
+    ]);
+    expect(new Set(titles).size).toBe(2);
+  });
+
+  it("keeps the product on its identifier while the record about it leads with its text", () => {
+    const product = event("prod-1");
+    const record = event("rec-1", { tags: metaTags(), content: "advisory for the shared id" });
+    expect(deriveFallbackTitle(product)).toBe("cve:CVE-2017-15361");
+    expect(deriveFallbackTitle(record)).toBe("advisory for the shared id");
+  });
+
+  it("caps the lead line at 8 words (ellipsis) and falls back to the i-tag, then the id", () => {
+    const long = event("rec-long", {
+      tags: metaTags(),
+      content: "one two three four five six seven eight nine ten",
+    });
+    expect(deriveFallbackTitle(long)).toBe("one two three four five six seven eight…");
+    const silent = event("rec-silent", { tags: metaTags(), content: "  \n " });
+    expect(deriveFallbackTitle(silent)).toBe("cc:EUCC-3090-2026-18");
+    const bare = event("rec-bare", {
+      tags: [["t", "scrutiny-fabric"], ["t", "scrutiny-metadata"]],
+      content: "",
+    });
+    expect(deriveFallbackTitle(bare)).toBe(hex("rec-bare"));
   });
 });
 

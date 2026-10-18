@@ -4,7 +4,9 @@
  * only: the value (count, row identity, edges) never changes, and the full
  * text stays reachable (content panes or title attributes). ai/agents/
  * nodes.ts keeps its own variant deliberately (it .trims + .trimEnds —
- * input hygiene, a different job, not this one).
+ * input hygiene, a different job, not this one); cards.ts' leadLine keeps
+ * its own too (first non-empty line, 8-word cap + ellipsis — the rule-5
+ * card-face law, likewise a different job).
  */
 export function clip(s: string, max: number): string {
 	return s.length <= max ? s : s.slice(0, max - 1) + '…';
