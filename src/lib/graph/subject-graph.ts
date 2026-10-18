@@ -159,12 +159,17 @@ export interface SubjectGraphOptions {
  * 2026-09-14). All steps derive from that one constraint. */
 const R_STEP = 250;
 const R_DIRECT = 252;
-/** Fan step between an expanded related product's own records (rad). */
+/** Fan step (rad) between siblings on a fan — shared by the related-products
+ * fan (#87) and the records ring; shrinks under MAX_SPAN for wide groups. */
 const FAN_STEP = 0.5;
 /** Cap on a related-product fan's total angular span (rad, #87): at FAN_STEP
- * = 0.5 a group of >5 would sweep into its neighbors' dyadic rays; the step
- * shrinks so the span never exceeds this. */
+ * = 0.5 a group of ≥4 would sweep 1.5 rad+ into its neighbors' r2 rays; the
+ * step shrinks (≥4 members) so the span never exceeds this. */
 const MAX_SPAN = 1.2;
+/** Float-noise tolerance for "same ray" in the related ring (#87, ~1.7°):
+ * two products bridged to the same records share a bit-identical circular
+ * mean; anything within EPS is that class, not a distinct dyadic neighbor. */
+const ANGLE_EPS = 0.03;
 
 /** Place ids symmetrically around `base` at `radius`, one `step` apart — the
  * fan shape shared by the related-products ring and the records ring. `place`
@@ -399,8 +404,8 @@ export function deriveSubjectGraph(
 	 * order the dyadic grid already trusts. Offsets derive from a group-local
 	 * id order, never a global count, so a fresh derivation over the same
 	 * admitted set reproduces every position and an unrelated admission
-	 * never moves these nodes (append-only, ruling 3). */
-	const ANGLE_EPS = 0.03;
+	 * never moves these nodes (append-only, ruling 3). EPS is hoisted with
+	 * the other fan-grammar constants at module level. */
 	const order = [...relatedAngle.keys()].sort(
 		(a, b) => (relatedAngle.get(a) ?? 0) - (relatedAngle.get(b) ?? 0) || a.localeCompare(b)
 	);

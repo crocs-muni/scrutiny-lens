@@ -20,6 +20,7 @@ import type { NostrEvent as FabricEvent } from "$lib/fabric";
 import type { ProviderOverrideInput } from "$lib/ai/provider";
 import { artifactsOf } from "$lib/artifacts";
 import { getInterpretation, saveInterpretation } from "$lib/db";
+import { clip } from "$lib/text";
 import { type AIKind, type CallLLM } from "$lib/ai/output";
 import {
   generateRecords,
@@ -56,6 +57,11 @@ export interface ProductCard {
 /** Word cap for the rule-5 lead line: long enough to tell two records about
  * one subject apart, short enough for a card face. */
 const LEAD_WORDS = 8;
+
+/** Display caps for every title/snippet a card ever shows (spec §2 rules
+ * 4/5) — the deterministic fallback below and the fill lanes' clip enforce
+ * the same contract, so no surface can outrun the other. */
+const CLIP_LIMIT = { title: 120, snippet: 300 };
 
 /** The event's own lead line — first non-empty line, whitespace-normalized,
  * word-capped. The fallback never invents text (spec §2 rule 5). */
@@ -249,10 +255,6 @@ export interface FillCardsOptions {
    * interpreted===0 (spec §2 never-lie on the AI lane). */
   onFailure?: (kind: AIKind, message?: string) => void;
 }
-
-import { clip } from '$lib/text';
-
-const CLIP_LIMIT = { title: 120, snippet: 300 };
 
 /** Cache-hit pass (spec §6, (eventId, model)): one slot per input card,
  * null where the same model never interpreted this event — only those

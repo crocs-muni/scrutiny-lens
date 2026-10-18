@@ -322,9 +322,7 @@ class Investigation {
     this.elapsedMs = null;
     this.selectedEventId = null;
     this.graphSubjectId = null;
-    this.expandedRelated = [];
-    this.expandedBridges = [];
-    this.expansionLog = [];
+    this._resetExpansions();
     this.contextFetched = new Set();
     this.shareHints = [];
     this.hasShareHints = false;
@@ -985,10 +983,8 @@ class Investigation {
       this.graphSubjectId = id;
       // Expansions belong to the OLD anchor's neighborhood (#29b ruling 8,
       // #97): carried across an anchor swap they would paint another
-      // subject's ring. reset() drops all three for the same reason.
-      this.expandedRelated = [];
-      this.expandedBridges = [];
-      this.expansionLog = [];
+      // subject's ring; _resetExpansions drops the trio atomically.
+      this._resetExpansions();
     } else if (kind !== "product" && this.graphSubjectId === null) {
       this.graphSubjectId = id;
     }
@@ -1159,6 +1155,19 @@ class Investigation {
     const last = this.expansionLog.pop();
     if (last === 'bridge') this.expandedBridges.pop();
     else if (last === 'related') this.expandedRelated.pop();
+  }
+
+  /** Expansion state dies with its anchor (#29b ruling 8, #97; issue #85):
+   * the log is the compound LIFO across both lists, so the trio clears
+   * together — any subset would corrupt undoExpandRelated's pop pairing.
+   * resetRun, selectSubject's anchor swap, and the module reset all call
+   * this (the _resetNodeFill shape for the expansion concept).
+   * @internal — resetInvestigation calls this on the instance, like
+   * _resetNodeFill; it is not part of the gesture API. */
+  _resetExpansions(): void {
+    this.expandedRelated = [];
+    this.expandedBridges = [];
+    this.expansionLog = [];
   }
 
   /** @internal — the module-level reset seam (reload/close) clears the
@@ -1730,9 +1739,7 @@ export function resetInvestigation(): void {
   investigation.restoreMissId = null;
   investigation.selectedEventId = null;
   investigation.graphSubjectId = null;
-  investigation.expandedRelated = [];
-  investigation.expandedBridges = [];
-  investigation.expansionLog = [];
+  investigation._resetExpansions();
   investigation.hasShareHints = false;
   investigation.contextFetched = new Set();
   investigation.shareHints = [];

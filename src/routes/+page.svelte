@@ -243,9 +243,10 @@
 	}
 
 	/** Card click / graph node / Files-row deep-link (BIBLE 678): select,
-	 * open, land on session. The FIRST subject also anchors the graph
-	 * subject (#29b ruling 4, inside selectSubject); clicking the selected
-	 * card again re-affirms (#29a ruling 10). */
+	 * open, land on session. A PRODUCT subject re-anchors the graph on it
+	 * (#85, inside selectSubject); a metadata record moves ring + dossier
+	 * only; the FIRST subject anchors whatever its kind (#29b ruling 4).
+	 * Clicking the selected card again re-affirms (#29a ruling 10). */
 	function openDossier(id: string): void {
 		investigation.selectSubject(id);
 		shell.drawerOpen = true;
