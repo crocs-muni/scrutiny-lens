@@ -84,8 +84,9 @@
 
 	// spec §9: 32px collapsed handle.
 	const COLLAPSED = 32;
-	/** Open-height floor — the lower clamp shared by the pointer and keyboard
-	 * resize paths (APG window splitter, #93 W1). */
+	/** One clamp for both input paths — pointer drag and keyboard steps land
+	 * on identical bounds, so MIN_OPEN is the shared floor (APG window
+	 * splitter, #93 W1). */
 	const MIN_OPEN = 168;
 	/** Keyboard resize granularity (#93 W1): 16px per arrow press — fine
 	 * enough to be precise, coarse enough to be usable without a pointer. */
@@ -110,9 +111,9 @@
 	const active = $derived(shell.drawerSection);
 	let dragging = $state(false);
 
-	/** One clamp for both input paths — pointer drag and keyboard steps must
-	 * land on identical bounds (APG window splitter, #93 W1). */
-	function resize(next: number) {
+	/** Clamp + commit: the single height-write both input paths funnel
+	 * through, so pointer drag and keyboard steps can never diverge. */
+	function applyHeight(next: number) {
 		onResize(Math.round(Math.min(Math.max(next, MIN_OPEN), maxHeight)));
 	}
 
@@ -121,7 +122,7 @@
 		const startY = event.clientY;
 		const startHeight = height;
 		dragging = true;
-		const move = (e: PointerEvent) => resize(startHeight + (startY - e.clientY));
+		const move = (e: PointerEvent) => applyHeight(startHeight + (startY - e.clientY));
 		const up = () => {
 			dragging = false;
 			window.removeEventListener('pointermove', move);
@@ -133,21 +134,19 @@
 
 	/** APG window-splitter keys (#93 W1): ArrowUp grows the drawer,
 	 * ArrowDown shrinks it (matching the drag direction), Home/End jump to
-	 * the clamp bounds. Same clamped path as the pointer drag. */
+	 * the clamp bounds. */
+	const SPLITTER_KEYS: Record<string, (h: number, max: number) => number> = {
+		ArrowUp: (h) => h + STEP,
+		ArrowDown: (h) => h - STEP,
+		Home: () => MIN_OPEN,
+		End: (_, max) => max
+	};
+
 	function onSplitterKey(event: KeyboardEvent) {
-		const next =
-			event.key === 'ArrowUp'
-				? height + STEP
-				: event.key === 'ArrowDown'
-					? height - STEP
-					: event.key === 'Home'
-						? MIN_OPEN
-						: event.key === 'End'
-							? maxHeight
-							: null;
-		if (next === null) return;
+		const next = SPLITTER_KEYS[event.key]?.(height, maxHeight);
+		if (next === undefined) return;
 		event.preventDefault();
-		resize(next);
+		applyHeight(next);
 	}
 
 	/** BIBLE's hover convention: relative clock, absolute ISO on hover. */
@@ -201,10 +200,9 @@
 	style:--drawer-copy-duration="{COLLAPSE.copyDuration}ms"
 >
 	{#if open}
-		<!-- splitter: drag between canvas and dossier. Focusable window
-		 * splitter (APG window splitter pattern, #93 W1): role=separator +
-		 * aria-value* + tabindex is the prescribed shape; svelte-check flags
-		 * it as noninteractive — false positive, pattern is WAI-ARIA canon. -->
+		<!-- splitter: drag between canvas and dossier. svelte-check flags the
+		 * focusable role=separator as noninteractive — false positive, the
+		 * shape is WAI-ARIA canon. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<div
