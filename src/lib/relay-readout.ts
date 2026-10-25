@@ -28,8 +28,10 @@ export interface RelayReceipt {
 	routes?: number;
 	/** Events the relay returned, summed over its legs. */
 	received: number;
-	/** Candidates its legs produced that admission rejected, summed. */
-	rejected: number;
+	/** Candidates its legs produced that admission rejected, summed.
+	 * ABSENT under the same rule as routes: a fold that did not observe
+	 * rejections carries nothing rather than zero. */
+	rejected?: number;
 }
 
 /** The pipeline's cache slice label (pipeline/index.ts emits url

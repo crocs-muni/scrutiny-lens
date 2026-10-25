@@ -212,6 +212,13 @@ class Investigation {
    * (spec §2: the trace names the relays that were actually asked). Empty
    * means "not recorded" — a legacy restored row, never "ask everything". */
   runRelays = $state<readonly string[]>([]);
+  /** The pool CONTEXT legs may query: the run's own configured snapshot,
+   * deliberately separate from runRelays for shared opens (issue #131,
+   * delta review): a share's receipts name sender-chosen hint relays, and
+   * those are provenance to DISPLAY, never a license for this client to
+   * send its dossier fetches to a third party's chosen relay. Public, not
+   * $state — the conformance guard and tests read it; nothing renders it. */
+  contextPool: readonly string[] = [];
 
   /** Reload-restore diagnostics (issue #83): null while a live run painted
    * the surface; restore() sets the count of pinned ids the events cache no
@@ -341,6 +348,7 @@ class Investigation {
     this.rateLimitedCount = 0;
     this.elapsedMs = null;
     this.runRelays = []; // fresh run — the caller sets its own frozen pool
+    this.contextPool = [];
     this.selectedEventId = null;
     this.graphSubjectId = null;
     this._resetExpansions();
@@ -466,6 +474,7 @@ class Investigation {
     // next run only. Frozen (and copied) so no caller can mutate it later.
     const pool = Object.freeze([...settings.relays]);
     this.runRelays = pool;
+    this.contextPool = pool;
     const startedAt = performance.now();
 
     // The session row exists before the first slice so the rail shows the
@@ -703,6 +712,7 @@ class Investigation {
     hadHints: boolean,
     receipts?: RelayReceipt[],
   ): Promise<void> {
+    const startedAt = performance.now();
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
@@ -733,16 +743,20 @@ class Investigation {
     shell.view = "session";
     shell.drawerOpen = true;
 
-    // Relay snapshot (issue #131): the cold open resolves THROUGH the hinted
-    // relays, but its dossier legs (refreshSessionContext / ensureSubjectContext
-    // below) go to the configured pool — that pool is the run's leg-pool. The
-    // PINNED set must also cover every relay the receipts name: a pool of two
-    // configured relays beside a hint-relay receipt would describe two
-    // different sets as one run's truth (spec §2 — the row names what was
-    // asked, and the resolver asked the hints too).
+    // Relay snapshot (issue #131), split by purpose (delta review):
+    // - runRelays is what this run ASKED, for display and the pinned row —
+    //   the union covers the hinted relays the resolver actually queried,
+    //   because the row must name every relay the cold open really asked
+    //   (spec §2: one set per run's truth, not a configured-only subset).
+    // - contextPool is what this CLIENT may query afterwards: configured
+    //   relays only. A share's hint relays are sender-chosen provenance —
+    //   displaying them is honest, but volunteering our dossier fetches to a
+    //   third party's relay would leak queries the user never configured
+    //   (spec §6: your relays see your searches — YOURS, not the sharer's).
     const asked = new Set(settings.relays);
     for (const r of receipts ?? []) asked.add(r.url);
     this.runRelays = Object.freeze([...asked]);
+    this.contextPool = Object.freeze([...settings.relays]);
     // The resolution's receipts ride the run-scoped carrier UNCHANGED
     // (issue #131): the fold at the resolver already counted bytes, legs
     // and verdicts — re-shaping them here invented zeros for real counts.
@@ -818,7 +832,7 @@ class Investigation {
     }
     if (this.controller === controller) {
       this.running = false;
-      this.elapsedMs = 0;
+      this.elapsedMs = Math.round(performance.now() - startedAt);
     }
   }
 
@@ -894,8 +908,11 @@ class Investigation {
     // Relay snapshot (issue #131): painted from the RECORD, never from live
     // Settings — a restored session must name the relays its run actually
     // asked. A legacy row without the field restores as "not recorded"
-    // (empty), which every consumer reads as unknown, not as "ask nothing".
     this.runRelays = run.relays ? Object.freeze([...run.relays.pool]) : [];
+    // A restored run's context legs query its own recorded pool — the run's
+    // provenance is the honest source, not today's Settings (legacy rows
+    // without the field fall back via contextLegPool).
+    this.contextPool = this.runRelays;
     // ...and the recorded receipts ride the same record (issue #131): this
     // paint has no relay legs (the slice below is the local-cache
     // reconstruction), so persistRunRecord re-pins THESE instead of folding
@@ -907,7 +924,7 @@ class Investigation {
         status: r.status as RelayState,
         routes: r.routes,
         received: r.received,
-        rejected: r.rejected ?? 0,
+        rejected: r.rejected,
       })
     );
     this.searches = run.searches;
@@ -1317,16 +1334,16 @@ class Investigation {
     this.notices.push({ kind: 'traversal', message });
   }
 
-  /** The pool a context leg asks (issue #131): the run's frozen snapshot
-   * when the row recorded one, else today's configured pool. Legacy rows
-   * predate the recorded pool, and `runRelays` empty means "not recorded",
-   * never "ask nothing": createTransport would throw 'transport needs at
-   * least one relay url' straight into the §4 honesty lane, so the dossier
-   * would announce a constructor message instead of fetching context. The
+  /** The pool a context leg asks (issue #131): the run's own context
+   * snapshot, else today's configured pool. Legacy rows predate the
+   * recorded pool, and an empty pool means "not recorded", never "ask
+   * nothing": createTransport would throw 'transport needs at least one
+   * relay url' straight into the §4 honesty lane, so the dossier would
+   * announce a constructor message instead of fetching context. The
    * fallback serves restored legacy rows; a pool that is empty EVERYWHERE
    * (nothing configured) still throws, exactly as before. */
   private contextLegPool(): string[] {
-    return this.runRelays.length > 0 ? [...this.runRelays] : [...settings.relays];
+    return this.contextPool.length > 0 ? [...this.contextPool] : [...settings.relays];
   }
 
   /** Shared tail of every traversal leg: batch admission against the live
@@ -1876,6 +1893,7 @@ export function resetInvestigation(): void {
   investigation.lastQuestion = "";
   investigation.sessionId = null;
   investigation.runRelays = [];
+  investigation.contextPool = [];
   investigation.restoredEvicted = null;
   investigation.restoreMissId = null;
   investigation.selectedEventId = null;
