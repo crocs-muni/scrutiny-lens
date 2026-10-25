@@ -160,7 +160,7 @@
 		hovered = false;
 		data.onHoverChange?.(data.id, false);
 	}}
-	class="relative rounded-[12px] border bg-surface text-left transition-shadow duration-150
+	class="graph-node relative rounded-[12px] border bg-surface text-left transition-shadow duration-150
 		{tier === 'full' ? (data.kind === 'product' ? 'w-[250px] px-3 py-2.5' : 'w-[230px] px-2.5 py-2') : ''}
 		{tier === 'line' ? 'flex w-[150px] items-center gap-1.5 rounded-[9px] px-2 py-1.5' : ''}
 		{tier === 'disc' ? 'flex h-7 w-7 items-center justify-center rounded-full p-0' : ''}
@@ -282,3 +282,15 @@
 
 <!-- The bloom mark is the shared `.settle-flip` class (app.css, issue #82) —
 	the single ~200ms "graph updated" on trickle merge, one motion vocabulary. -->
+
+<style>
+	/* Keyboard ring (issue #127): the node's SELECTED state already paints an
+	 * --accent border + citation ring, so the generic :focus-visible ring sat
+	 * flush against it and focus read as selection. Lift it clear. Scoped here
+	 * rather than on `.stage [role="button"]` in app.css: an ancestor selector
+	 * silences on any rename and would leak onto future stage buttons. */
+	.graph-node:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 3px;
+	}
+</style>
