@@ -45,6 +45,10 @@ export const DB_NAME = 'scrutiny-lens';
 // reopened session rebuild from the events cache after a reload. Same no-op
 // store-set change as v4/v5/v6 — the bump is what guarantees the upgrade
 // fires on every live db at ≤ 6.
+//
+// The PersistedSessionRun.relays field (issue #131) deliberately did NOT
+// bump past 7: sessionRuns stores opaque values with no index over that
+// shape, so the addition is type-only — a new store/index WOULD need one.
 export const DB_VERSION = 7;
 const SETTINGS_KEY = 'app';
 
@@ -319,11 +323,21 @@ async function attempt<T>(op: (d: IDBPDatabase<LensDB>) => Promise<T>, fallback:
 	}
 }
 
-/** One transaction like saveInterpretation (review T-1): the settings flow
- * fires concurrent patches (endpoint save racing appearance toggle), and
- * two auto-commit transactions would lose one. */
-export async function saveSettings(patch: Partial<PersistedSettings>): Promise<void> {
-	await attempt(async (d) => {
+/** Save truth for the settings flow (spec §2 never-lie): the settings UI
+ * tells the user "the pool is saved automatically once valid", so unlike
+ * every other store this path does NOT ride attempt()'s silent degrade —
+ * 'saved' landed, 'failed' tried and errored (caller may retry once),
+ * 'unavailable' means IDB is gone for this tab (private window/blocked
+ * storage — permanent, retrying cannot help). One transaction like
+ * saveInterpretation (review T-1): the settings flow fires concurrent
+ * patches (endpoint save racing appearance toggle), and two auto-commit
+ * transactions would lose one. */
+export type SaveOutcome = 'saved' | 'failed' | 'unavailable';
+
+export async function saveSettings(patch: Partial<PersistedSettings>): Promise<SaveOutcome> {
+	const d = await db();
+	if (!d) return 'unavailable';
+	try {
 		const tx = d.transaction('settings', 'readwrite');
 		const existing = (await tx.store.get(SETTINGS_KEY))?.value ?? {};
 		await tx.store.put({
@@ -331,7 +345,11 @@ export async function saveSettings(patch: Partial<PersistedSettings>): Promise<v
 			value: normalize({ ...existing, ...patch })
 		});
 		await tx.done;
-	}, undefined);
+		return 'saved';
+	} catch (err) {
+		console.warn('[db] settings save failed —', err);
+		return 'failed';
+	}
 }
 
 /** Partial by design: fields accumulate via saveSettings patches until the
@@ -423,6 +441,18 @@ export interface PersistedSessionRun {
 	/** Wall-clock run time as the done row showed it; null while the run
 	 * was still settling when pinned (post-assembly, pre-settle row). */
 	elapsedMs: number | null;
+	/** Relays this run actually queried, canonical urls in configured order,
+	 * plus the per-relay receipts computed at settle. Optional: rows written
+	 * before this field read back undefined and callers must render "relay
+	 * set not recorded" — never today's settings (spec §2 rule 6: the trace
+	 * shows real retrieval state, not a plausible one). Type-only addition —
+	 * sessionRuns stores opaque values with no index over this shape, so
+	 * unlike a new store/index there is no upgrade path and no DB_VERSION
+	 * bump (contrast: a new store/index WOULD need one, see v4–v7 above). */
+	relays?: {
+		pool: string[];
+		perRelay: { url: string; status: string; count: number }[];
+	};
 }
 
 /** Upsert — a run pins its frontier at assembly and re-pins with elapsed

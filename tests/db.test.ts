@@ -104,6 +104,32 @@ describe('settings store (spec §6)', () => {
 	});
 });
 
+describe('saveSettings outcomes (issue #131, spec §2 never-lie)', () => {
+	it("returns 'saved' when the write lands", async () => {
+		expect(await saveSettings({ model: 'm1' })).toBe('saved');
+		expect((await loadSettings())?.model).toBe('m1');
+	});
+
+	it("returns 'unavailable' without throwing when IDB is gone for the tab", async () => {
+		_closeForTests();
+		// db() resolves undefined (no init) — the never-retry branch.
+		expect(await saveSettings({ model: 'm1' })).toBe('unavailable');
+	});
+
+	it("returns 'unavailable' when IndexedDB itself is absent (private mode)", async () => {
+		const real = globalThis.indexedDB;
+		// @ts-expect-error simulating private-mode absence
+		delete globalThis.indexedDB;
+		try {
+			_closeForTests();
+			await initPersistence();
+			expect(await saveSettings({ model: 'm1' })).toBe('unavailable');
+		} finally {
+			globalThis.indexedDB = real;
+		}
+	});
+});
+
 describe('interpretations store (key eventId+model)', () => {
 	it('keeps card and node surfaces of one event under one key', async () => {
 		await saveInterpretation('evt1', 'gpt-x', 'card', { title: 'C' });
@@ -170,6 +196,42 @@ describe('sessionRuns store (issue #83, v7)', () => {
 		await deleteSession('s1');
 		expect(await getSessionRun('s1')).toBeNull();
 		expect(await listSessions()).toEqual([]);
+	});
+
+	it("round-trips a run record's relay truth (issue #131, type-only v7 field)", async () => {
+		const withRelays: PersistedSessionRun = {
+			...run,
+			relays: {
+				pool: ['wss://a.example', 'wss://b.example'],
+				perRelay: [
+					{ url: 'wss://a.example', status: 'ok', count: 3 },
+					{ url: 'wss://b.example', status: 'refused', count: 0 }
+				]
+			}
+		};
+		await putSessionRun(withRelays);
+		expect(await getSessionRun('s1')).toEqual(withRelays);
+	});
+
+	it('reads a legacy row without the relays field back as undefined', async () => {
+		// Rows written before the field existed: raw put through idb itself
+		// (same shape putSessionRun persists) — the restore seam must see
+		// relays === undefined, never today's settings (spec §2 rule 6).
+		const legacy = await openDB(DB_NAME, DB_VERSION);
+		try {
+			await legacy.put('sessionRuns', {
+				sessionId: 'legacy',
+				searches: run.searches,
+				admittedIds: run.admittedIds,
+				settledAt: run.settledAt,
+				elapsedMs: run.elapsedMs
+			});
+		} finally {
+			legacy.close();
+		}
+		const read = await getSessionRun('legacy');
+		expect(read).not.toBeNull();
+		expect(read?.relays).toBeUndefined();
 	});
 
 	it('clear-all covers the run store', async () => {

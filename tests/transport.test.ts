@@ -177,6 +177,45 @@ describe('relay transport', () => {
 		expect(res.relays.map((r) => r.count)).toEqual([12, 7, 0, 0]);
 	});
 
+	it('freezes its pool: a later mutation of the caller array never re-targets legs', async () => {
+		const urls = ['wss://a'];
+		const pool = new FakePool({ 'wss://a': { kind: 'ok', events: [] }, 'wss://b': { kind: 'refused' } });
+		const transport = createTransport({ urls }, () => pool);
+		urls.push('wss://b'); // issue #131: a run's relay set is a snapshot
+
+		const res = await transport.fetch([{}]);
+
+		expect(res.relays.map((r) => r.url)).toEqual(['wss://a']);
+	});
+
+	it('tags every routed leg with its route: one status per (route × relay)', async () => {
+		const a = makeEvent('a1'.repeat(32));
+		const pool = new FakePool({
+			'wss://a': { kind: 'ok', events: [a] },
+			'wss://b': { kind: 'refused' }
+		});
+		const transport = createTransport({ urls: ['wss://a', 'wss://b'] }, () => pool);
+
+		const res = await transport.fetchRouted(
+			[
+				{ label: 'cve:1', urls: ['wss://a', 'wss://b'], filters: [{}] },
+				{ label: 'text:roca', urls: ['wss://a', 'wss://b'], filters: [{}] }
+			],
+			() => {}
+		);
+
+		// 2 routes × 2 relays = 4 legs, each naming its route (issue #131: a
+		// 4-relay pool fanned over 3 searches settles 12 legs — the display
+		// layer aggregates per relay, the transport never conflates them).
+		expect(res.relays).toHaveLength(4);
+		expect(res.relays.map((r) => r.route).sort()).toEqual([
+			'cve:1',
+			'cve:1',
+			'text:roca',
+			'text:roca'
+		]);
+	});
+
 	it('close() closes each underlying relay exactly once and destroys the pool', async () => {
 		const pool = new FakePool({
 			'wss://a': { kind: 'ok', events: [makeEvent('ff'.repeat(32))], count: 1 },

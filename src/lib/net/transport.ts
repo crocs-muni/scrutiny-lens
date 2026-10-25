@@ -61,19 +61,28 @@ export interface RelayStatus {
 	status: RelayState;
 	/** Fetch: number of events this relay returned. Count: this relay's COUNT. 0 on failure. */
 	count: number;
+	/** Route label of the leg this status came from (fetchRouted only) — one
+	 * status per (route × relay) leg, so the same relay legitimately appears
+	 * once per route it was asked on (issue #131/#132). Absent for the
+	 * single-route fetch()/count() fan-outs. */
+	route?: string;
 	lastError?: string;
 }
 
 export interface FetchResult {
 	/** Merged events, deduplicated by event.id (first occurrence wins, in relay order). */
 	events: NostrEvent[];
-	/** One entry per configured relay, in configured order. */
+	/** One entry per (route × relay) LEG, in completion order — NOT one per
+	 * configured relay. A 4-relay pool fanned over 3 routes settles 12 legs;
+	 * per-relay truth is the display layer's aggregation job (issue #131:
+	 * surfaced as "12 relays" for a 4-relay pool in the 2026-10-19 review). */
 	relays: RelayStatus[];
 }
 
 export interface CountResult {
 	/** Sum of COUNT responses across relays with status 'ok'. */
 	total: number;
+	/** One entry per relay asked (count() fans out over the whole pool). */
 	relays: RelayStatus[];
 }
 
@@ -192,12 +201,21 @@ class RelayTransport implements Transport {
 	private closed = false;
 
 	constructor(
-		private readonly urls: string[],
+		urls: string[],
 		poolFactory: PoolFactory
 	) {
 		if (urls.length === 0) throw new Error('transport needs at least one relay url');
+		// Frozen copy, not the caller's array (issue #131): a run's pool is a
+		// snapshot — settings.relays being replaced or pushed into later must
+		// never re-target an in-flight run's legs (spec §2: the trace names the
+		// relays that were actually asked).
+		this.urls = Object.freeze([...urls]);
 		this.pool = poolFactory();
 	}
+
+	/** The frozen pool this transport was built for — one entry per configured
+	 * relay, in configured order. */
+	private readonly urls: readonly string[];
 
 	private async ensure(url: string): Promise<RelayLike> {
 		const cached = this.relays.get(url);
@@ -256,7 +274,7 @@ class RelayTransport implements Transport {
 		filters: Filter[],
 		onSlice: (slice: FetchSlice) => void
 	): Promise<FetchResult> {
-		return this.fetchRouted([{ label: 'default', urls: this.urls, filters }], onSlice);
+		return this.fetchRouted([{ label: 'default', urls: [...this.urls], filters }], onSlice);
 	}
 
 	async fetchRouted(routes: FetchRoute[], onSlice: (slice: FetchSlice) => void): Promise<FetchResult> {
@@ -272,7 +290,7 @@ class RelayTransport implements Transport {
 							url,
 							'fetch'
 						);
-						const status: RelayStatus = { url, status: 'ok' as const, count: events.length };
+						const status: RelayStatus = { url, status: 'ok' as const, count: events.length, route: route.label };
 						// Issue #31 (spec §8): each ok event is recorded as seen on
 						// THIS relay, so the share link's nevent hints reflect where
 						// the event was actually observed. Fire-and-forget and
@@ -288,6 +306,7 @@ class RelayTransport implements Transport {
 							url,
 							status: timedOut ? ('timeout' as const) : ('refused' as const),
 							count: 0,
+							route: route.label,
 							lastError: errorMessage(error)
 						};
 						onSlice({ url, events: [], status, route: route.label });

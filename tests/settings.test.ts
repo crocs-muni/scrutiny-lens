@@ -4,7 +4,15 @@
 
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { _closeForTests, clearAllLocalData, dumpAllForTests, initPersistence, loadSettings, putSession } from '$lib/db';
+import {
+	_closeForTests,
+	clearAllLocalData,
+	dumpAllForTests,
+	initPersistence,
+	loadSettings,
+	putSession,
+	saveSettings
+} from '$lib/db';
 import { defaultSettings, nextAutoModel, settings, resetSettings } from '../src/lib/settings.svelte';
 import { RELAY_MAX, RELAY_MIN } from '../src/lib/config';
 
@@ -141,5 +149,72 @@ describe('single-model auto-select (spec §5)', () => {
 		expect(nextAutoModel(['y'], 'x', 'z')).toBeNull();
 		// Stale persisted model from a previous session.
 		expect(nextAutoModel(['y'], 'old-persisted', null)).toBeNull();
+	});
+});
+
+describe('ready() boot barrier (WP3)', () => {
+	it('two concurrent ready() calls share one memoized hydrate', async () => {
+		// resetSettings() (beforeEach) cleared the memo, so this is a cold
+		// boot. The two calls must resolve to the SAME promise — the shape
+		// single-flight takes when hydration is observably once.
+		await saveSettings({ endpoint: 'https://persisted.example/v1', appearance: 'dark' });
+		const first = settings.ready();
+		const second = settings.ready();
+		expect(second).toBe(first); // memoized: same promise, one hydrate
+		await Promise.all([first, second]);
+		expect(settings.hydrated).toBe(true);
+		expect(settings.endpoint).toBe('https://persisted.example/v1');
+		expect(settings.appearance).toBe('dark');
+	});
+
+	it('a pre-hydration edit survives the barrier (single hydrate does not clobber it)', async () => {
+		// The dirty-guard belt + ready() suspenders together: an edit racing
+		// the boot barrier keeps the user's value, clean fields still load.
+		await saveSettings({ relays: ['wss://persisted-a.example'], appearance: 'dark' });
+		resetSettings();
+		const barrier = settings.ready();
+		await settings.setRelays(['wss://mine.example']);
+		await barrier;
+		expect(settings.relays).toEqual(['wss://mine.example']);
+		expect(settings.appearance).toBe('dark');
+	});
+});
+
+describe('hydrate dirty guard (WP3)', () => {
+	it('does not overwrite relays written before hydration; still hydrates other fields', async () => {
+		await saveSettings({
+			endpoint: 'https://persisted.example/v1',
+			relays: ['wss://persisted-a.example', 'wss://persisted-b.example'],
+			appearance: 'dark'
+		});
+		resetSettings();
+		await settings.setRelays(['wss://mine-a.example', 'wss://mine-b.example']);
+		await settings.hydrate();
+		// Pre-hydration edit wins for relays…
+		expect(settings.relays).toEqual(['wss://mine-a.example', 'wss://mine-b.example']);
+		// …while clean fields still hydrate from the record.
+		expect(settings.endpoint).toBe('https://persisted.example/v1');
+		expect(settings.appearance).toBe('dark');
+	});
+});
+
+describe('save outcomes (WP3, spec §2 never-lie)', () => {
+	it("reports 'saved' and folds persistState on a successful write", async () => {
+		const outcome = await settings.setRelays(['wss://a.example', 'wss://b.example']);
+		expect(outcome).toBe('saved');
+		expect(settings.persistState).toBe('saved');
+		expect((await loadSettings())?.relays).toEqual(['wss://a.example', 'wss://b.example']);
+	});
+
+	it("returns 'unavailable' without throwing when persistence is gone (closed/uninitialised)", async () => {
+		// db closed and never re-initialised: db() resolves undefined → the
+		// save path must return 'unavailable', never reject, never retry.
+		_closeForTests();
+		const outcome = await settings.setRelays(['wss://c.example', 'wss://d.example']);
+		expect(outcome).toBe('unavailable');
+		expect(settings.persistState).toBe('unavailable');
+		// No retry happened: after re-init nothing was written for relays.
+		await initPersistence();
+		expect((await loadSettings())?.relays).toBeUndefined();
 	});
 });
