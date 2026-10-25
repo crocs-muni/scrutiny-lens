@@ -54,6 +54,27 @@ class FakePool implements PoolLike {
 	}
 }
 
+/** FakePool whose ID queries fail while its relay-list queries still answer
+ * — one relay with CONTRADICTORY leg outcomes, the exact case the share
+ * receipt fold exists for (issue #131). The refusal has to happen inside
+ * querySync, not ensureRelay: only the filter tells the two legs apart. */
+class SplitPool extends FakePool {
+	constructor(
+		scripts: Scripts,
+		private readonly refuseIdQueries: string[]
+	) {
+		super(scripts);
+	}
+
+	override querySync(urls: string[], filter: Filter): Promise<NostrEvent[]> {
+		const wantsRelayList = filter.kinds?.includes(10002) ?? false;
+		if (!wantsRelayList && this.refuseIdQueries.includes(urls[0])) {
+			return Promise.reject(new Error(`refused the id query on ${urls[0]}`));
+		}
+		return super.querySync(urls, filter);
+	}
+}
+
 /** Genuinely-signed SCRUTINY product: real key, real NIP-01 id — passes the
  * fabric admitEvent gate (fabric.test.ts selfConsistentProduct recipe). */
 function scProduct(overrides: { i?: string } = {}): NostrEvent {
@@ -303,6 +324,64 @@ describe('openSharedRecord — cold-open resolution (issue #31)', () => {
 
 		expect(res.subjectId).toBe(subject.id);
 		expect(res.failedHints).toEqual([]);
+		// Issue #131: nothing was asked of a relay, so the cold open says so
+		// — no receipts, and the source counter has no denominator to lie
+		// with (a cache hit must never read "0 of <configured pool>").
+		expect(res.openedFrom).toBe('cache');
+		expect(res.receipts).toEqual([]);
+	});
+
+	it('reports exactly the relays it asked, in first-asked order: hints, then configured (issue #131)', async () => {
+		const subject = scProduct();
+		settings.relays = ['wss://cfg-dead', 'wss://cfg-live'];
+		// No author on the pointer, so the NIP-65 leg never runs: the
+		// receipt list is leg 1 (hint) then leg 3 (configured pool).
+		const pool = new FakePool({
+			'wss://hint': undefined,
+			'wss://cfg-dead': undefined,
+			'wss://cfg-live': [subject]
+		});
+		const res = await openSharedRecord(pointer(subject.id, ['wss://hint']), () => pool);
+
+		expect(res.openedFrom).toBe('relays');
+		expect(res.receipts).toEqual([
+			{ url: 'wss://hint', status: 'refused' },
+			{ url: 'wss://cfg-dead', status: 'refused' },
+			{ url: 'wss://cfg-live', status: 'ok' }
+		]);
+		// `wss://cfg-dead` failed too but it is not a hint, so only the hint
+		// leg feeds the share footer (spec §4).
+		expect(res.failedHints).toEqual(['wss://hint']);
+	});
+
+	it('folds a relay’s legs to ONE receipt — refused the id leg, answered the relay-list leg (issue #131)', async () => {
+		const key = generateSecretKey();
+		const subject = scProductBy(key);
+		settings.relays = [];
+		const pool = new SplitPool(
+			{
+				'wss://shared': [subject, relayList(key, [['r', 'wss://write']])],
+				'wss://write': [subject]
+			},
+			['wss://shared']
+		);
+		const res = await openSharedRecord(
+			pointer(subject.id, ['wss://shared'], subject.pubkey),
+			() => pool
+		);
+
+		expect(res.subjectId).toBe(subject.id);
+		expect(res.openedFrom).toBe('relays');
+		// `wss://shared` is asked twice (hinted id leg, then the NIP-65 list
+		// leg): one relay, one verdict — ok wins, because the leg that
+		// answered proves the relay was reachable (relay-readout fold).
+		expect(res.receipts).toEqual([
+			{ url: 'wss://shared', status: 'ok' },
+			{ url: 'wss://write', status: 'ok' }
+		]);
+		// The failure ledger is NOT folded: the hint leg died, so the
+		// recipient is still told the hint failed (spec §4).
+		expect(res.failedHints).toEqual(['wss://shared']);
 	});
 
 	it('rejects a tampered record with the honest reason (spec §2 never-lie)', async () => {

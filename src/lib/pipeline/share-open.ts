@@ -39,13 +39,38 @@
  * answered ok — the caller must distinguish "reachable relays held no
  * copy" from "the relays could not be reached", and never claim the
  * relays failed when they answered.
+ *
+ * What was actually asked (issue #131, spec §2 never-lie): the cold open is
+ * one resolution with several legs, and the trace readout counts RELAYS.
+ * The result therefore carries one receipt per relay this resolution really
+ * asked (legs folded, so a relay that answered one leg and died on another
+ * is ONE relay with ONE verdict) plus where the root came from — a cache
+ * hit asked no relay at all, so nothing may be rendered as "0 of <pool>
+ * answered" for a question that was never put to them.
  */
 import type { SharePointer } from '$lib/share/deep-link';
-import { createTransport, type PoolFactory } from '$lib/net/transport';
+import {
+	createTransport,
+	type PoolFactory,
+	type RelayState,
+	type RelayStatus
+} from '$lib/net/transport';
 import { getEvent } from '$lib/db';
 import { indexEvent } from '$lib/search';
 import { admitEvent, type NostrEvent as FabricEvent } from '$lib/fabric';
+import { aggregatePerRelay } from '$lib/relay-readout';
 import { settings } from '$lib/settings.svelte';
+
+/** One relay's verdict for this resolution (issue #131): every leg that
+ * asked it folded into one status, so a relay can never appear twice with
+ * contradictory answers. */
+export interface ShareOpenReceipt {
+	url: string;
+	/** Folded leg status — ok beats refused beats timeout (the shared fold
+	 * precedence of relay-readout.ts: one answering leg proves the relay was
+	 * reachable, and that leg's bytes are in hand). */
+	status: 'ok' | 'timeout' | 'refused';
+}
 
 export interface ShareOpenResult {
 	/** The shared root event id (== pointer.id). */
@@ -53,6 +78,15 @@ export interface ShareOpenResult {
 	/** Hinted relays that failed to answer (refused/timed out), in hint
 	 * order — empty when the event opened from cache or every hint worked. */
 	failedHints: string[];
+	/** Where the root came from (issue #131): 'cache' means NO relay was
+	 * contacted (spec §6 cache-first), so the cold open has no relay story
+	 * to tell — 'relays' means the receipts below are the whole attempt. */
+	openedFrom: 'cache' | 'relays';
+	/** One receipt per relay actually asked, in first-asked order, legs
+	 * folded (issue #131, spec §2): the trace's source counter is "how many
+	 * of the relays we asked answered", not "how many relays are
+	 * configured". Empty on a cache hit. */
+	receipts: ShareOpenReceipt[];
 }
 
 /** Thrown when the shared event could not be found anywhere. `triedRelays`
@@ -98,6 +132,29 @@ function gateAdmission(event: FabricEvent): void {
 	}
 }
 
+/** One (leg × relay) status fed to the receipt fold below. */
+interface ShareOpenLeg {
+	url: string;
+	received: number;
+	rejected: number;
+	route: string;
+	status: RelayState;
+}
+
+/** Folds this resolution's per-leg statuses to ONE receipt per relay in
+ * first-asked order (issue #131, spec §2): a relay that answered one leg
+ * and died on another is ONE relay with ONE verdict. The fold precedence is
+ * relay-readout.ts's (ok > refused > timeout) so the cold open's own readout
+ * and the trace can never disagree about the same relay. */
+function foldReceipts(legs: ShareOpenLeg[]): ShareOpenReceipt[] {
+	return aggregatePerRelay(legs).map((receipt) => ({
+		url: receipt.url,
+		// aggregatePerRelay reports observed legs only — its 'unasked' arm is
+		// for pool-relative readouts and cannot surface from this input.
+		status: receipt.status as RelayState
+	}));
+}
+
 /**
  * Resolves a decoded share pointer to the shared root event. The root is
  * admission-gated and cached (awaiting the write so the caller's follow-up
@@ -118,7 +175,8 @@ export async function openSharedRecord(
 	const cached = await getEvent(pointer.id);
 	if (cached !== null) {
 		gateAdmission(cached as unknown as FabricEvent);
-		return { subjectId: pointer.id, failedHints: [] };
+		// Nothing was asked of any relay, so there is no receipt to report.
+		return { subjectId: pointer.id, failedHints: [], openedFrom: 'cache', receipts: [] };
 	}
 
 	// Hintless links fall back to the receiver's configured pool — the same
@@ -144,10 +202,47 @@ export async function openSharedRecord(
 	// attempt (what a not-found screen lists), deduped — the same relay
 	// can refuse in several legs and must not be listed twice;
 	// answeredOk = any relay answered ok anywhere (reachable, just no
-	// copy).
+	// copy); legs = every (leg × relay) status of the attempt, folded into
+	// the per-relay receipts the caller gets back (issue #131).
 	const failedHints: string[] = [];
 	const triedRelays = new Set<string>();
 	let answeredOk = false;
+	const legs: ShareOpenLeg[] = [];
+	/** Book one leg's statuses: the failure ledgers and the receipt fold
+	 * read the SAME statuses, so this surface can never call a relay failed
+	 * while the trace counts it answered. `hintLeg` scopes the failure
+	 * ledger to the shareer's own hints (spec §4). */
+	const noteLeg = (statuses: RelayStatus[], hintLeg: boolean): void => {
+		for (const s of statuses) {
+			legs.push({
+				url: s.url,
+				// The fold also tracks per-relay bytes; the share receipt keeps
+				// only the status, but count is the honest event count this leg
+				// returned. Admission rejections never reach here: a rejected
+				// root throws out of the resolution instead (gateAdmission).
+				received: s.count,
+				rejected: 0,
+				// fetchRouted always labels its leg; the fallback keeps the
+				// fold's per-relay leg count from keying on undefined.
+				route: s.route ?? 'cold-open',
+				status: s.status
+			});
+			if (s.status === 'ok') {
+				answeredOk = true;
+				continue;
+			}
+			if (hintLeg) failedHints.push(s.url);
+			triedRelays.add(s.url);
+		}
+	};
+	/** The relay-resolved result: the receipts cover the whole attempt so
+	 * far — the leg that found the root is the last one noted. */
+	const opened = (): ShareOpenResult => ({
+		subjectId: pointer.id,
+		failedHints,
+		openedFrom: 'relays',
+		receipts: foldReceipts(legs)
+	});
 	// Adopt the resolved root: the same admission gate (spec §3) runs on
 	// whatever leg found it, and the event is cached write-through (spec §6)
 	// so the caller's follow-up cache read is consistent and a revisit of
@@ -169,15 +264,9 @@ export async function openSharedRecord(
 				[{ label: 'cold-open', urls: hinted, filters: [{ ids: [pointer.id] }] }],
 				() => {}
 			);
-			for (const s of statuses) {
-				if (s.status === 'ok') answeredOk = true;
-				else {
-					failedHints.push(s.url);
-					triedRelays.add(s.url);
-				}
-			}
+			noteLeg(statuses, true);
 			if (await adopt(events as FabricEvent[])) {
-				return { subjectId: pointer.id, failedHints };
+				return opened();
 			}
 		}
 
@@ -203,10 +292,7 @@ export async function openSharedRecord(
 				],
 				() => {}
 			);
-			for (const s of statuses) {
-				if (s.status === 'ok') answeredOk = true;
-				else triedRelays.add(s.url);
-			}
+			noteLeg(statuses, false);
 			// Merge the write relays named by ANY returned 10002 list (the
 			// author may publish different lists on different relays).
 			const writeRelays = new Set<string>();
@@ -227,12 +313,9 @@ export async function openSharedRecord(
 					],
 					() => {}
 				);
-				for (const s of hostStatuses) {
-					if (s.status === 'ok') answeredOk = true;
-					else triedRelays.add(s.url);
-				}
+				noteLeg(hostStatuses, false);
 				if (await adopt(events as FabricEvent[])) {
-					return { subjectId: pointer.id, failedHints };
+					return opened();
 				}
 			}
 		}
@@ -251,12 +334,9 @@ export async function openSharedRecord(
 				],
 				() => {}
 			);
-			for (const s of statuses) {
-				if (s.status === 'ok') answeredOk = true;
-				else triedRelays.add(s.url);
-			}
+			noteLeg(statuses, false);
 			if (await adopt(events as FabricEvent[])) {
-				return { subjectId: pointer.id, failedHints };
+				return opened();
 			}
 		}
 

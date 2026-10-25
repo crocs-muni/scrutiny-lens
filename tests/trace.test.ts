@@ -4,9 +4,14 @@
 // done transitions, arithmetic over slices, amber cells only for honesty
 // events, the decouple fill that may lag phase 'done', and the error
 // settlement that never leaves a row spinning.
+//
+// Run scoping (issue #131): every counter and tick describes THIS run —
+// the frozen pool it was given, never a live Settings read — and the
+// literal layer folds to one line per relay (#132).
 
 import { describe, expect, it } from 'vitest';
 import { derivePhaseRows, doneLine, type TraceInput } from '$lib/trace';
+import { aggregatePerRelay } from '$lib/relay-readout';
 
 const base: TraceInput = {
 	phase: 'idle',
@@ -293,5 +298,104 @@ describe('doneLine', () => {
 			slices: [{ url: 'wss://a', received: 1, route: 'tag:x', rejected: 0, status: 'ok' }]
 		});
 		expect(line).toBe('Done. 0 products · 1 metadata · 1 source');
+	});
+});
+
+describe("run-scoped display (issue #131: the run's truth, not live Settings)", () => {
+	it("the sources counter renders the run's passed relayCount verbatim", () => {
+		// The pool count is whatever THIS run froze — 5 here even though only
+		// 1 relay answered; the counter is the run's own receipt.
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'fetch',
+			relayCount: 5,
+			slices: [
+				{ url: 'wss://a', received: 3, route: 'tag:x', rejected: 0, status: 'ok' },
+				{ url: 'wss://b', received: 0, route: 'text:y', rejected: 0, status: 'timeout' }
+			]
+		});
+		expect(rows[1].counter).toBe('1 of 5 answered');
+	});
+
+	it('a restored run with a recorded pool keeps the cache counter and appends the recorded-pool tick', () => {
+		// The run's record names 3 relays, the restore asked none of them
+		// again — the counter stays "restored from local cache" (issue #83)
+		// and one appended tick states the recorded pool instead of implying
+		// the cache leg was the whole relay set.
+		const restored: TraceInput = {
+			...base,
+			phase: 'done',
+			runKind: 'restore',
+			relayCount: 3,
+			slices: [{ url: 'local-cache', received: 2, route: 'cache', rejected: 0, status: 'ok' }],
+			skeletons: [{ typeTag: 'scrutiny-product' }]
+		};
+		const rows = derivePhaseRows(restored);
+		expect(rows[1].counter).toBe('restored from local cache');
+		// cache leg first (arrival order), then the appended record tick
+		expect(rows[1].ticks[0].text).toBe('cache local cache → 2 records');
+		expect(rows[1].ticks).toContainEqual({ text: 'relay set as recorded - 3 relays' });
+
+		// A legacy row without the field records nothing (relayCount 0):
+		// no counter and no invented "N relays" tick — unknown is not zero.
+		const legacy = derivePhaseRows({ ...restored, relayCount: 0 });
+		expect(legacy[1].counter).toBe('');
+		expect(legacy[1].ticks.map((t) => t.text)).toEqual(['cache local cache → 2 records']);
+	});
+
+	it('a share cold-open names the link instead of "0 of N answered"', () => {
+		// openShared adopted an already-fetched root — no query happened, so
+		// the sources row must not report a relay tally at all (spec §2 rule 6).
+		const share: TraceInput = { ...base, phase: 'done', runKind: 'share', relayCount: 4 };
+		expect(derivePhaseRows(share)[1].counter).toBe('opened from share link');
+
+		// runKind is what carries the copy: the same done state as a SEARCH
+		// run still reports the honest asking tally.
+		const search = derivePhaseRows({ ...share, runKind: 'search' });
+		expect(search[1].counter).toBe('0 of 4 answered');
+	});
+
+	it("3 routes × 4 relays of legs fold into exactly 4 relay lines (#132's root check)", () => {
+		const slices: TraceInput['slices'] = [
+			{ url: 'local-cache', received: 4, route: 'cache', rejected: 0, status: 'ok' }
+		];
+		for (const host of ['a', 'b', 'c', 'd']) {
+			for (const route of ['tag:cve:x', 'text:foo', 'text:bar']) {
+				slices.push({ url: `wss://${host}.example`, route, received: 2, rejected: 0, status: 'ok' });
+			}
+		}
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'done',
+			relayCount: 4,
+			slices,
+			relayLines: aggregatePerRelay(slices)
+		});
+		const relayTicks = rows[1].ticks.filter((t) => t.text.includes('route(s)'));
+		expect(relayTicks).toHaveLength(4);
+		expect(relayTicks[0].text).toBe('a.example - 3 route(s) - 6 records');
+		expect(relayTicks[0].warn).toBe(false);
+		// the cache leg has no receipt, so it keeps its own visible tick
+		expect(rows[1].ticks.at(-1)?.text).toBe('cache local cache → 4 records');
+		expect(rows[1].ticks).toHaveLength(5);
+	});
+
+	it('a refused relay appears once, its status verbatim', () => {
+		// Two legs against nos.lol, both refused: one folded line, one amber
+		// cell, the word "refused" carried through unsmoothed (spec §3/§4).
+		const slices: TraceInput['slices'] = [
+			{ url: 'wss://damus.io', received: 11, route: 'tag:cve:x', rejected: 0, status: 'ok' },
+			{ url: 'wss://nos.lol', received: 0, route: 'tag:cve:x', rejected: 0, status: 'refused' },
+			{ url: 'wss://nos.lol', received: 0, route: 'text:foo', rejected: 0, status: 'refused' }
+		];
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'done',
+			slices,
+			relayLines: aggregatePerRelay(slices)
+		});
+		const nos = rows[1].ticks.filter((t) => t.text.includes('nos.lol'));
+		expect(nos).toHaveLength(1);
+		expect(nos[0]).toEqual({ text: 'relay nos.lol refused', warn: true });
 	});
 });

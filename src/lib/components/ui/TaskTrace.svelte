@@ -13,9 +13,23 @@
 
 	import { slide } from 'svelte/transition';
 	import { derivePhaseRows, doneLine, type TraceInput } from '$lib/trace';
+	import { aggregatePerRelay } from '$lib/relay-readout';
 	import { investigation } from '$lib/investigation.svelte';
-	import { settings } from '$lib/settings.svelte';
 	import PhaseRow from './PhaseRow.svelte';
+
+	/* Run provenance (issue #131): the trace describes THIS run, so every
+	 * counter it prints comes from run-scoped state — the frozen pool, never
+	 * the live Settings list (editing Settings mid-run rewrote the past).
+	 * `restoredEvicted` is non-null exactly on a restored surface; a done run
+	 * with no searches is a share cold-open (openShared never asked a
+	 * question). Both reset with the run. */
+	const runKind = $derived<'search' | 'share' | 'restore'>(
+		investigation.restoredEvicted !== null
+			? 'restore'
+			: investigation.phase === 'done' && investigation.searches.length === 0
+				? 'share'
+				: 'search'
+	);
 
 	const input = $derived<TraceInput>({
 		phase: investigation.phase,
@@ -23,7 +37,11 @@
 		slices: investigation.slices,
 		skeletons: investigation.skeletons,
 		notices: investigation.notices,
-		relayCount: settings.relays.length,
+		relayCount: investigation.runRelays.length,
+		runKind,
+		/* Folded per RELAY (#131/#132): the literal layer names one source
+		 * once, however many legs asked it. */
+		relayLines: aggregatePerRelay(investigation.slices),
 		error: investigation.error,
 		descriptions:
 			investigation.filling || (investigation.result !== null && investigation.fillStats.total > 0)

@@ -49,7 +49,12 @@
 		</div>
 
 		<p class="mt-2 font-mono text-[11px] tabular-nums text-ink-3">
-			Searched {relayCount} relays · widen the relay list in Settings (Ctrl+,)
+			{/* #131: the count is the run's own recorded pool, so 0 means "not
+				recorded" (legacy restored row), never "searched nobody" — state
+				the action alone rather than invent a tally (spec §2/§4). */ ''}
+			{relayCount > 0
+				? `Searched ${relayCount} relays · widen the relay list in Settings (Ctrl+,)`
+				: 'Widen the relay list in Settings (Ctrl+,)'}
 		</p>
 	</div>
 </div>
