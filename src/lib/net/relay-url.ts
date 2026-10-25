@@ -33,6 +33,26 @@ export interface RelayUrlIssue {
 
 export type RelayUrlResult = { ok: true; url: string } | { ok: false; issue: RelayUrlIssue };
 
+/** Human copy for a rejection, carrying the TRUE reason (spec §2 never-lie:
+ * a query string or an embedded credential is not "not a ws:// url" — the
+ * user must be told what actually failed). */
+export function describeRelayIssue(issue: RelayUrlIssue): string {
+	switch (issue.reason) {
+		case 'empty':
+			return `"${issue.input}" is empty.`;
+		case 'not-a-url':
+			return `"${issue.input}" is not a URL.`;
+		case 'bad-scheme':
+			return `"${issue.input}" is not a ws:// or wss:// relay URL.`;
+		case 'credentials':
+			return `"${issue.input}" embeds credentials — relay URLs must not.`;
+		case 'query-or-fragment':
+			return `"${issue.input}" carries a query or fragment — relay URLs must not.`;
+		case 'empty-host':
+			return `"${issue.input}" has no host.`;
+	}
+}
+
 /** Canonicalizes one relay URL; never throws — failures come back as issues. */
 export function canonicalRelayUrl(input: string): RelayUrlResult {
 	const trimmed = input.trim();

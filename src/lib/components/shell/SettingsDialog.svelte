@@ -191,15 +191,17 @@
 			// mutation, so settings.relays is still the last good pool.
 			if (!unchanged) await settings.setRelays(drafts);
 			relayError = '';
-		} catch (error) {
-			relayError = error instanceof Error ? error.message : String(error);
-		} finally {
-			// Revert/rebuild AFTER the error line — the editor must never keep a
-			// pool the store rejected on screen (#131: visible list == queried
-			// list); the error stays until the next clean commit clears it.
-			// Committed truth otherwise: blanks dropped, floor padded.
+			// Committed truth: blanks dropped, floor padded.
 			relayDrafts = padRelayDrafts([...settings.relays]);
 			dirty = false;
+		} catch (error) {
+			// KEEP the draft on a rejected edit (delta/spec review): the pool is
+			// untouched either way, so the #131 invariant (queried set ==
+			// committed set) already holds — while wiping the buffer would
+			// destroy typed input AND leave the error naming a list that is no
+			// longer on screen. Draft stays dirty so the hydrate rebase never
+			// overwrites it; the next clean commit clears both.
+			relayError = error instanceof Error ? error.message : String(error);
 		}
 	}
 

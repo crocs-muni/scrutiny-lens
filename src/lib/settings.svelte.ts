@@ -13,7 +13,7 @@ import {
 	type PersistedSettings,
 	type SaveOutcome
 } from '$lib/db';
-import { canonicalRelayUrls } from '$lib/net/relay-url';
+import { canonicalRelayUrls, describeRelayIssue } from '$lib/net/relay-url';
 
 import {
 	DEFAULT_APPEARANCE,
@@ -146,8 +146,7 @@ class Settings {
 		// just typed, so entries that fail canonicalization still throw below.
 		const list = urls.map((u) => u.trim());
 		const canonical = canonicalRelayUrls(list);
-		if (canonical.issues.length > 0)
-			throw new Error(`"${canonical.issues[0].input}" is not a ws:// or wss:// URL.`);
+		if (canonical.issues.length > 0) throw new Error(describeRelayIssue(canonical.issues[0]));
 		if (canonical.urls.length < RELAY_MIN || canonical.urls.length > RELAY_MAX)
 			throw new Error(
 				`Relay pool needs ${RELAY_MIN}–${RELAY_MAX} entries, got ${canonical.urls.length}.`

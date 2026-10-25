@@ -336,11 +336,16 @@ describe("run-scoped display (issue #131: the run's truth, not live Settings)", 
 		expect(rows[1].ticks[0].text).toBe('cache local cache → 2 records');
 		expect(rows[1].ticks).toContainEqual({ text: 'relay set as recorded - 3 relays' });
 
-		// A legacy row without the field records nothing (relayCount 0):
-		// no counter and no invented "N relays" tick — unknown is not zero.
+		// A legacy row without the field records nothing (relayCount 0): no
+		// counter and no invented "N relays" tick — unknown is not zero, and
+		// the row SAYS it was not recorded rather than staying silent while
+		// its context legs query today's pool (spec §2 rule 6).
 		const legacy = derivePhaseRows({ ...restored, relayCount: 0 });
 		expect(legacy[1].counter).toBe('');
-		expect(legacy[1].ticks.map((t) => t.text)).toEqual(['cache local cache → 2 records']);
+		expect(legacy[1].ticks.map((t) => t.text)).toEqual([
+			'cache local cache → 2 records',
+			'relay set not recorded - context queries today\u2019s pool'
+		]);
 	});
 
 	it('a share cold-open names the link instead of "0 of N answered"', () => {

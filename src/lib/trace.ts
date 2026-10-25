@@ -167,9 +167,17 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 		});
 	}
 	// A restored run still knows which pool its session recorded (#131): name
-	// it instead of leaving the fold looking like the whole relay set.
-	if (restoredFromCache && relayCount > 0) {
-		addTick({ text: `relay set as recorded - ${relayCount} relays` });
+	// it instead of leaving the fold looking like the whole relay set. A row
+	// written before the field existed recorded nothing — say THAT, because
+	// its context legs query today's pool: silence would let the run claim a
+	// relay set the trace never names (spec §2 rule 6).
+	if (restoredFromCache) {
+		addTick({
+			text:
+				relayCount > 0
+					? `relay set as recorded - ${relayCount} relays`
+					: 'relay set not recorded - context queries today\u2019s pool'
+		});
 	}
 	for (const notice of notices) {
 		addTick({
