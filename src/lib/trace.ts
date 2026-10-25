@@ -170,8 +170,11 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 	// it instead of leaving the fold looking like the whole relay set. A row
 	// written before the field existed recorded nothing — say THAT, because
 	// its context legs query today's pool: silence would let the run claim a
-	// relay set the trace never names (spec §2 rule 6).
-	if (restoredFromCache) {
+	// relay set the trace never names (spec §2 rule 6). Shares never get
+	// this tick: their surface is a cache reconstruction from the link, not
+	// a run row, and openShared records receipts under runRelays anyway —
+	// saying "not recorded" about a share would be a new lie.
+	if (restoredFromCache && !shareOpened) {
 		addTick({
 			text:
 				relayCount > 0

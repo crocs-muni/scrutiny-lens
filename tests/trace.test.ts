@@ -317,7 +317,7 @@ describe("run-scoped display (issue #131: the run's truth, not live Settings)", 
 		expect(rows[1].counter).toBe('1 of 5 answered');
 	});
 
-	it('a restored run with a recorded pool keeps the cache counter and appends the recorded-pool tick', () => {
+	it('a restored run names its recorded pool; a legacy row names the not-recorded one', () => {
 		// The run's record names 3 relays, the restore asked none of them
 		// again — the counter stays "restored from local cache" (issue #83,
 		// derived from the all-cache slices alone: runKind has no 'restore'
@@ -346,6 +346,26 @@ describe("run-scoped display (issue #131: the run's truth, not live Settings)", 
 			'cache local cache → 2 records',
 			'relay set not recorded - context queries today\u2019s pool'
 		]);
+	});
+
+	it('a share never gets the not-recorded tick - its receipts are not a run row', () => {
+		// Guard for the tick above: a cache-hit share open matches the
+		// restored shape exactly (all-cache slices, done) but is NOT a
+		// pre-field run row — saying "not recorded" about it would claim the
+		// share lost data it never had (spec §2).
+		const share: TraceInput = {
+			...base,
+			phase: 'done',
+			runKind: 'share',
+			relayCount: 0,
+			slices: [{ url: 'local-cache', received: 2, route: 'cache', rejected: 0, status: 'ok' }]
+		};
+		const rows = derivePhaseRows(share);
+		expect(rows[1].counter).toBe('opened from share link');
+		expect(
+			rows[1].ticks.some((t) => t.text.includes('not recorded')),
+			'shares carry receipts under runRelays, never the row tick'
+		).toBe(false);
 	});
 
 	it('a share cold-open names the link instead of "0 of N answered"', () => {
