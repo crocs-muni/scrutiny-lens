@@ -35,6 +35,20 @@
 	// ── AI provider ──────────────────────────────────────────────────────────
 
 	let endpointDraft = $state(settings.endpoint);
+	/** True while the endpoint field carries typed-but-uncommitted text:
+		* the rebase $effect below must hold the draft then, not follow the
+		* committed endpoint. */
+	let endpointDirty = $state(false);
+	// Pristine endpoint drafts follow the committed endpoint — the same guard
+	// the relay drafts carry. The dialog can mount before settings.ready()
+	// resolves and would show DEFAULT_ENDPOINT while the hydrated one lands
+	// underneath; an innocent blur would then persist the default over the
+	// user's real endpoint (exactly the class the relay drafts were fixed
+	// for). Dirty drafts are the fresher truth and stay put.
+	$effect(() => {
+		if (endpointDirty) return;
+		endpointDraft = settings.endpoint;
+	});
 	// Focus management for the hand-rolled modal: land in the first field on
 	// open (the background is inert, +page.svelte),
 	// put focus back where it came from on unmount.
@@ -50,7 +64,13 @@
 
 	function commitEndpoint(): void {
 		const endpoint = endpointDraft.trim();
-		if (endpoint !== '' && endpoint !== settings.endpoint) void settings.setEndpoint(endpoint);
+		// Blank is "not entered yet", never a payload (same rule as the relay
+		// rows) — the draft stays as typed rather than being committed.
+		if (endpoint === '') return;
+		// Pristine again: setEndpoint writes settings.endpoint synchronously,
+		// so the rebase effect settles the draft on the committed value.
+		endpointDirty = false;
+		if (endpoint !== settings.endpoint) void settings.setEndpoint(endpoint);
 	}
 
 	/** Live model list (spec §5): refetches (debounced) whenever the endpoint
@@ -134,6 +154,9 @@
 
 	let relayDrafts = $state<string[]>(padRelayDrafts([...settings.relays]));
 	let relayError = $state('');
+	/** Save truth (issue #131, spec §2 never-lie): what the last save actually
+	 * did, rendered once under the pool editor. */
+	const note = $derived(persistNote(settings.persistState));
 	/** True while a relay row carries typed-but-uncommitted text (#131): the
 		* rebase $effect below must hold drafts then, not follow the pool. */
 	let dirty = $state(false);
@@ -157,25 +180,24 @@
 		// "not entered yet", never a payload — committing them as entries would
 		// throw a spurious validation error on an innocent blur.
 		const drafts = relayDrafts.map((u) => u.trim()).filter((u) => u !== '');
-		if (drafts.length === settings.relays.length && drafts.every((u, i) => u === settings.relays[i])) {
-			relayDrafts = padRelayDrafts([...settings.relays]);
-			relayError = '';
-			dirty = false;
-			return;
-		}
+		// Identical list (blur with no edit, or a revert already applied):
+		// there is nothing to save; the finally below still rebuilds the
+		// padded view of the committed pool.
+		const unchanged =
+			drafts.length === settings.relays.length && drafts.every((u, i) => u === settings.relays[i]);
 		try {
 			// Save failures don't throw (SaveOutcome → persistState, rendered by
 			// the footer) — only validation reaches this catch, before any
 			// mutation, so settings.relays is still the last good pool.
-			await settings.setRelays(drafts);
-			relayDrafts = padRelayDrafts([...settings.relays]); // committed truth, blanks dropped
+			if (!unchanged) await settings.setRelays(drafts);
 			relayError = '';
-			dirty = false;
 		} catch (error) {
 			relayError = error instanceof Error ? error.message : String(error);
-			// Revert AFTER the error line — the editor must never keep a pool the
-			// store rejected on screen (#131: visible list == queried list); the
-			// error stays until the next clean commit clears it.
+		} finally {
+			// Revert/rebuild AFTER the error line — the editor must never keep a
+			// pool the store rejected on screen (#131: visible list == queried
+			// list); the error stays until the next clean commit clears it.
+			// Committed truth otherwise: blanks dropped, floor padded.
 			relayDrafts = padRelayDrafts([...settings.relays]);
 			dirty = false;
 		}
@@ -244,6 +266,7 @@
 				id="settings-endpoint"
 				bind:this={endpointEl}
 				bind:value={endpointDraft}
+				oninput={() => (endpointDirty = true)}
 				onblur={commitEndpoint}
 				onkeydown={(event) => event.key === 'Enter' && commitEndpoint()}
 				spellcheck="false"
@@ -409,8 +432,8 @@
 			<p class="mt-1 text-[11.5px] text-ink-3">{RELAY_MIN}–{RELAY_MAX} relays.</p>
 			<!-- Save truth (issue #131, spec §2 never-lie): renders what the
 				last save actually did, replacing the stale auto-save claim. -->
-			{#if persistNote(settings.persistState)}
-				<p class="mt-0.5 font-mono text-[11.5px] text-ink-3">{persistNote(settings.persistState)}</p>
+			{#if note}
+				<p class="mt-0.5 font-mono text-[11.5px] text-ink-3">{note}</p>
 			{/if}
 		</section>
 

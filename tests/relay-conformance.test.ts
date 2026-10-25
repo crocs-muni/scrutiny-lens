@@ -4,13 +4,21 @@
 // against: a display or fetch leg reading live settings while the run owns
 // a frozen pool — the "trace says 4 relays, network asked something else"
 // desync from the 2026-10-19 review.
+//
+// Portability (review finding 10/22, P0): every path assertion compares
+// POSIX-normalized relative paths. The sanctioned list is written
+// 'net/profiles.ts', while win32's readdir hands back 'net\\profiles.ts' —
+// an endsWith() against the raw path silently disabled this whole scan on
+// Windows, the platform the reviewers ran.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const SRC = join(process.cwd(), 'src', 'lib');
 
+/** Path under src/lib, POSIX-separated — the only form any assertion uses. */
+const rel = (file: string): string => relative(SRC, file).split(sep).join('/');
 
 /** Every file under src/lib/net and src/lib/pipeline, plus investigation. */
 function walk(dir: string): string[] {
@@ -29,6 +37,18 @@ const ioFiles = [
 	join(SRC, 'investigation.svelte.ts')
 ];
 
+describe('conformance harness portability', () => {
+	it('compares paths in POSIX form on every platform', () => {
+		// The self-check the first version lacked: on win32 `relative()` returns
+		// 'net\\profiles.ts', which no POSIX sanctioned entry can match — the
+		// scan below would then complain about nothing being sanctioned and the
+		// offenders filter would never fire.
+		expect(rel(join(SRC, 'net', 'profiles.ts'))).toBe('net/profiles.ts');
+		expect(rel(join(SRC, 'pipeline', 'share-open.ts'))).toBe('pipeline/share-open.ts');
+		expect(walk(join(SRC, 'net')).every((file) => !rel(file).includes('\\'))).toBe(true);
+	});
+});
+
 describe('relay truth conformance (issue #131)', () => {
 	it('no I/O layer reads the settings singleton for relays', () => {
 		// The I/O layers (net/, pipeline/) may not import the settings
@@ -37,26 +57,47 @@ describe('relay truth conformance (issue #131)', () => {
 		// at call time) and share-open.ts's configured-pool leg (the cold open
 		// IS a live-at-entry snapshot by design, spec §8). A new import
 		// elsewhere is exactly how the live-read desync crept back in.
-		const sanctioned = ['net\\profiles.ts', 'pipeline\\share-open.ts'];
+		const sanctioned = ['net/profiles.ts', 'pipeline/share-open.ts'];
 		const offenders = ioFiles.filter(
 			(file) =>
-				!file.endsWith('investigation.svelte.ts') &&
-				!sanctioned.some((s) => file.endsWith(s)) &&
+				rel(file) !== 'investigation.svelte.ts' &&
+				!sanctioned.includes(rel(file)) &&
 				/settings(\.svelte)?['"]/.test(readFileSync(file, 'utf8'))
 		);
 		expect(
-			offenders.map((f) => f.replace(SRC, '')),
+			offenders.map(rel),
 			'pass the relay pool as a parameter instead of reading settings'
 		).toEqual([]);
 	});
 
-	it('investigation reads settings.relays exactly at the two snapshot sites', () => {
+	it('every transport in investigation carries a run snapshot, never live settings', () => {
+		// Structural guard (replaces the old `settings.relays` occurrence
+		// count, which only ever failed on a literal edit and said nothing
+		// about WHERE a pool came from): each createTransport call site must
+		// feed the transport a COPY of one of the run's snapshots — start()'s
+		// frozen local `pool` (Object.freeze([...settings.relays]) taken
+		// before the first leg), admitContext()'s context leg pool, or
+		// `this.runRelays` — and never a live settings read, which is the
+		// desync verbatim.
+		const runsSnapshot = new RegExp(
+			['this.runRelays', 'pool', 'legPool', 'this.contextLegPool()']
+				.map((local) => `\\[\\.\\.\\.(?:${local.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\]`)
+				.join('|')
+		);
 		const source = readFileSync(join(SRC, 'investigation.svelte.ts'), 'utf8');
-		const occurrences = source.match(/settings\.relays/g) ?? [];
-		// start()'s frozen capture + openShared()'s live-at-entry capture.
-		// restore() reads the run record, never settings. This count going UP
-		// means a leg re-read live state — the original bug.
-		expect(occurrences.length, 'each new settings.relays read in investigation is a desync bug').toBe(2);
+		const calls = [...source.matchAll(/createTransport\(\s*\{\s*urls:/g)];
+		expect(calls.length, 'the guard must actually find the call sites').toBeGreaterThan(0);
+		for (const call of calls) {
+			const at = call.index ?? 0;
+			const window = source.slice(at, at + 120);
+			const line = window.split(/\r?\n/)[0];
+			expect(line, `a transport fed from live settings is the #131 desync: ${line}`).not.toContain(
+				'settings'
+			);
+			expect(window, `the transport must carry a frozen run snapshot: ${line}`).toMatch(
+				runsSnapshot
+			);
+		}
 	});
 
 	it('TaskTrace renders the run, not settings', () => {
@@ -78,5 +119,18 @@ describe('relay truth conformance (issue #131)', () => {
 	it('the settings dialog claims nothing about automatic saving', () => {
 		const source = readFileSync(join(SRC, 'components/shell/SettingsDialog.svelte'), 'utf8');
 		expect(source).not.toMatch(/saved automatically/i);
+	});
+
+	it('the endpoint draft holds the same pristine-rebase guard as the relay drafts', () => {
+		const source = readFileSync(join(SRC, 'components/shell/SettingsDialog.svelte'), 'utf8');
+		// The dialog mounts before settings.ready() can resolve and would show
+		// DEFAULT_ENDPOINT; an innocent blur would then persist that default
+		// over the user's real endpoint unless the draft rebases only while
+		// pristine.
+		expect(source).toContain('let endpointDirty = $state(false)');
+		expect(source).toContain('oninput={() => (endpointDirty = true)}');
+		expect(source, 'the endpoint rebase must hold a dirty draft').toMatch(
+			/if \(endpointDirty\) return;[\s\S]{0,80}endpointDraft = settings\.endpoint;/
+		);
 	});
 });

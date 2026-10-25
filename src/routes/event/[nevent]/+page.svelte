@@ -78,7 +78,12 @@
 				};
 				return;
 			}
-			await investigation.openShared(cached, resolved.failedHints, pointer.relays.length > 0);
+			await investigation.openShared(
+				cached,
+				resolved.failedHints,
+				pointer.relays.length > 0,
+				resolved.receipts
+			);
 			// The shell lives on the root route; hand over there. replaceState
 			// keeps the share URL out of the back/forward loop — back from the
 			// opened record must not re-run the cold open.

@@ -2,10 +2,12 @@
 // never-lie). The dialog itself is browser-bound (focus/blur, backdrop
 // drag, IndexedDB) and stays untested here — commitRelays, the rebase
 // $effect, and closeDialog's blur-before-unmount are the browser leftovers;
-// this file covers the one piece that is a pure function.
+// this file covers the one piece that is a pure function. The draft-rebase
+// guards (relay pool + endpoint) are asserted structurally in
+// relay-conformance.test.ts, next to the other dialog/consumer checks.
 
 import { describe, expect, it } from 'vitest';
-	import { persistNote, type PersistNoteState } from '../src/lib/components/shell/persist-note';
+import { persistNote, type PersistNoteState } from '../src/lib/components/shell/persist-note';
 
 describe('persistNote', () => {
 	it.each<[PersistNoteState, string]>([

@@ -39,8 +39,11 @@ export interface TraceInput {
 	relayCount: number;
 	/** Which run produced this state (issue #131): a share cold-open never
 	 * queried its pool, so the sources row must not report "0 of N answered"
-	 * over a query that never happened. Absent = 'search'. */
-	runKind?: 'search' | 'share' | 'restore';
+	 * over a query that never happened. Absent = 'search'. A restored
+	 * session needs no arm here: its counter is derived from the slices
+	 * themselves (every leg is the cache reconstruction, issue #83), so a
+	 * 'restore' value would be written and never read. */
+	runKind?: 'search' | 'share';
 	/** Folded per-RELAY receipts (issues #131/#132), already aggregated by
 	 * $lib/relay-readout. Present = render one tick per relay; absent =
 	 * render the raw per-leg slices (fold nothing, invent nothing). */
@@ -59,12 +62,17 @@ const LABELS: Record<PhaseRow['id'], string> = {
 	decouple: 'Decoupling and filling the cards'
 };
 
-/** Relay label for a tick: bare host, 'local cache' for the cache leg, and
- * the raw url when it does not parse (never invent a host — spec §2). */
-export function hostOf(url: string): string {
+/** What the literal layer calls a relay: host + path, 'local cache' for the
+ * cache leg, and the raw url when it does not parse (never invent a host —
+ * spec §2). The path is part of the label because tick identity is the text
+ * (review finding 13): PhaseRow keys every tick by text, so host alone is not
+ * identity — two distinct relays on one host with matching counts would
+ * collapse into a single line and the run would under-report its sources. */
+function relayLabel(url: string): string {
 	if (url === 'local-cache') return 'local cache';
 	try {
-		return new URL(url).host;
+		const { host, pathname } = new URL(url);
+		return pathname === '/' ? host : `${host}${pathname}`;
 	} catch {
 		return url;
 	}
@@ -130,8 +138,8 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 			addTick({
 				text:
 					line.status === 'ok'
-						? `${hostOf(line.url)} - ${line.routes} route(s) - ${line.received} records`
-						: `relay ${hostOf(line.url)} ${line.status}`,
+						? `${relayLabel(line.url)} - ${line.routes} ${line.routes === 1 ? 'route' : 'routes'} - ${line.received} records`
+						: `relay ${relayLabel(line.url)} ${line.status}`,
 				warn: line.status !== 'ok'
 			});
 		}
@@ -146,8 +154,8 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 		addTick({
 			text:
 				s.status === 'ok'
-					? `${s.route} ${hostOf(s.url)} → ${s.received} records`
-					: `relay ${hostOf(s.url)} ${s.status} · no events received`,
+					? `${s.route} ${relayLabel(s.url)} → ${s.received} records`
+					: `relay ${relayLabel(s.url)} ${s.status} · no events received`,
 			// Fullscan legs are the honesty cells (spec §3: the relay couldn't
 			// search, so we scanned) — amber, never silent.
 			warn: s.status !== 'ok' || s.route.endsWith(':fullscan')

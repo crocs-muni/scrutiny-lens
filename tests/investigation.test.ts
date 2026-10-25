@@ -19,8 +19,10 @@ import {
 	clearAllLocalData,
 	getSessionRun,
 	initPersistence,
+	putSessionRun,
 	saveSettings,
 } from '$lib/db';
+import { indexEvent } from '$lib/search';
 import {
 	createTransport,
 	type CountResult,
@@ -451,5 +453,102 @@ describe('runRelays — the run owns its relay pool (issue #131)', () => {
 
 		expect(asked[0]).toEqual(['wss://persisted.test']); // not the defaults
 		expect(investigation.runRelays).toEqual(['wss://persisted.test']);
+	});
+
+	it('a legacy row (no recorded pool) fetches dossier context from today’s pool instead of throwing', async () => {
+		const root = cve();
+		await indexEvent(root);
+		const legacy = 'legacy-session';
+		shell.sessions = [{ id: legacy, title: 'Legacy', createdAt: 1 }];
+		await putSessionRun({
+			sessionId: legacy,
+			searches: [],
+			admittedIds: [root.id],
+			settledAt: 1,
+			elapsedMs: 0,
+		});
+		const transport = new ProbeTransport([]);
+		const asked = recordPools(transport);
+
+		expect(await investigation.restore(legacy)).toBe(true);
+		// "Not recorded", never "ask nothing": the snapshot stays empty…
+		expect(investigation.runRelays).toEqual([]);
+		await investigation.refreshSessionContext();
+
+		// …but the leg falls back to live settings, so no createTransport
+		// throw ('transport needs at least one relay url') lands as a §4
+		// traversal notice instead of a fetched dossier context.
+		expect(asked[0]).toEqual(POOL);
+		expect(investigation.notices).toEqual([]);
+	});
+
+	it('re-pins a restored run’s recorded receipts when ANOTHER restore displaces it', async () => {
+		const a = cve();
+		const b = cve();
+		await indexEvent(a);
+		await indexEvent(b);
+		shell.sessions = [
+			{ id: 'run-a', title: 'A', createdAt: 2 },
+			{ id: 'run-b', title: 'B', createdAt: 1 },
+		];
+		const receipts = [
+			{ url: 'wss://a.test', status: 'ok', count: 12 },
+			{ url: 'wss://b.test', status: 'refused', count: 0 },
+		];
+		await putSessionRun({
+			sessionId: 'run-a',
+			searches: [],
+			admittedIds: [a.id],
+			settledAt: 1,
+			elapsedMs: 10,
+			relays: { pool: POOL, perRelay: receipts },
+		});
+		await putSessionRun({
+			sessionId: 'run-b',
+			searches: [],
+			admittedIds: [b.id],
+			settledAt: 2,
+			elapsedMs: 20,
+			relays: { pool: ['wss://b.test'], perRelay: [{ url: 'wss://b.test', status: 'ok', count: 1 }] },
+		});
+		recordPools(new ProbeTransport([]));
+
+		expect(await investigation.restore('run-a')).toBe(true);
+		// Displacement re-pins run-a from a cache-only slice list: the fold is
+		// empty, so the receipts must come from its own record, not vanish.
+		expect(await investigation.restore('run-b')).toBe(true);
+
+		await vi.waitFor(async () => {
+			const row = await getSessionRun('run-a');
+			expect(row?.relays?.pool).toEqual(POOL);
+			expect(row?.relays?.perRelay).toEqual(receipts);
+		});
+		// The displacing run pins its OWN receipts, never run-a's.
+		const rowB = await getSessionRun('run-b');
+		expect(rowB?.relays?.perRelay).toEqual([{ url: 'wss://b.test', status: 'ok', count: 1 }]);
+	});
+
+	it('a cold open pins the resolver’s receipts into the run row (finding 8)', async () => {
+		recordPools(new ProbeTransport([]));
+		const root = cve();
+
+		await investigation.openShared(root, [], false, [{ url: 'wss://hint.test', status: 'ok' }]);
+
+		// The cold open slices no relay leg, so its receipts live in the
+		// run-scoped carrier — the trace/readout's source for a shared run.
+		expect(investigation.recordedRelayReceipts).toEqual([
+			{ url: 'wss://hint.test', status: 'ok', routes: 1, received: 0, rejected: 0 },
+		]);
+		const id = investigation.sessionId ?? '';
+		expect(id).not.toBe('');
+		await vi.waitFor(async () => {
+			const row = await getSessionRun(id);
+			// The dossier legs asked the configured pool; the row's receipts
+			// are the resolver's, not an empty fold claiming nobody was asked.
+			expect(row?.relays?.pool).toEqual(POOL);
+			expect(row?.relays?.perRelay).toEqual([
+				{ url: 'wss://hint.test', status: 'ok', count: 0 },
+			]);
+		});
 	});
 });

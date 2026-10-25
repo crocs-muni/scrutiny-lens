@@ -180,6 +180,13 @@ export async function openSharedRecord(
 		return { subjectId: pointer.id, failedHints: [], openedFrom: 'cache', receipts: [] };
 	}
 
+	// Boot barrier (issue #131): the configured pool is read ONCE below and
+	// becomes the pool this resolution asks and blames, so a cold open on a
+	// fresh load must wait for the persisted Settings instead of querying
+	// (and reporting on) the spec defaults while hydration is still in
+	// flight. Single-flight and memoized: free after boot.
+	await settings.ready();
+
 	// Canonicalize BOTH input sets at this boundary (issue #131): a slashed
 	// nevent hint must not double as a second copy of a configured relay —
 	// the transport, receipts and every string-keyed ledger all share one
@@ -306,9 +313,15 @@ export async function openSharedRecord(
 					}
 				}
 			}
-			// Skip relays already asked this resolution and cap at 3, same
-			// budget the original hint set had (deep-link.ts cap).
-			const fresh = [...writeRelays].filter((u) => !alreadyQueried.has(u)).slice(0, 3);
+			// Canonicalize BEFORE the skip check and cap at 3, same budget the
+			// original hint set had (deep-link.ts cap): r-tag values are raw
+			// third-party strings, so the slashed spelling of an already-asked
+			// relay would slip past `alreadyQueried` and become a second query
+			// — and a second receipt — for one endpoint (issue #131: one relay,
+			// one string, one question). Invalid entries drop here, never throw.
+			const fresh = canonicalRelayUrls([...writeRelays])
+				.urls.filter((u) => !alreadyQueried.has(u))
+				.slice(0, 3);
 			if (fresh.length > 0) {
 				const { events, relays: hostStatuses } = await transport.fetchRouted(
 					[

@@ -18,7 +18,7 @@ import { defaultCallLLM, type AIKind, type CallLLM } from "$lib/ai/output";
 import { streamLLM, surfaced429Count } from "$lib/ai/gateway";
 import type { StreamLLM } from "$lib/ai/records";
 import type { ProviderOverrideInput } from "$lib/ai/provider";
-import { createTransport, type Transport } from "$lib/net/transport";
+import { createTransport, type Transport, type RelayState } from "$lib/net/transport";
 import {
   runSearch,
   skeletonOf,
@@ -65,7 +65,7 @@ import {
 } from "$lib/pipeline/cards";
 import { settings } from "$lib/settings.svelte";
 import { shell } from "$lib/shell.svelte";
-import { aggregatePerRelay } from "$lib/relay-readout";
+import { aggregatePerRelay, type RelayReceipt } from "$lib/relay-readout";
 import { lensDebug } from "$lib/dev-log";
 
 /** Interval sleep that resolves early on abort — the lane-stagger's pause
@@ -235,6 +235,17 @@ class Investigation {
    * must not be blamed for "failed hints" it never had (spec §4 never-lie). */
   hasShareHints = $state(false);
 
+  /** Per-relay receipts for the runs that painted NO relay leg of their own
+   * (issue #131): a restored session rebuilds from the local-cache
+   * reconstruction only, and a cold open adopts a root the resolver already
+   * fetched (share-open.ts slices nothing). The trace's literal layer folds
+   * SLICES, so both entry points carry their receipts here instead — set by
+   * restore() from the row's recorded perRelay and by openShared() from the
+   * resolver's report. Reactive because the shared/restored run's readout
+   * renders it; also the source persistRunRecord re-pins, so switching away
+   * from such a run cannot erase the receipts its row already holds. */
+  recordedRelayReceipts = $state<RelayReceipt[]>([]);
+
   /** The selected dossier subject (issue #29a, ADR 0001): store-level —
    * facet filters and view hops never clear it; it dies exactly where the
    * investigation itself dies (start/stop/reset). Deselect is canvas-only
@@ -336,6 +347,9 @@ class Investigation {
     this.contextFetched = new Set();
     this.shareHints = [];
     this.hasShareHints = false;
+    // Fresh run — no pinned receipts to carry; the entry points that have
+    // none to fold (restore/openShared) set their own right after.
+    this.recordedRelayReceipts = [];
     this.nodeTiles = new Map();
     this.nodeQueue = [];
     this.nodeQueued = new Set();
@@ -387,11 +401,24 @@ class Investigation {
     if (settled === null) return;
     // Relay receipts (issues #131/#132): the row names the pool this run
     // actually asked plus one folded verdict per relay, so a restored
-    // session can show its relays instead of a fabricated empty list. Skipped
-    // entirely when the pool was never recorded (restored legacy row, or a
-    // cold open before the snapshot) — an absent field says "not recorded",
-    // an empty one would claim "asked nobody".
+    // session can show its relays instead of a fabricated empty list.
+    // Skipped entirely when the pool was never recorded (restored legacy
+    // row) — an absent field says "not recorded", an empty one would claim
+    // "asked nobody".
     const runRelays = this.runRelays;
+    // The fold reads the run's own legs; a restored run and a cold open
+    // paint NO relay leg at all (their slices are the local-cache
+    // reconstruction, or empty), so an empty fold substitutes the run-scoped
+    // carrier — those receipts are what the original resolution recorded.
+    // Without that, restore()'s displacement pin would wipe the perRelay a
+    // restored row already carries every time another session is restored.
+    const fold = aggregatePerRelay(this.slices);
+    const source = fold.length > 0 ? fold : this.recordedRelayReceipts;
+    const perRelay = source.map((r) => ({
+      url: r.url,
+      status: r.status,
+      count: r.received,
+    }));
     void putSessionRun({
       sessionId: this.sessionId,
       searches: settled.searches,
@@ -403,11 +430,7 @@ class Investigation {
         : {
             relays: {
               pool: [...runRelays],
-              perRelay: aggregatePerRelay(this.slices).map((r) => ({
-                url: r.url,
-                status: r.status,
-                count: r.received,
-              })),
+              perRelay,
             },
           }),
     });
@@ -667,14 +690,32 @@ class Investigation {
    * records whether the link carried relay hints at all — the notice
    * renders ONLY when a hinted link actually had failures, so a hintless
    * link that resolved is never blamed for hints it never had (§4).
+   * `receipts` is the resolver's per-relay report (share-open.ts): the cold
+   * open slices no relay leg of its own, so those receipts are the run's
+   * whole relay story — carried into the pinned row and the shared run's
+   * readout instead of an empty fold claiming nobody was asked (issue #131).
    */
-  async openShared(root: NostrEvent, failedHints: string[], hadHints: boolean): Promise<void> {
+  async openShared(
+    root: NostrEvent,
+    failedHints: string[],
+    hadHints: boolean,
+    receipts?: { url: string; status: string }[],
+  ): Promise<void> {
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
     // Same supersession rule as start() (review H2): a cold open also
     // invalidates any in-flight restore's commit.
     ++this.restoreToken;
+    // Boot barrier BEFORE the pool snapshot (issue #131): a cache-hit open
+    // pins runRelays into the run record, and pinning DEFAULT_RELAYS for a
+    // run that asked nobody would be a recorded lie. Single-flight and
+    // memoized: free after boot.
+    await settings.ready();
+    // A newer start()/restore()/openShared() during that await owns the
+    // surface — this invocation must not reset or repaint it (spec §8 abort
+    // lifecycle, same identity rule as start()).
+    if (this.controller !== controller) return;
     // Same fresh-canvas reset as start() — a cold open supersedes any
     // live run — plus its deltas: no trace stages, hints carried over.
     this.resetRun();
@@ -694,6 +735,20 @@ class Investigation {
     // relays, but its dossier legs (refreshSessionContext / ensureSubjectContext
     // below) go to the configured pool — so that pool is the run's, frozen now.
     this.runRelays = Object.freeze([...settings.relays]);
+    // The resolution's receipts, in the run-scoped carrier (issue #131): the
+    // resolver has no per-relay event count, so count stays 0 rather than a
+    // guess; status is the folded verdict it observed.
+    this.recordedRelayReceipts = (receipts ?? []).map(
+      (r): RelayReceipt => ({
+        url: r.url,
+        status: r.status as RelayState,
+        // The resolver's fold carries no per-relay event count — 0, never
+        // a guess; `routes` likewise reports one observed resolution leg.
+        routes: 1,
+        received: 0,
+        rejected: 0,
+      })
+    );
 
     this.result = {
       searches: [],
@@ -843,6 +898,20 @@ class Investigation {
     // asked. A legacy row without the field restores as "not recorded"
     // (empty), which every consumer reads as unknown, not as "ask nothing".
     this.runRelays = run.relays ? Object.freeze([...run.relays.pool]) : [];
+    // ...and the recorded receipts ride the same record (issue #131): this
+    // paint has no relay legs (the slice below is the local-cache
+    // reconstruction), so persistRunRecord re-pins THESE instead of folding
+    // an empty set — otherwise displacing this run would erase the truth its
+    // row already carries. A legacy row without the field carries none.
+    this.recordedRelayReceipts = (run.relays?.perRelay ?? []).map(
+      (r): RelayReceipt => ({
+        url: r.url,
+        status: r.status as RelayState,
+        routes: 1,
+        received: r.count,
+        rejected: 0,
+      })
+    );
     this.searches = run.searches;
     // Trace honesty (review H3, spec §2 rule 6): the literal layer reports
     // the cache reconstruction in the pipeline's OWN vocabulary — the
@@ -1250,6 +1319,18 @@ class Investigation {
     this.notices.push({ kind: 'traversal', message });
   }
 
+  /** The pool a context leg asks (issue #131): the run's frozen snapshot
+   * when the row recorded one, else today's configured pool. Legacy rows
+   * predate the recorded pool, and `runRelays` empty means "not recorded",
+   * never "ask nothing": createTransport would throw 'transport needs at
+   * least one relay url' straight into the §4 honesty lane, so the dossier
+   * would announce a constructor message instead of fetching context. The
+   * fallback serves restored legacy rows; a pool that is empty EVERYWHERE
+   * (nothing configured) still throws, exactly as before. */
+  private contextLegPool(): string[] {
+    return this.runRelays.length > 0 ? [...this.runRelays] : [...settings.relays];
+  }
+
   /** Shared tail of every traversal leg: batch admission against the live
    * session, append + cache write-through, honest failure notices. */
   private async admitContext(
@@ -1258,7 +1339,8 @@ class Investigation {
   ): Promise<void> {
     let transport: Transport | null = null;
     try {
-      transport = createTransport({ urls: [...this.runRelays] });
+      const pool = this.contextLegPool();
+      transport = createTransport({ urls: [...pool] });
 
       const result = await fetch(transport);
 
@@ -1335,10 +1417,14 @@ class Investigation {
     // the check even for the CURRENT run.
     const session = this.result;
     if (session === null || session.admitted.length === 0) return;
+    // Same pool the transport asks (contextLegPool): a legacy row's urls
+    // would otherwise reach the traversal as an empty route list, so the
+    // fallback transport would have nothing to ask.
+    const pool = this.contextLegPool();
     await this.admitContext(session, (transport) =>
       fetchSessionContext(
         session.admitted as unknown as FabricEvent[],
-        [...this.runRelays],
+        pool,
         transport,
       ),
     );
@@ -1365,16 +1451,19 @@ class Investigation {
     const session = this.result;
     if (session === null) return;
     if (!session.admitted.some((e) => e.id === subjectId)) return;
+    // Same pool the transport asks (contextLegPool) — the route urls and the
+    // transport must name one pool, legacy-row fallback included.
+    const pool = this.contextLegPool();
     if (this.contextFetched.has(subjectId)) {
       const contextIds = boundContextIds(session.admitted as unknown as FabricEvent[], subjectId);
       await this.admitContext(session, (transport) =>
-        fetchSubjectDeletions(subjectId, contextIds, [...this.runRelays], transport),
+        fetchSubjectDeletions(subjectId, contextIds, pool, transport),
       );
       return;
     }
     this.contextFetched.add(subjectId);
     await this.admitContext(session, (transport) =>
-      fetchSubjectContext(subjectId, [...this.runRelays], transport),
+      fetchSubjectContext(subjectId, pool, transport),
     );
   }
 
@@ -1797,6 +1886,7 @@ export function resetInvestigation(): void {
   investigation.hasShareHints = false;
   investigation.contextFetched = new Set();
   investigation.shareHints = [];
+  investigation.recordedRelayReceipts = [];
   investigation._resetNodeFill();
   investigation.running = false;
 }

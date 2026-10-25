@@ -319,13 +319,13 @@ describe("run-scoped display (issue #131: the run's truth, not live Settings)", 
 
 	it('a restored run with a recorded pool keeps the cache counter and appends the recorded-pool tick', () => {
 		// The run's record names 3 relays, the restore asked none of them
-		// again — the counter stays "restored from local cache" (issue #83)
-		// and one appended tick states the recorded pool instead of implying
-		// the cache leg was the whole relay set.
+		// again — the counter stays "restored from local cache" (issue #83,
+		// derived from the all-cache slices alone: runKind has no 'restore'
+		// arm to set) and one appended tick states the recorded pool instead
+		// of implying the cache leg was the whole relay set.
 		const restored: TraceInput = {
 			...base,
 			phase: 'done',
-			runKind: 'restore',
 			relayCount: 3,
 			slices: [{ url: 'local-cache', received: 2, route: 'cache', rejected: 0, status: 'ok' }],
 			skeletons: [{ typeTag: 'scrutiny-product' }]
@@ -371,13 +371,37 @@ describe("run-scoped display (issue #131: the run's truth, not live Settings)", 
 			slices,
 			relayLines: aggregatePerRelay(slices)
 		});
-		const relayTicks = rows[1].ticks.filter((t) => t.text.includes('route(s)'));
+		const relayTicks = rows[1].ticks.filter((t) => / - \d+ routes? - /.test(t.text));
 		expect(relayTicks).toHaveLength(4);
-		expect(relayTicks[0].text).toBe('a.example - 3 route(s) - 6 records');
+		expect(relayTicks[0].text).toBe('a.example - 3 routes - 6 records');
 		expect(relayTicks[0].warn).toBe(false);
 		// the cache leg has no receipt, so it keeps its own visible tick
 		expect(rows[1].ticks.at(-1)?.text).toBe('cache local cache → 4 records');
 		expect(rows[1].ticks).toHaveLength(5);
+	});
+
+	it('two distinct relays on one host stay two ticks (tick identity is the text)', () => {
+		// Same host, different mount paths, identical counts. A host-only
+		// label produced the same string twice, so the row's text-dedupe (the
+		// each_key_duplicate guard) swallowed the second relay and the trace
+		// under-reported the run's sources. The path is part of the label, and
+		// 'route' pluralizes.
+		const slices: TraceInput['slices'] = [
+			{ url: 'wss://relay.example/a', received: 3, route: 'tag:cve:x', rejected: 0, status: 'ok' },
+			{ url: 'wss://relay.example/b', received: 3, route: 'tag:cve:x', rejected: 0, status: 'ok' }
+		];
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'done',
+			relayCount: 2,
+			slices,
+			relayLines: aggregatePerRelay(slices)
+		});
+		expect(rows[1].ticks.map((t) => t.text)).toEqual([
+			'relay.example/a - 1 route - 3 records',
+			'relay.example/b - 1 route - 3 records'
+		]);
+		expect(rows[1].counter).toBe('2 of 2 answered');
 	});
 
 	it('a refused relay appears once, its status verbatim', () => {
