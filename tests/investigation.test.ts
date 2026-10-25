@@ -492,8 +492,8 @@ describe('runRelays — the run owns its relay pool (issue #131)', () => {
 			{ id: 'run-b', title: 'B', createdAt: 1 },
 		];
 		const receipts = [
-			{ url: 'wss://a.test', status: 'ok', count: 12 },
-			{ url: 'wss://b.test', status: 'refused', count: 0 },
+			{ url: 'wss://a.test', status: 'ok', routes: 2, received: 12, rejected: 0 },
+			{ url: 'wss://b.test', status: 'refused', received: 0, rejected: 0 },
 		];
 		await putSessionRun({
 			sessionId: 'run-a',
@@ -509,7 +509,7 @@ describe('runRelays — the run owns its relay pool (issue #131)', () => {
 			admittedIds: [b.id],
 			settledAt: 2,
 			elapsedMs: 20,
-			relays: { pool: ['wss://b.test'], perRelay: [{ url: 'wss://b.test', status: 'ok', count: 1 }] },
+			relays: { pool: ['wss://b.test'], perRelay: [{ url: 'wss://b.test', status: 'ok', received: 1 }] },
 		});
 		recordPools(new ProbeTransport([]));
 
@@ -525,7 +525,7 @@ describe('runRelays — the run owns its relay pool (issue #131)', () => {
 		});
 		// The displacing run pins its OWN receipts, never run-a's.
 		const rowB = await getSessionRun('run-b');
-		expect(rowB?.relays?.perRelay).toEqual([{ url: 'wss://b.test', status: 'ok', count: 1 }]);
+		expect(rowB?.relays?.perRelay).toEqual([{ url: 'wss://b.test', status: 'ok', received: 1 }]);
 	});
 
 	it('a cold open pins the resolver’s receipts into the run row (finding 8)', async () => {
@@ -552,7 +552,7 @@ describe('runRelays — the run owns its relay pool (issue #131)', () => {
 			// resolver's own fold, not an empty one claiming nobody was asked.
 			expect(row?.relays?.pool).toEqual([...POOL, 'wss://hint.test']);
 			expect(row?.relays?.perRelay).toEqual([
-				{ url: 'wss://hint.test', status: 'ok', count: 5 },
+				{ url: 'wss://hint.test', status: 'ok', routes: 2, received: 5, rejected: 1 },
 			]);
 		});
 	});

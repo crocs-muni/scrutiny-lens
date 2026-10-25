@@ -219,9 +219,8 @@ export async function openSharedRecord(
 		for (const s of statuses) {
 			legs.push({
 				url: s.url,
-				// The fold also tracks per-relay bytes; the share receipt keeps
-				// only the status, but count is the honest event count this leg
-				// returned. Admission rejections never reach here: a rejected
+				// The fold tracks per-relay bytes and leg labels from these
+				// statuses; admission rejections never reach here: a rejected
 				// root throws out of the resolution instead (gateAdmission).
 				received: s.count,
 				rejected: 0,

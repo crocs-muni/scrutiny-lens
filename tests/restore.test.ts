@@ -16,6 +16,7 @@ import {
 	getSessionRun,
 	initPersistence,
 	putSessionRun,
+	type PersistedSessionRun,
 	saveInterpretation
 } from '$lib/db';
 import { investigation, resetInvestigation } from '../src/lib/investigation.svelte';
@@ -78,7 +79,7 @@ async function pinRun(
 	sessionId: string,
 	admittedIds: string[],
 	elapsedMs: number | null = 4_200,
-	relays?: { pool: string[]; perRelay: { url: string; status: string; count: number }[] }
+	relays?: PersistedSessionRun['relays']
 ): Promise<void> {
 	await putSessionRun({
 		sessionId,
@@ -186,7 +187,7 @@ describe('restore — the relay pool comes from the record (issue #131)', () => 
 		await cacheEvent(product('a1'));
 		await pinRun('s1', ['a1'], 4_200, {
 			pool: ['wss://persisted.test'],
-			perRelay: [{ url: 'wss://persisted.test', status: 'ok', count: 1 }]
+			perRelay: [{ url: 'wss://persisted.test', status: 'ok', received: 1 }]
 		});
 		settings.relays = ["wss://live.test"];
 
@@ -426,7 +427,7 @@ describe('resetInvestigation — full-surface seam (review L9)', () => {
 		await cacheEvent(product('a1'));
 		await pinRun('s1', ['a1'], 4_200, {
 			pool: ['wss://persisted.test'],
-			perRelay: [{ url: 'wss://persisted.test', status: 'ok', count: 1 }]
+			perRelay: [{ url: 'wss://persisted.test', status: 'ok', received: 1 }]
 		});
 		expect(await investigation.restore('s1')).toBe(true);
 		expect(investigation.runRelays).toEqual(['wss://persisted.test']); // painted first

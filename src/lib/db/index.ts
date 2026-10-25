@@ -442,16 +442,21 @@ export interface PersistedSessionRun {
 	 * was still settling when pinned (post-assembly, pre-settle row). */
 	elapsedMs: number | null;
 	/** Relays this run actually queried, canonical urls in configured order,
-	 * plus the per-relay receipts computed at settle. Optional: rows written
-	 * before this field read back undefined and callers must render "relay
-	 * set not recorded" — never today's settings (spec §2 rule 6: the trace
-	 * shows real retrieval state, not a plausible one). Type-only addition —
-	 * sessionRuns stores opaque values with no index over this shape, so
-	 * unlike a new store/index there is no upgrade path and no DB_VERSION
-	 * bump (contrast: a new store/index WOULD need one, see v4–v7 above). */
+	 * plus the per-relay receipts computed at settle. The receipt is the full
+	 * RelayReceipt shape; `routes`/`rejected` are optional because the two
+	 * producers legitimately differ — a live fold counts legs and rejections,
+	 * a share resolution's fold reports neither (unknown stays ABSENT, never
+	 * zero: spec §2 — absent means unrecorded, zero would claim observed).
+	 * Optional field: rows written before this field read back undefined and
+	 * callers must render "relay set not recorded" — never today's settings
+	 * (spec §2 rule 6: the trace shows real retrieval state, not a plausible
+	 * one). Type-only addition — sessionRuns stores opaque values with no
+	 * index over this shape, so unlike a new store/index there is no upgrade
+	 * path and no DB_VERSION bump (contrast: a new store/index WOULD need
+	 * one, see v4–v7 above). */
 	relays?: {
 		pool: string[];
-		perRelay: { url: string; status: string; count: number }[];
+		perRelay: { url: string; status: string; routes?: number; received: number; rejected?: number }[];
 	};
 }
 

@@ -204,8 +204,8 @@ describe('sessionRuns store (issue #83, v7)', () => {
 			relays: {
 				pool: ['wss://a.example', 'wss://b.example'],
 				perRelay: [
-					{ url: 'wss://a.example', status: 'ok', count: 3 },
-					{ url: 'wss://b.example', status: 'refused', count: 0 }
+					{ url: 'wss://a.example', status: 'ok', routes: 2, received: 3, rejected: 1 },
+					{ url: 'wss://b.example', status: 'refused', received: 0, rejected: 0 }
 				]
 			}
 		};

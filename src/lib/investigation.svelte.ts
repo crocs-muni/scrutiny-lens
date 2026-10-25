@@ -417,7 +417,9 @@ class Investigation {
     const perRelay = source.map((r) => ({
       url: r.url,
       status: r.status,
-      count: r.received,
+      routes: r.routes,
+      received: r.received,
+      rejected: r.rejected,
     }));
     void putSessionRun({
       sessionId: this.sessionId,
@@ -903,9 +905,9 @@ class Investigation {
       (r): RelayReceipt => ({
         url: r.url,
         status: r.status as RelayState,
-        routes: 1,
-        received: r.count,
-        rejected: 0,
+        routes: r.routes,
+        received: r.received,
+        rejected: r.rejected ?? 0,
       })
     );
     this.searches = run.searches;

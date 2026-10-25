@@ -21,8 +21,11 @@ export interface RelayReceipt {
 	 * reports only observed legs) — the arm exists for a pool-relative
 	 * readout: a relay the run's snapshot names but no leg ever reached. */
 	status: RelayState | 'unasked';
-	/** Distinct routed legs that touched this relay (cache excluded). */
-	routes: number;
+	/** Distinct routed legs that touched this relay (cache excluded).
+	 * ABSENT — never zero — when the receipt came from a recorded run whose
+	 * fold did not count legs: unknown stays unrecorded (spec §2), zero
+	 * would claim observed-nothing. */
+	routes?: number;
 	/** Events the relay returned, summed over its legs. */
 	received: number;
 	/** Candidates its legs produced that admission rejected, summed. */
