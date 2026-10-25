@@ -92,3 +92,22 @@ export function aggregatePerRelay(
 	}
 	return out;
 }
+
+/** The corner banner's one line for a run's degraded relays (issue #132).
+ *
+ * Operates on FOLDED receipts, so it can only ever count relays: reading raw
+ * slices here rendered "9 relays degraded" for 3 dead hosts asked by 3
+ * searches, and listed the same host refused nine times. Classes stay
+ * separate (2 refused · 1 timeout) because the remedy differs; repeats of
+ * one class collapse into a count. */
+export function degradedBannerText(receipts: RelayReceipt[]): string {
+	const degraded = receipts.filter((r) => r.status !== 'ok');
+	if (degraded.length === 0) return '';
+	if (degraded.length === 1) return `relay ${degraded[0].url} ${degraded[0].status} — showing results from the rest`;
+	const byStatus = new Map<string, number>();
+	for (const r of degraded) byStatus.set(r.status, (byStatus.get(r.status) ?? 0) + 1);
+	const classes = [...byStatus]
+		.map(([status, n]) => `${n} ${n === 1 ? 'relay' : 'relays'} ${status}`)
+		.join(' · ');
+	return `${classes} — showing results from the rest`;
+}

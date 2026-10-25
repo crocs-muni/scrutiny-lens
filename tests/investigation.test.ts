@@ -38,7 +38,7 @@ import {
 	recordFillFailure,
 	resetInvestigation,
 } from '../src/lib/investigation.svelte';
-import { aggregatePerRelay } from '../src/lib/relay-readout';
+import { aggregatePerRelay, degradedBannerText } from '../src/lib/relay-readout';
 import { resetShell, shell } from '../src/lib/shell.svelte';
 import { resetSettings, settings } from '../src/lib/settings.svelte';
 import type { SearchSession } from '../src/lib/pipeline';
@@ -301,6 +301,41 @@ describe('aggregatePerRelay — one receipt per relay (issue #132)', () => {
 		]);
 		expect(receipt.routes).toBe(1);
 		expect(receipt.received).toBe(3);
+	});
+
+	// The corner banner reads the SAME fold. Reading raw slices printed
+	// "9 relays degraded (refused · refused … ×9)" for 3 dead hosts asked by
+	// 3 searches — a false relay count, and the repetition the issue reports.
+	it('the degraded banner counts RELAYS, never legs', () => {
+		const dead = ['wss://d1.test', 'wss://d2.test', 'wss://d3.test'];
+		const slices = dead.flatMap((url) =>
+			['tag:cc', 'tag:cve', 'tag:purl'].map((route) => ({
+				url,
+				received: 0,
+				rejected: 0,
+				route,
+				status: 'refused' as const
+			}))
+		);
+		expect(degradedBannerText(aggregatePerRelay(slices))).toBe(
+			'3 relays refused — showing results from the rest'
+		);
+	});
+
+	it('the banner keeps failure classes apart and names a lone relay in full', () => {
+		const receipts = aggregatePerRelay([
+			{ url: 'wss://ok.test', received: 5, rejected: 0, route: 'tag:cc', status: 'ok' },
+			{ url: 'wss://d1.test', received: 0, rejected: 0, route: 'tag:cc', status: 'refused' },
+			{ url: 'wss://d2.test', received: 0, rejected: 0, route: 'tag:cc', status: 'refused' },
+			{ url: 'wss://slow.test', received: 0, rejected: 0, route: 'tag:cc', status: 'timeout' }
+		]);
+		expect(degradedBannerText(receipts)).toBe(
+			'2 relays refused · 1 relay timeout — showing results from the rest'
+		);
+		expect(degradedBannerText(receipts.slice(0, 2))).toBe(
+			'relay wss://d1.test refused — showing results from the rest'
+		);
+		expect(degradedBannerText(receipts.slice(0, 1)), 'an all-ok run has no banner').toBe('');
 	});
 });
 

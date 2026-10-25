@@ -18,6 +18,7 @@
 	import ResultsEmpty from '$lib/components/ui/ResultsEmpty.svelte';
 	import ResultsError from '$lib/components/ui/ResultsError.svelte';
 	import { applyFacets, cohortLine } from '$lib/pipeline/cards';
+	import { aggregatePerRelay, degradedBannerText } from '$lib/relay-readout';
 	import type { PipelineNotice } from '$lib/pipeline';
 	import {
 		afterSemantics,
@@ -350,19 +351,16 @@
 	// (which carries the failure class — timeout/unreachable/etc.) as the
 	// banner; no second duplicate here.
 	// §4: some relays dead → results from the rest + corner notice (a refused
-	// leg is a degradation, not 'no matches'). Rolled up per class — per-leg
-	// verbatim statuses live in the trace and footer; wallpapering 4 relays
-	// as 4 banners teaches users to ignore the honest lane (review finding).
-	const degradedLegs = $derived(
-		investigation.slices.filter((s) => s.status !== 'ok')
-	);
-	const degradedNote = $derived(
-		degradedLegs.length === 0
-			? ''
-			: degradedLegs.length === 1
-				? `relay ${degradedLegs[0].url} ${degradedLegs[0].status} — showing results from the rest`
-				: `${degradedLegs.length} relays degraded (${degradedLegs.map((l) => l.status).join(' · ')}) — showing results from the rest`
-	);
+	// leg is a degradation, not 'no matches'). Folded PER RELAY (issue #132):
+	// the pipeline emits one slice per (search, relay) leg, so raw slices
+	// turned "3 dead relays, 3 searches" into "9 relays degraded" with the
+	// same host refused nine times — a false count, and repetition that
+	// teaches users to ignore the honest lane. One folded receipt per relay,
+	// grouped by class: the banner states how many RELAYS failed, never how
+	// many legs did.
+	const relayReceipts = $derived(aggregatePerRelay(investigation.slices));
+	const degradedRelays = $derived(relayReceipts.filter((r) => r.status !== 'ok'));
+	const degradedNote = $derived(degradedBannerText(relayReceipts));
 	// #83 (spec §2 never-lie): a restored session must read as fetched from
 	// local storage, never as a fresh network replay; evicted ids got no
 	// bytes at all and are counted honestly.
@@ -376,7 +374,7 @@
 							'restored from local storage',
 							`${investigation.restoredEvicted} evicted from local storage`
 						]),
-			...degradedLegs.map((l) => `relay ${l.url} ${l.status}`)
+			...degradedRelays.map((r) => `relay ${r.url} ${r.status}`)
 		]
 	);
 	// §4 honesty lane: every notice class surfaces as ONE roll-up banner —
@@ -573,14 +571,20 @@
 							</div>
 						</div>
 						{#if relayDead}
-							<!-- spec §4: all relays dead — error screen, never demo data -->
+							<!-- spec §4: all relays dead — error screen, never demo data.
+								Receipts folded per relay (issue #132): ResultsError keys its
+								list by url, so per-leg slices gave a dead host two entries
+								with the same key (Svelte throws each_key_duplicate) and
+								printed it twice. -->
 							<div class="flex min-h-0 w-full flex-1 flex-col items-center justify-center p-4">
 								<ResultsError
 									message={investigation.error ?? 'no relay answered the fetch'}
-									relays={investigation.slices.map((s) => ({
-										url: s.url === 'local-cache' ? 'local cache' : s.url,
-										status: s.status
-									}))}
+									relays={[
+										...relayReceipts.map((r) => ({ url: r.url, status: r.status })),
+										...(investigation.slices.some((s) => s.url === 'local-cache')
+											? [{ url: 'local cache', status: 'ok' }]
+											: [])
+									]}
 									onRetry={() => void investigation.start(investigation.lastQuestion)}
 									onEditRelays={() => shell.toggleSettings()}
 								/>
