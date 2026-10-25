@@ -351,13 +351,9 @@
 	// (which carries the failure class — timeout/unreachable/etc.) as the
 	// banner; no second duplicate here.
 	// §4: some relays dead → results from the rest + corner notice (a refused
-	// leg is a degradation, not 'no matches'). Folded PER RELAY (issue #132):
-	// the pipeline emits one slice per (search, relay) leg, so raw slices
-	// turned "3 dead relays, 3 searches" into "9 relays degraded" with the
-	// same host refused nine times — a false count, and repetition that
-	// teaches users to ignore the honest lane. One folded receipt per relay,
-	// grouped by class: the banner states how many RELAYS failed, never how
-	// many legs did.
+	// leg is a degradation, not 'no matches'). Folded per relay before it
+	// reaches the page (relay-readout.ts, issue #132): the pipeline emits one
+	// slice per (search, relay) leg, so raw slices counted legs as relays.
 	const relayReceipts = $derived(aggregatePerRelay(investigation.slices));
 	const degradedRelays = $derived(relayReceipts.filter((r) => r.status !== 'ok'));
 	const degradedNote = $derived(degradedBannerText(relayReceipts));
@@ -571,20 +567,16 @@
 							</div>
 						</div>
 						{#if relayDead}
-							<!-- spec §4: all relays dead — error screen, never demo data.
-								Receipts folded per relay (issue #132): ResultsError keys its
-								list by url, so per-leg slices gave a dead host two entries
+							<!-- Receipts folded per relay (issue #132): ResultsError keys its
+								list by url, so a per-leg list gave one dead host two entries
 								with the same key (Svelte throws each_key_duplicate) and
-								printed it twice. -->
+								printed it twice. No cache row: a cache slice is always
+								status 'ok', which is exactly what keeps relayDead false —
+								this screen cannot mount on a cache-served run. -->
 							<div class="flex min-h-0 w-full flex-1 flex-col items-center justify-center p-4">
 								<ResultsError
 									message={investigation.error ?? 'no relay answered the fetch'}
-									relays={[
-										...relayReceipts.map((r) => ({ url: r.url, status: r.status })),
-										...(investigation.slices.some((s) => s.url === 'local-cache')
-											? [{ url: 'local cache', status: 'ok' }]
-											: [])
-									]}
+									relays={relayReceipts}
 									onRetry={() => void investigation.start(investigation.lastQuestion)}
 									onEditRelays={() => shell.toggleSettings()}
 								/>
@@ -612,7 +604,7 @@
 									<!-- §4 honesty lane: every banner one dismissal-keyed note; the
 										no-key hint stays textual (Ctrl+, works) — these are notices,
 										not buttons. Per-class roll-up (review finding): per-leg
-										verbatim facts live in trace ticks + footer. -->
+										verbatim facts live in trace ticks; this lane states counts. -->
 									{@render note(capabilityNote !== '', 'capability', capabilityNote)}
 									{@render note(noKey, 'no-key', 'no key set — cards stay raw · set one in Settings (Ctrl+,)')}
 									{@render note(aiNote !== '', 'ai-note', aiNote)}
