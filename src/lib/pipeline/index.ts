@@ -20,7 +20,6 @@ import type {
 	Transport,
 	RelayCapability,
 	RelayState,
-	RelayStatus,
 	FetchRoute,
 	FetchSlice
 } from '$lib/net/transport';
@@ -51,7 +50,6 @@ export interface SearchSession {
 	admitted: NostrEvent[];
 	invalidSkipped: number;
 	notices: PipelineNotice[];
-	relays: RelayStatus[];
 }
 
 export type PipelineEvent =
@@ -274,7 +272,6 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	// the ui's "cache-first" repeat-query guarantee depends on the flush.
 	const pendingWrites: Promise<unknown>[] = [];
 	const perRouteReceived = new Map<string, number>();
-	let relays: RelayStatus[] = [];
 
 	/** Route label → client-side terms for legs the relay can't narrow
 	 * (fullscan). Populated as routes are built; closure resolves lazily. */
@@ -351,8 +348,7 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	// skeletons instantly and a hung probe must not hold them (review R2).
 	const tagRoutes = searches.filter((s) => s.kind === 'tag').flatMap((search) => routeSearch(search, opts.relays, new Map(), []));
 	if (tagRoutes.length > 0) {
-		const tagResult = await opts.transport.fetchRouted(tagRoutes, onSlice);
-		relays = tagResult.relays;
+		await opts.transport.fetchRouted(tagRoutes, onSlice);
 	}
 
 	// Pure-tag questions need never probe NIP-11: tag filters are NIP-01, every
@@ -371,12 +367,7 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	if (routes.length > 0) {
 		// Progressive fetch: first-relayer-shared batch slices arrive in
 		// completion order and skeletons paint at the FIRST relay's EOSE.
-		const result = await opts.transport.fetchRouted(routes, onSlice);
-		// Merge with any statuses the tag leg already reported (url-keyed —
-		// a relay with legs in both lanes reports once, newest wins).
-		const merged = new Map(relays.map((r) => [r.url, r]));
-		for (const r of result.relays) merged.set(r.url, r);
-		relays = [...merged.values()];
+		await opts.transport.fetchRouted(routes, onSlice);
 	}
 
 	await Promise.all(pendingWrites);
@@ -394,7 +385,6 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 		searches,
 		admitted: [...admittedSet.values()],
 		invalidSkipped,
-		notices,
-		relays
+		notices
 	};
 }

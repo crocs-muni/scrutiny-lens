@@ -10,11 +10,16 @@
 	 * the npub fallback is a machine-made value → mono.
 	 *
 	 * Presentational except for the profiles seam it calls on mount — the
-	 * page wires the singleton profile store; this chip only reads it. */
+	 * page wires the singleton profile store; this chip only reads it.
+	 *
+	 * Three-way honesty (issue #131 WP7, spec §2 never-lie): the seam answers
+	 * found / asked-and-empty / never-asked, and the chip claims exactly that
+	 * much. A never-asked lookup (no relays configured) renders the identicon
+	 * with no "no profile" claim anywhere in its title or labels. */
 
 	import { fly } from 'svelte/transition';
 	import { npubEncode } from 'nostr-tools/nip19';
-	import { getProfile, type PublisherProfile } from '$lib/net/profiles';
+	import { getProfile, profileClaim, type ProfileLookup } from '$lib/net/profiles';
 
 	interface Props {
 		pubkey: string;
@@ -22,7 +27,8 @@
 
 	let { pubkey }: Props = $props();
 
-	let profile: PublisherProfile | null = $state(null);
+	/** undefined = not asked yet (or nothing to ask) — no claim is rendered. */
+	let profile = $state<ProfileLookup>(undefined);
 	/** A resolved kind-0 picture that failed to load drops to the identicon. */
 	let imgFailed = $state(false);
 	/** Gates the arrival fade: content mounts only once the profile settles. */
@@ -36,10 +42,17 @@
 	const hue = $derived(hashHue(pubkey));
 	const cells = $derived(mirroredCells(pubkey));
 
+	/** What the settled lookup licenses this chip to claim. */
+	const claim = $derived(profileClaim(profile));
+
+	/** Tooltip: only a real, asked miss may claim "no kind-0 profile on your
+	 * relays"; an unasked lookup shows the bare npub (issue #131 WP7). */
 	const title = $derived(
-		profile
+		claim === 'found'
 			? `${npub} · kind-0 profile found`
-			: `${npub} · no kind-0 profile on your relays`
+			: claim === 'missing'
+				? `${npub} · no kind-0 profile on your relays`
+				: npub
 	);
 
 	$effect(() => {
@@ -102,7 +115,7 @@
 	{#if settled}
 		<!-- profile resolved: fade up ~160ms into place -->
 		<span class="inline-flex max-w-full items-center gap-1.5" transition:fly={{ x: 0, y: 1, duration: 160 }}>
-			{#if profile?.picture && !imgFailed}
+			{#if claim === 'found' && profile?.picture && !imgFailed}
 				<!-- kind-0 picture; onerror drops to the identicon -->
 				<img
 					src={profile.picture}
@@ -112,7 +125,9 @@
 					onerror={() => (imgFailed = true)}
 				/>
 			{:else}
-				<!-- deterministic inline identicon (spec §1: no third-party hosts) -->
+				<!-- deterministic inline identicon (spec §1: no third-party hosts).
+					Covers all three states — found-without-picture, asked-and-empty,
+					never-asked — and asserts nothing either way. -->
 				<svg
 					viewBox="0 0 5 5"
 					shape-rendering="crispEdges"
@@ -136,7 +151,7 @@
 					{/each}
 				</svg>
 			{/if}
-			{#if profile?.name}
+			{#if claim === 'found' && profile?.name}
 				<!-- human prose → sans; truncate long author names -->
 				<!-- line-height 1.3: leading-none clips the "g"/"y" descender under
 			truncate's overflow-hidden (owner report 2026-09-09) -->
@@ -144,7 +159,8 @@
 					{profile.name}
 				</span>
 			{:else}
-				<!-- machine-made npub token → mono -->
+				<!-- machine-made npub token → mono (missing and unasked alike: the
+					token is the honest cell, the title carries the difference) -->
 				<span class="font-mono text-[10.5px] leading-none text-ink-3">{labelToken}</span>
 			{/if}
 		</span>

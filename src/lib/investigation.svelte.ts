@@ -65,6 +65,7 @@ import {
 } from "$lib/pipeline/cards";
 import { settings } from "$lib/settings.svelte";
 import { shell } from "$lib/shell.svelte";
+import { aggregatePerRelay } from "$lib/relay-readout";
 import { lensDebug } from "$lib/dev-log";
 
 /** Interval sleep that resolves early on abort — the lane-stagger's pause
@@ -204,6 +205,14 @@ class Investigation {
    * session-store work, spec §0). */
   sessionId = $state<string | null>(null);
 
+  /** The relay pool THIS run queried, frozen at start()/openShared()/
+   * restore() (issue #131): every later leg (settle traversal, dossier
+   * context, deletion re-polls) and every run-scoped display reads this
+   * snapshot; a Settings edit re-points the NEXT run, never a live one
+   * (spec §2: the trace names the relays that were actually asked). Empty
+   * means "not recorded" — a legacy restored row, never "ask everything". */
+  runRelays = $state<readonly string[]>([]);
+
   /** Reload-restore diagnostics (issue #83): null while a live run painted
    * the surface; restore() sets the count of pinned ids the events cache no
    * longer holds (0 = frontier intact). A reassembly count, never AI data. */
@@ -320,6 +329,7 @@ class Investigation {
     this.fillErrorMessage = null;
     this.rateLimitedCount = 0;
     this.elapsedMs = null;
+    this.runRelays = []; // fresh run — the caller sets its own frozen pool
     this.selectedEventId = null;
     this.graphSubjectId = null;
     this._resetExpansions();
@@ -375,18 +385,38 @@ class Investigation {
     // array the cards/facets derivations saw.
     const settled = this.result;
     if (settled === null) return;
+    // Relay receipts (issues #131/#132): the row names the pool this run
+    // actually asked plus one folded verdict per relay, so a restored
+    // session can show its relays instead of a fabricated empty list. Skipped
+    // entirely when the pool was never recorded (restored legacy row, or a
+    // cold open before the snapshot) — an absent field says "not recorded",
+    // an empty one would claim "asked nobody".
+    const runRelays = this.runRelays;
     void putSessionRun({
       sessionId: this.sessionId,
       searches: settled.searches,
       admittedIds: settled.admitted.map((e) => e.id),
       settledAt: Date.now(),
       elapsedMs: this.elapsedMs,
+      ...(runRelays.length === 0
+        ? {}
+        : {
+            relays: {
+              pool: [...runRelays],
+              perRelay: aggregatePerRelay(this.slices).map((r) => ({
+                url: r.url,
+                status: r.status,
+                count: r.received,
+              })),
+            },
+          }),
     });
   }
 
-  /** Start a search from the J1 composer. The transport and provider are
-   * constructed per run from live settings — edits in Settings take effect
-   * on the next question, never mid-run. */
+  /** Start a search from the J1 composer. The transport, provider and relay
+   * pool are captured per run from settings AFTER the boot barrier (issue
+   * #131) — edits in Settings take effect on the next question, never
+   * mid-run. */
   async start(question: string, title?: string): Promise<void> {
     this.controller?.abort();
     const controller = new AbortController();
@@ -395,8 +425,22 @@ class Investigation {
     // restore token bumps here too, so a late restore commit can never wipe
     // this run's surfaces or mis-pin its frontier into another row.
     ++this.restoreToken;
+    // Boot barrier BEFORE the run's state is captured (issue #131): a search
+    // submitted pre-hydration would otherwise query the DEFAULT relays and
+    // freeze that pool as this run's truth while Settings is still loading.
+    // Single-flight, so the resolved case costs one microtask.
+    await settings.ready();
+    // A newer start()/restore()/openShared() during that await owns the
+    // surface — this invocation must not reset or repaint it (spec §8
+    // abort lifecycle, same identity rule as every other write).
+    if (this.controller !== controller) return;
     this.resetRun();
     this.lastQuestion = question;
+    // The run's relay pool, frozen HERE (issue #131): from this point every
+    // leg of THIS run reads the snapshot, so a Settings edit re-points the
+    // next run only. Frozen (and copied) so no caller can mutate it later.
+    const pool = Object.freeze([...settings.relays]);
+    this.runRelays = pool;
     const startedAt = performance.now();
 
     // The session row exists before the first slice so the rail shows the
@@ -430,10 +474,10 @@ class Investigation {
     // a settle-path throw must not orphan the early fill cycle.
     let earlyFill: Promise<void> | null = null;
     try {
-      transport = createTransport({ urls: settings.relays });
+      transport = createTransport({ urls: [...pool] });
       const session = await runSearch({
         question,
-        relays: settings.relays,
+        relays: [...pool],
         provider,
         callLLM,
         transport,
@@ -646,12 +690,16 @@ class Investigation {
     shell.view = "session";
     shell.drawerOpen = true;
 
+    // Relay snapshot (issue #131): the cold open resolves THROUGH the hinted
+    // relays, but its dossier legs (refreshSessionContext / ensureSubjectContext
+    // below) go to the configured pool — so that pool is the run's, frozen now.
+    this.runRelays = Object.freeze([...settings.relays]);
+
     this.result = {
       searches: [],
       admitted: [root],
       invalidSkipped: 0,
       notices: [],
-      relays: [],
     } as SearchSession;
     this.cards = assembleCards(resolveGraph([root]), [root]);
     this.facetGroups = computeFacets([root]);
@@ -790,6 +838,11 @@ class Investigation {
     this.resetRun(); // ends running=true; set deltas below
     this.phase = "done";
     this.sessionId = sessionId;
+    // Relay snapshot (issue #131): painted from the RECORD, never from live
+    // Settings — a restored session must name the relays its run actually
+    // asked. A legacy row without the field restores as "not recorded"
+    // (empty), which every consumer reads as unknown, not as "ask nothing".
+    this.runRelays = run.relays ? Object.freeze([...run.relays.pool]) : [];
     this.searches = run.searches;
     // Trace honesty (review H3, spec §2 rule 6): the literal layer reports
     // the cache reconstruction in the pipeline's OWN vocabulary — the
@@ -810,7 +863,6 @@ class Investigation {
       admitted: events,
       invalidSkipped: 0,
       notices: [],
-      relays: [],
     } as SearchSession;
     this.cards = painted;
     this.facetGroups = computeFacets(events);
@@ -1206,7 +1258,8 @@ class Investigation {
   ): Promise<void> {
     let transport: Transport | null = null;
     try {
-      transport = createTransport({ urls: settings.relays });
+      transport = createTransport({ urls: [...this.runRelays] });
+
       const result = await fetch(transport);
 
       // Session identity guard (lifecycle honesty): a late traversal must
@@ -1285,7 +1338,7 @@ class Investigation {
     await this.admitContext(session, (transport) =>
       fetchSessionContext(
         session.admitted as unknown as FabricEvent[],
-        settings.relays,
+        [...this.runRelays],
         transport,
       ),
     );
@@ -1315,13 +1368,13 @@ class Investigation {
     if (this.contextFetched.has(subjectId)) {
       const contextIds = boundContextIds(session.admitted as unknown as FabricEvent[], subjectId);
       await this.admitContext(session, (transport) =>
-        fetchSubjectDeletions(subjectId, contextIds, settings.relays, transport),
+        fetchSubjectDeletions(subjectId, contextIds, [...this.runRelays], transport),
       );
       return;
     }
     this.contextFetched.add(subjectId);
     await this.admitContext(session, (transport) =>
-      fetchSubjectContext(subjectId, settings.relays, transport),
+      fetchSubjectContext(subjectId, [...this.runRelays], transport),
     );
   }
 
@@ -1735,6 +1788,7 @@ export function resetInvestigation(): void {
   investigation.rateLimitedCount = 0;
   investigation.lastQuestion = "";
   investigation.sessionId = null;
+  investigation.runRelays = [];
   investigation.restoredEvicted = null;
   investigation.restoreMissId = null;
   investigation.selectedEventId = null;

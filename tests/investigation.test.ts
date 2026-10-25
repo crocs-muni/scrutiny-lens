@@ -5,16 +5,49 @@
 // 429, throttling us (rate_limited) — must NOT be labeled unreachable: that
 // is the owner's incident. User-visible text speaks issue #108's raw/filled
 // vocabulary — never "AI" or "interpreted".
+//
+// It also guards issue #131 at the store level: the run's relay pool is
+// frozen at start() and every later leg reads that snapshot, so a Settings
+// edit can never make one run query two pools.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import 'fake-indexeddb/auto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
+import type { NostrEvent } from 'nostr-tools/core';
+import {
+	_closeForTests,
+	clearAllLocalData,
+	getSessionRun,
+	initPersistence,
+	saveSettings,
+} from '$lib/db';
+import {
+	createTransport,
+	type CountResult,
+	type FetchResult,
+	type FetchRoute,
+	type FetchSlice,
+	type RelayCapability,
+	type Transport,
+} from '$lib/net/transport';
 import {
 	fillNote,
 	investigation,
 	recordFillFailure,
 	resetInvestigation,
 } from '../src/lib/investigation.svelte';
+import { aggregatePerRelay } from '../src/lib/relay-readout';
+import { resetShell, shell } from '../src/lib/shell.svelte';
+import { resetSettings, settings } from '../src/lib/settings.svelte';
 import type { SearchSession } from '../src/lib/pipeline';
 import type { AIKind } from '../src/lib/ai/output';
+
+// The run tests below inject a transport; everything else in this file never
+// touches the network layer.
+vi.mock('$lib/net/transport', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/net/transport')>();
+	return { ...actual, createTransport: vi.fn() };
+});
 
 describe('fillNote — says the truth about why cards stayed raw', () => {
 	it('endpoint answered but every fill failed schema → not "unreachable"', () => {
@@ -145,7 +178,6 @@ describe('selectSubject — product re-anchor (issue #85, spec §9)', () => {
 			admitted,
 			invalidSkipped: 0,
 			notices: [],
-			relays: [],
 		}) as unknown as SearchSession;
 
 	beforeEach(() => resetInvestigation());
@@ -220,5 +252,204 @@ describe('selectSubject — product re-anchor (issue #85, spec §9)', () => {
 		expect(investigation.expandedRelated).toEqual([]);
 		expect(investigation.expandedBridges).toEqual([]);
 		expect(investigation.expansionLog).toEqual([]);
+	});
+});
+
+// issue #132's root: the trace's literal layer is one slice per LEG, so a
+// relay legitimately appears several times with different verdicts. The
+// readout must fold those to ONE receipt per relay — anything else shows the
+// same relay twice with contradictory statuses.
+describe('aggregatePerRelay — one receipt per relay (issue #132)', () => {
+	it('an answering leg wins over a failing one; received/rejected sum; legs count', () => {
+		const receipts = aggregatePerRelay([
+			{ url: 'wss://a.test', received: 4, rejected: 1, route: 'tag:cve', status: 'ok' },
+			{ url: 'wss://b.test', received: 0, rejected: 0, route: 'tag:cve', status: 'timeout' },
+			{ url: 'wss://a.test', received: 0, rejected: 0, route: 'text:roca', status: 'refused' },
+		]);
+
+		expect(receipts).toEqual([
+			{ url: 'wss://a.test', status: 'ok', routes: 2, received: 4, rejected: 1 },
+			{ url: 'wss://b.test', status: 'timeout', routes: 1, received: 0, rejected: 0 },
+		]);
+		// First appearance wins position — the last a.test slice never moves it.
+		expect(receipts.map((r) => r.url)).toEqual(['wss://a.test', 'wss://b.test']);
+	});
+
+	it('without any answering leg, a refusal outranks a timeout', () => {
+		const [receipt] = aggregatePerRelay([
+			{ url: 'wss://a.test', received: 0, rejected: 0, route: 'tag:cve', status: 'timeout' },
+			{ url: 'wss://a.test', received: 0, rejected: 0, route: 'text:roca', status: 'refused' },
+		]);
+		expect(receipt.status).toBe('refused');
+		expect(receipt.routes).toBe(2);
+	});
+
+	it('the local cache is not a relay (spec §2: name the relays actually asked)', () => {
+		const receipts = aggregatePerRelay([
+			{ url: 'local-cache', received: 9, rejected: 0, route: 'cache', status: 'ok' },
+			{ url: 'wss://a.test', received: 2, rejected: 0, route: 'tag:cve', status: 'ok' },
+		]);
+		expect(receipts.map((r) => r.url)).toEqual(['wss://a.test']);
+	});
+
+	it('one relay re-asked on the SAME route is one leg, not two', () => {
+		const [receipt] = aggregatePerRelay([
+			{ url: 'wss://a.test', received: 1, rejected: 0, route: 'traversal:bindings', status: 'ok' },
+			{ url: 'wss://a.test', received: 2, rejected: 0, route: 'traversal:bindings', status: 'ok' },
+		]);
+		expect(receipt.routes).toBe(1);
+		expect(receipt.received).toBe(3);
+	});
+});
+
+// issue #131: the run queries ONE pool. The snapshot is taken at start(); the
+// settle traversal and the dossier legs read it, never live Settings — so a
+// Settings edit re-points the next run only (spec §2: the trace names the
+// relays that were actually asked).
+describe('runRelays — the run owns its relay pool (issue #131)', () => {
+	const POOL = ['wss://a.test', 'wss://b.test'];
+
+	/** Genuinely-signed synthetic product (real key, real NIP-01 id — the
+	 * admission gates require both; same shape as settle.test.ts). */
+	function cve(): NostrEvent {
+		return finalizeEvent(
+			{
+				kind: 1,
+				created_at: 1_780_000_000,
+				tags: [
+					['t', 'scrutiny-fabric'],
+					['t', 'scrutiny-v0.8.1'],
+					['t', 'scrutiny-product'],
+					['i', 'cve:CVE-2017-15361'],
+				],
+				content: 'ROCA fingerprint',
+			},
+			generateSecretKey(),
+		);
+	}
+
+	/** Answers every route with the same events: these tests assert WHICH POOL
+	 * the run asked, not per-route routing (pipeline.test.ts owns that). */
+	class ProbeTransport implements Transport {
+		readonly legs: string[][] = [];
+		constructor(private readonly answer: NostrEvent[]) {}
+		async fetchRouted(
+			routes: FetchRoute[],
+			onSlice: (slice: FetchSlice) => void,
+		): Promise<FetchResult> {
+			this.legs.push(routes.map((route) => route.label));
+			for (const route of routes) {
+				for (const url of route.urls) {
+					onSlice({
+						url,
+						events: this.answer,
+						status: { url, status: 'ok', count: this.answer.length },
+						route: route.label,
+					});
+				}
+			}
+			return { events: [...this.answer], relays: [] };
+		}
+		fetch(): Promise<FetchResult> {
+			return Promise.reject(new Error('unused'));
+		}
+		fetchProgressive(): Promise<FetchResult> {
+			return Promise.reject(new Error('unused'));
+		}
+		/** "No relay could state a COUNT" — truncationNotices stays silent. */
+		count(): Promise<CountResult> {
+			return Promise.resolve({ total: 0, relays: [] });
+		}
+		capability(): Promise<RelayCapability> {
+			return Promise.resolve('unknown');
+		}
+		capabilitySync(): RelayCapability {
+			return 'unknown';
+		}
+		close(): Promise<void> {
+			return Promise.resolve();
+		}
+	}
+
+	/** Every pool the run handed to createTransport, in call order. */
+	function recordPools(transport: Transport, onFirstCall?: () => void): string[][] {
+		const asked: string[][] = [];
+		vi.mocked(createTransport).mockImplementation(((opts: { urls: string[] }) => {
+			asked.push([...opts.urls]);
+			if (asked.length === 1) onFirstCall?.();
+			return transport;
+		}) as unknown as typeof createTransport);
+		return asked;
+	}
+
+	beforeEach(async () => {
+		await initPersistence();
+		await clearAllLocalData();
+		resetInvestigation();
+		resetShell();
+		resetSettings();
+		// No provider and no model: translate degrades to a plain-text search
+		// and no fill lane fires — these runs never reach an endpoint.
+		settings.apiKey = '';
+		settings.model = '';
+		settings.relays = [...POOL];
+	});
+
+	afterEach(async () => {
+		resetInvestigation();
+		resetShell();
+		resetSettings();
+		vi.clearAllMocks();
+		await _closeForTests();
+	});
+
+	it('a mid-run Settings edit never re-points the live run', async () => {
+		const transport = new ProbeTransport([cve()]);
+		// The edit lands with the search leg's transport already live: the
+		// settle traversal has NOT created its own yet.
+		const asked = recordPools(transport, () => {
+			settings.relays = ['wss://other.test'];
+		});
+
+		await investigation.start('roca nomad bug');
+
+		expect(settings.relays).toEqual(['wss://other.test']); // the edit did land
+		expect(transport.legs.length).toBeGreaterThanOrEqual(2); // search + settle traversal
+		expect(asked.length).toBeGreaterThanOrEqual(2);
+		expect(asked.every((urls) => urls.join(' ') === POOL.join(' '))).toBe(true);
+		expect(investigation.runRelays).toEqual(POOL);
+	});
+
+	it('pins the pool and one folded receipt per relay into the run row', async () => {
+		const transport = new ProbeTransport([cve()]);
+		recordPools(transport);
+
+		await investigation.start('roca nomad bug');
+
+		const id = shell.session?.id ?? '';
+		expect(id).not.toBe('');
+		// persistRunRecord is fire-and-forget like the orchestrator's other
+		// write-through — poll the read-back instead of racing the commit.
+		await vi.waitFor(async () => {
+			const row = await getSessionRun(id);
+			expect(row?.relays?.pool).toEqual(POOL);
+			// Several legs, two relays → two receipts, never one row per leg.
+			expect(row?.relays?.perRelay.map((r) => r.url)).toEqual(POOL);
+			expect(row?.relays?.perRelay.every((r) => r.status === 'ok')).toBe(true);
+		});
+	});
+
+	it('waits for the boot barrier: a pre-hydration submit asks the PERSISTED pool', async () => {
+		await saveSettings({ relays: ['wss://persisted.test'] });
+		resetSettings(); // a fresh boot: nothing hydrated, defaults in the state
+		settings.apiKey = '';
+		settings.model = '';
+		const transport = new ProbeTransport([cve()]);
+		const asked = recordPools(transport);
+
+		await investigation.start('roca nomad bug');
+
+		expect(asked[0]).toEqual(['wss://persisted.test']); // not the defaults
+		expect(investigation.runRelays).toEqual(['wss://persisted.test']);
 	});
 });
