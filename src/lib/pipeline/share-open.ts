@@ -58,20 +58,16 @@ import {
 import { getEvent } from '$lib/db';
 import { indexEvent } from '$lib/search';
 import { admitEvent, type NostrEvent as FabricEvent } from '$lib/fabric';
-import { aggregatePerRelay } from '$lib/relay-readout';
+import { aggregatePerRelay, type RelayReceipt } from '$lib/relay-readout';
 import { canonicalRelayUrls } from '$lib/net/relay-url';
 import { settings } from '$lib/settings.svelte';
 
 /** One relay's verdict for this resolution (issue #131): every leg that
  * asked it folded into one status, so a relay can never appear twice with
- * contradictory answers. */
-export interface ShareOpenReceipt {
-	url: string;
-	/** Folded leg status — ok beats refused beats timeout (the shared fold
-	 * precedence of relay-readout.ts: one answering leg proves the relay was
-	 * reachable, and that leg's bytes are in hand). */
-	status: 'ok' | 'timeout' | 'refused';
-}
+ * contradictory answers. Carries the FULL RelayReceipt shape — the fold
+ * already counts bytes and legs, and throwing them away here only forced
+ * openShared to re-invent zeros. */
+export type ShareOpenReceipt = RelayReceipt;
 
 export interface ShareOpenResult {
 	/** The shared root event id (== pointer.id). */
@@ -147,13 +143,10 @@ interface ShareOpenLeg {
  * and died on another is ONE relay with ONE verdict. The fold precedence is
  * relay-readout.ts's (ok > refused > timeout) so the cold open's own readout
  * and the trace can never disagree about the same relay. */
-function foldReceipts(legs: ShareOpenLeg[]): ShareOpenReceipt[] {
-	return aggregatePerRelay(legs).map((receipt) => ({
-		url: receipt.url,
-		// aggregatePerRelay reports observed legs only — its 'unasked' arm is
-		// for pool-relative readouts and cannot surface from this input.
-		status: receipt.status as RelayState
-	}));
+function foldReceipts(legs: ShareOpenLeg[]): RelayReceipt[] {
+	// The fold IS the receipt (issue #131): bytes, leg counts and verdicts
+	// all real — narrowing here only forced openShared to re-invent zeros.
+	return aggregatePerRelay(legs);
 }
 
 /**

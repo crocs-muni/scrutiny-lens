@@ -532,22 +532,27 @@ describe('runRelays — the run owns its relay pool (issue #131)', () => {
 		recordPools(new ProbeTransport([]));
 		const root = cve();
 
-		await investigation.openShared(root, [], false, [{ url: 'wss://hint.test', status: 'ok' }]);
+		await investigation.openShared(root, [], false, [
+			{ url: 'wss://hint.test', status: 'ok', routes: 2, received: 5, rejected: 1 },
+		]);
 
 		// The cold open slices no relay leg, so its receipts live in the
 		// run-scoped carrier — the trace/readout's source for a shared run.
+		// Real counts ride through unchanged (issue #131: never a re-invented
+		// zero for bytes the relay actually returned).
 		expect(investigation.recordedRelayReceipts).toEqual([
-			{ url: 'wss://hint.test', status: 'ok', routes: 1, received: 0, rejected: 0 },
+			{ url: 'wss://hint.test', status: 'ok', routes: 2, received: 5, rejected: 1 },
 		]);
 		const id = investigation.sessionId ?? '';
 		expect(id).not.toBe('');
 		await vi.waitFor(async () => {
 			const row = await getSessionRun(id);
-			// The dossier legs asked the configured pool; the row's receipts
-			// are the resolver's, not an empty fold claiming nobody was asked.
-			expect(row?.relays?.pool).toEqual(POOL);
+			// The pinned pool covers configured AND receipt-named relays (the
+			// resolver asked the hints too); the row's receipts are the
+			// resolver's own fold, not an empty one claiming nobody was asked.
+			expect(row?.relays?.pool).toEqual([...POOL, 'wss://hint.test']);
 			expect(row?.relays?.perRelay).toEqual([
-				{ url: 'wss://hint.test', status: 'ok', count: 0 },
+				{ url: 'wss://hint.test', status: 'ok', count: 5 },
 			]);
 		});
 	});

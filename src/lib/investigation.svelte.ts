@@ -699,7 +699,7 @@ class Investigation {
     root: NostrEvent,
     failedHints: string[],
     hadHints: boolean,
-    receipts?: { url: string; status: string }[],
+    receipts?: RelayReceipt[],
   ): Promise<void> {
     this.controller?.abort();
     const controller = new AbortController();
@@ -733,22 +733,18 @@ class Investigation {
 
     // Relay snapshot (issue #131): the cold open resolves THROUGH the hinted
     // relays, but its dossier legs (refreshSessionContext / ensureSubjectContext
-    // below) go to the configured pool — so that pool is the run's, frozen now.
-    this.runRelays = Object.freeze([...settings.relays]);
-    // The resolution's receipts, in the run-scoped carrier (issue #131): the
-    // resolver has no per-relay event count, so count stays 0 rather than a
-    // guess; status is the folded verdict it observed.
-    this.recordedRelayReceipts = (receipts ?? []).map(
-      (r): RelayReceipt => ({
-        url: r.url,
-        status: r.status as RelayState,
-        // The resolver's fold carries no per-relay event count — 0, never
-        // a guess; `routes` likewise reports one observed resolution leg.
-        routes: 1,
-        received: 0,
-        rejected: 0,
-      })
-    );
+    // below) go to the configured pool — that pool is the run's leg-pool. The
+    // PINNED set must also cover every relay the receipts name: a pool of two
+    // configured relays beside a hint-relay receipt would describe two
+    // different sets as one run's truth (spec §2 — the row names what was
+    // asked, and the resolver asked the hints too).
+    const asked = new Set(settings.relays);
+    for (const r of receipts ?? []) asked.add(r.url);
+    this.runRelays = Object.freeze([...asked]);
+    // The resolution's receipts ride the run-scoped carrier UNCHANGED
+    // (issue #131): the fold at the resolver already counted bytes, legs
+    // and verdicts — re-shaping them here invented zeros for real counts.
+    this.recordedRelayReceipts = (receipts ?? []).map((r) => ({ ...r }));
 
     this.result = {
       searches: [],

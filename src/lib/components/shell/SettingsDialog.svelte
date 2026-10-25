@@ -237,6 +237,7 @@
 		if (backdropPressed && event.target === event.currentTarget) closeDialog();
 		backdropPressed = false;
 	}}
+	onmousedown={(event) => (backdropPressed = event.target === event.currentTarget)}
 	role="presentation"
 >
 	<div

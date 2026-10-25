@@ -345,9 +345,9 @@ describe('openSharedRecord — cold-open resolution (issue #31)', () => {
 
 		expect(res.openedFrom).toBe('relays');
 		expect(res.receipts).toEqual([
-			{ url: 'wss://hint', status: 'refused' },
-			{ url: 'wss://cfg-dead', status: 'refused' },
-			{ url: 'wss://cfg-live', status: 'ok' }
+			{ url: 'wss://hint', status: 'refused', routes: 1, received: 0, rejected: 0 },
+			{ url: 'wss://cfg-dead', status: 'refused', routes: 1, received: 0, rejected: 0 },
+			{ url: 'wss://cfg-live', status: 'ok', routes: 1, received: 1, rejected: 0 }
 		]);
 		// `wss://cfg-dead` failed too but it is not a hint, so only the hint
 		// leg feeds the share footer (spec §4).
@@ -376,8 +376,8 @@ describe('openSharedRecord — cold-open resolution (issue #31)', () => {
 		// leg): one relay, one verdict — ok wins, because the leg that
 		// answered proves the relay was reachable (relay-readout fold).
 		expect(res.receipts).toEqual([
-			{ url: 'wss://shared', status: 'ok' },
-			{ url: 'wss://write', status: 'ok' }
+			{ url: 'wss://shared', status: 'ok', routes: 2, received: 1, rejected: 0 },
+			{ url: 'wss://write', status: 'ok', routes: 1, received: 1, rejected: 0 }
 		]);
 		// The failure ledger is NOT folded: the hint leg died, so the
 		// recipient is still told the hint failed (spec §4).
@@ -423,9 +423,9 @@ describe('openSharedRecord — cold-open resolution (issue #31)', () => {
 		// and receipted — under its canonical spelling only.
 		expect(pool.queried).toEqual(['wss://nip65src', 'wss://write']);
 		expect(res.receipts).toEqual([
-			{ url: 'wss://dead', status: 'refused' },
-			{ url: 'wss://nip65src', status: 'ok' },
-			{ url: 'wss://write', status: 'ok' }
+			{ url: 'wss://dead', status: 'refused', routes: 2, received: 0, rejected: 0 },
+			{ url: 'wss://nip65src', status: 'ok', routes: 1, received: 1, rejected: 0 },
+			{ url: 'wss://write', status: 'ok', routes: 1, received: 1, rejected: 0 }
 		]);
 	});
 
