@@ -233,12 +233,13 @@
 <div
 	class="fixed inset-0 z-50 flex items-center justify-center bg-black/20"
 	style:animation="fade-in 180ms ease-out both"
-	onclick={(event) => {
-		// Both ends on the backdrop: a drag starting INSIDE the panel (text
-		// selection) keeps its target on an inner element, and a drag starting
-		// on the backdrop and releasing INSIDE the panel must not close either
-		// — the click only lands here when both press and release end on the
-		// overlay itself.
+	onmouseup={(event) => {
+		// Decide on mouseup, never click: a drag's click dispatches to the
+		// press/release COMMON ANCESTOR — the overlay — so a click handler
+		// would close the dialog even when the release landed inside the
+		// panel. mouseup's target is the real release point: only press AND
+		// release both on the overlay closes (Svelte a11y demands a keyboard
+		// route too — Escape in the shell map is it, shell.svelte.ts).
 		if (backdropPressed && event.target === event.currentTarget) closeDialog();
 		backdropPressed = false;
 	}}
