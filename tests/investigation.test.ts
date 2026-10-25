@@ -38,7 +38,7 @@ import {
 	recordFillFailure,
 	resetInvestigation,
 } from '../src/lib/investigation.svelte';
-import { aggregatePerRelay } from '../src/lib/relay-readout';
+import { aggregatePerRelay, degradedBannerText } from '../src/lib/relay-readout';
 import { resetShell, shell } from '../src/lib/shell.svelte';
 import { resetSettings, settings } from '../src/lib/settings.svelte';
 import type { SearchSession } from '../src/lib/pipeline';
@@ -301,6 +301,54 @@ describe('aggregatePerRelay — one receipt per relay (issue #132)', () => {
 		]);
 		expect(receipt.routes).toBe(1);
 		expect(receipt.received).toBe(3);
+	});
+
+	// The corner banner reads the SAME fold, so it can only count relays.
+	describe('degradedBannerText', () => {
+		it('counts RELAYS, never legs', () => {
+			const dead = ['wss://d1.test', 'wss://d2.test', 'wss://d3.test'];
+			const slices = dead.flatMap((url) =>
+				['tag:cc', 'tag:cve', 'tag:purl'].map((route) => ({
+					url,
+					received: 0,
+					rejected: 0,
+					route,
+					status: 'refused' as const
+				}))
+			);
+			expect(degradedBannerText(aggregatePerRelay(slices))).toBe(
+				'3 relays refused — showing results from the rest'
+			);
+		});
+
+		it('keeps failure classes apart — the remedy differs', () => {
+			const receipts = aggregatePerRelay([
+				{ url: 'wss://ok.test', received: 5, rejected: 0, route: 'tag:cc', status: 'ok' },
+				{ url: 'wss://d1.test', received: 0, rejected: 0, route: 'tag:cc', status: 'refused' },
+				{ url: 'wss://d2.test', received: 0, rejected: 0, route: 'tag:cc', status: 'refused' },
+				{ url: 'wss://slow.test', received: 0, rejected: 0, route: 'tag:cc', status: 'timeout' }
+			]);
+			expect(degradedBannerText(receipts)).toBe(
+				'2 relays refused · 1 relay timeout — showing results from the rest'
+			);
+		});
+
+		it('names a lone degraded relay in full', () => {
+			const receipts = aggregatePerRelay([
+				{ url: 'wss://ok.test', received: 5, rejected: 0, route: 'tag:cc', status: 'ok' },
+				{ url: 'wss://d1.test', received: 0, rejected: 0, route: 'tag:cc', status: 'refused' }
+			]);
+			expect(degradedBannerText(receipts)).toBe(
+				'relay wss://d1.test refused — showing results from the rest'
+			);
+		});
+
+		it('says nothing when every relay answered', () => {
+			const receipts = aggregatePerRelay([
+				{ url: 'wss://ok.test', received: 5, rejected: 0, route: 'tag:cc', status: 'ok' }
+			]);
+			expect(degradedBannerText(receipts)).toBe('');
+		});
 	});
 });
 

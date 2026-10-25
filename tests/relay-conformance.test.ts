@@ -121,6 +121,28 @@ describe('relay truth conformance (issue #131)', () => {
 		expect(source).not.toMatch(/saved automatically/i);
 	});
 
+	it('the degrade surfaces count relays through the fold, never raw legs (issue #154)', () => {
+		// Issue #132 folded the trace row; #154 found the banner, footer and
+		// all-dead screen still reading per-LEG slices, so 3 dead relays asked
+		// by 3 searches printed "9 relays degraded". The page-level assertions
+		// below are what a revert of +page.svelte would trip.
+		const source = readFileSync(join(SRC, '..', 'routes/+page.svelte'), 'utf8');
+		expect(source, 'banner/footer/error screen must read the per-relay fold').toMatch(
+			/const relayReceipts = \$derived\(aggregatePerRelay\(investigation\.slices\)\)/
+		);
+		expect(source, 'the banner text must come from the folded receipts').toContain(
+			'degradedBannerText(relayReceipts)'
+		);
+		expect(source, 'ResultsError must receive folded receipts').toContain('relays={relayReceipts}');
+		// The regression shape itself: a filter over raw slices.
+		expect(source, 'no surface may filter raw slices for degraded legs').not.toMatch(
+			/investigation\.slices\.filter/
+		);
+		expect(source, 'the footer ledger must read folded receipts').toMatch(
+			/\.\.\.degradedRelays\.map\(/
+		);
+	});
+
 	it('the endpoint draft holds the same pristine-rebase guard as the relay drafts', () => {
 		const source = readFileSync(join(SRC, 'components/shell/SettingsDialog.svelte'), 'utf8');
 		// The dialog mounts before settings.ready() can resolve and would show
