@@ -6,6 +6,7 @@
 
 import type { Phase, PipelineNotice } from '$lib/pipeline';
 import type { SearchRequest } from '$lib/ai/agents/query';
+import type { RelayReceipt } from '$lib/relay-readout';
 
 export type RowStatus = 'pending' | 'running' | 'completed' | 'skipped' | 'failed';
 
@@ -36,6 +37,17 @@ export interface TraceInput {
 	skeletons: { typeTag?: string }[];
 	notices: PipelineNotice[];
 	relayCount: number;
+	/** Which run produced this state (issue #131): a share cold-open never
+	 * queried its pool, so the sources row must not report "0 of N answered"
+	 * over a query that never happened. Absent = 'search'. A restored
+	 * session needs no arm here: its counter is derived from the slices
+	 * themselves (every leg is the cache reconstruction, issue #83), so a
+	 * 'restore' value would be written and never read. */
+	runKind?: 'search' | 'share';
+	/** Folded per-RELAY receipts (issues #131/#132), already aggregated by
+	 * $lib/relay-readout. Present = render one tick per relay; absent =
+	 * render the raw per-leg slices (fold nothing, invent nothing). */
+	relayLines?: RelayReceipt[];
 	error: string | null;
 	/** Write-descriptions fill progress (#38): present once a fill attempt
 	 * started; `running` while chunks are in flight. Absent = no attempt —
@@ -50,10 +62,17 @@ const LABELS: Record<PhaseRow['id'], string> = {
 	decouple: 'Decoupling and filling the cards'
 };
 
-function hostOf(url: string): string {
+/** What the literal layer calls a relay: host + path, 'local cache' for the
+ * cache leg, and the raw url when it does not parse (never invent a host —
+ * spec §2). The path is part of the label because tick identity is the text
+ * (review finding 13): PhaseRow keys every tick by text, so host alone is not
+ * identity — two distinct relays on one host with matching counts would
+ * collapse into a single line and the run would under-report its sources. */
+function relayLabel(url: string): string {
 	if (url === 'local-cache') return 'local cache';
 	try {
-		return new URL(url).host;
+		const { host, pathname } = new URL(url);
+		return pathname === '/' ? host : `${host}${pathname}`;
 	} catch {
 		return url;
 	}
@@ -80,6 +99,22 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 		slices.filter((s) => s.url !== 'local-cache' && s.status === 'ok').map((s) => s.url)
 	).size;
 
+	// Run provenance (issue #131): the sources row describes THIS run, never
+	// the live Settings list; relayCount already arrives frozen. `runKind`
+	// only distinguishes the case slices cannot: a share cold-open never
+	// queried the pool, so there is no honest "N answered" to state.
+	const runKind = input.runKind ?? 'search';
+	// Restored session (issue #83): every slice is the cache reconstruction.
+	// every(), not some(): a LIVE cache-assisted run whose relays all refused
+	// keeps its true "0 of N answered" verbatim.
+	const restoredFromCache =
+		done && answered === 0 && slices.length > 0 && slices.every((s) => s.url === 'local-cache');
+	// Share cold-open (issue #31): the whole frontier came from the link, so
+	// only cache legs can exist. Same exclusion aggregatePerRelay uses, so a
+	// slice hidden from the fold can never hide the run's real legs here.
+	const shareOpened =
+		runKind === 'share' && done && !slices.some((s) => s.url !== 'local-cache' && s.route !== 'cache');
+
 	// The literal layer (spec §2 rule 6): per-slice receipts verbatim —
 	// route label, relay, counts — plus honesty cells for scan fallbacks
 	// and truncation. Nothing is smoothed over. Each tick is deduped by
@@ -95,17 +130,56 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 		seenText.add(tick.text);
 		ticks.push(tick);
 	};
+	// Folded per-relay lines (issues #131/#132) come first when the caller
+	// supplies them: one tick per source, so a relay asked on three legs is
+	// one source. Without them the raw legs render exactly as before.
+	if (input.relayLines !== undefined) {
+		for (const line of input.relayLines) {
+			// `routes` is ABSENT only on receipts restored from a row written
+			// before the field existed: unknown stays unrecorded — never a
+			// fabricated "1 route" or a lying "0" (spec §2).
+			const legCount =
+				line.routes === undefined ? '' : ` - ${line.routes} ${line.routes === 1 ? 'route' : 'routes'}`;
+			addTick({
+				text:
+					line.status === 'ok'
+						? `${relayLabel(line.url)}${legCount} - ${line.received} records`
+						: `relay ${relayLabel(line.url)} ${line.status}`,
+				warn: line.status !== 'ok'
+			});
+		}
+	}
 	for (const s of slices) {
+		// The fold already carries every non-cache leg; the cache leg has no
+		// relay receipt, so it keeps its own tick and stays visible even when
+		// it is the only slice (restore, cache-assisted start).
+		if (input.relayLines !== undefined && s.url !== 'local-cache' && s.route !== 'cache') continue;
 		// Non-ok legs render the status verbatim instead of pretending to be
 		// an empty result (review P1): dead relay ≠ no matches (spec §3/§4).
 		addTick({
 			text:
 				s.status === 'ok'
-					? `${s.route} ${hostOf(s.url)} → ${s.received} records`
-					: `relay ${hostOf(s.url)} ${s.status} · no events received`,
+					? `${s.route} ${relayLabel(s.url)} → ${s.received} records`
+					: `relay ${relayLabel(s.url)} ${s.status} · no events received`,
 			// Fullscan legs are the honesty cells (spec §3: the relay couldn't
 			// search, so we scanned) — amber, never silent.
 			warn: s.status !== 'ok' || s.route.endsWith(':fullscan')
+		});
+	}
+	// A restored run still knows which pool its session recorded (#131): name
+	// it instead of leaving the fold looking like the whole relay set. A row
+	// written before the field existed recorded nothing — say THAT, because
+	// its context legs query today's pool: silence would let the run claim a
+	// relay set the trace never names (spec §2 rule 6). Shares never get
+	// this tick: their surface is a cache reconstruction from the link, not
+	// a run row, and openShared records receipts under runRelays anyway —
+	// saying "not recorded" about a share would be a new lie.
+	if (restoredFromCache && !shareOpened) {
+		addTick({
+			text:
+				relayCount > 0
+					? `relay set as recorded - ${relayCount} relays`
+					: 'relay set not recorded - context queries today\u2019s pool'
 		});
 	}
 	for (const notice of notices) {
@@ -150,13 +224,13 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 			// painted its whole frontier from the cache (spec §2 rule 6).
 			// every(), not some(): a LIVE cache-assisted run whose relays all
 			// refused keeps refusing-relay truths ("0 of N answered" verbatim).
-			counter:
-				relayCount === 0
+			// Share cold-opens (#31) outrank both: no query happened at all,
+			// so the row names the link instead of a relay tally.
+			counter: shareOpened
+				? 'opened from share link'
+				: relayCount === 0
 					? ''
-					: done &&
-							answered === 0 &&
-							slices.length > 0 &&
-							slices.every((s) => s.url === 'local-cache')
+					: restoredFromCache
 						? 'restored from local cache'
 						: done || phase === 'fetch'
 							? `${answered} of ${relayCount} answered`

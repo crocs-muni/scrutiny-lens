@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount } from 'svelte';
-	import { initPersistence, listSessions } from '$lib/db';
+	import { listSessions } from '$lib/db';
 	import { hydrateDeadLetters } from '$lib/ai/deadLetter';
 	import { mergeSessionLists, shell } from '$lib/shell.svelte';
 	import { settings } from '$lib/settings.svelte';
@@ -18,16 +18,14 @@
 	// Boot hydration (issue #12, spec §6): persistence is best-effort and fails
 	// silently to memory-only, so nothing in here can throw.
 	onMount(async () => {
-		await initPersistence();
-		// Settings first: the theme/relay/endpoint defaults must be the
-		// persisted ones before any dialog opens (a pre-hydration edit would
-		// otherwise be clobbered).
-		await settings.hydrate();
+		// Settings first, behind the single-flight barrier (issue #131): every
+		// I/O entry point (search, share resolve, profiles) awaits the same
+		// ready(), so no relay query can fire against pre-hydration defaults.
+		await settings.ready();
 		// Keep a session created before hydration finishes instead of
 		// clobbering it — its fire-and-forget put may land after listSessions.
 		shell.sessions = mergeSessionLists(await listSessions(), shell.sessions);
 		await hydrateDeadLetters();
-
 	});
 </script>
 

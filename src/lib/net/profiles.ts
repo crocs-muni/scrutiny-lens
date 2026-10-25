@@ -6,9 +6,15 @@
 //
 // Relay I/O is nostr-tools ONLY (AGENTS.md hard rule). The pool idiom is the
 // transport's: one-shot querySync bounded by maxWait, and destroy() to sweep
-// every opened relay once the query settles, so websockets can't leak. This
-// seam reads settings at call time (dynamic import) so the publisher chip
-// stays presentational — it never imports the settings singleton.
+// every opened relay once the query settles, so websockets can't leak. The
+// settings singleton is read at call time (dynamic import, in getProfile) so
+// the publisher chip stays presentational — it never imports settings.
+//
+// Pool-scoped truth (issue #131 WP7, spec §2 never-lie): the answer belongs to
+// the pool that produced it. A miss earned while the relay list was empty,
+// being edited, or dead is NOT evidence about a different pool, so the pool is
+// part of the cache key instead of ambient state — otherwise the chip replays
+// "no kind-0 profile on your relays" under relays that were never asked.
 
 import { SimplePool } from 'nostr-tools/pool';
 
@@ -17,14 +23,23 @@ export interface PublisherProfile {
 	picture: string | null;
 }
 
-/** Settled profile cache — a pubkey asked twice pays zero relays. */
+/** Three-state result: an object was found, null means the pool was asked and
+ * no relay held a kind-0 event, undefined means NOTHING WAS ASKED (empty pool)
+ * — the chip may claim nothing at all in that case. */
+export type ProfileLookup = PublisherProfile | null | undefined;
+
+/** What a settled lookup licenses the chip to say (spec §2 never-lie). */
+export type ProfileClaim = 'found' | 'missing' | 'unasked';
+
+/** Settled profile cache — a pubkey asked twice under one pool pays zero
+ * relays. Keyed by pool fingerprint (see lookupKey). */
 const cache = new Map<string, PublisherProfile | null>();
 /** Misses are cached only briefly — a cold-start failure (relay list being
  * edited, relay warming) must NOT freeze the identicon for the tab's whole
  * lifetime (review finding). */
 const misses = new Map<string, number>();
-/** In-flight dedupe — concurrent callers of one pubkey share a single fetch. */
-const inflight = new Map<string, Promise<PublisherProfile | null>>();
+/** In-flight dedupe — concurrent callers of one pool+pubkey share one fetch. */
+const inflight = new Map<string, Promise<ProfileLookup>>();
 
 /** Hard cap on the whole query (connect + EOSE) per pubkey; ≥ the first
  * handshake window so a fresh relay isn't judged before it connects. */
@@ -52,49 +67,90 @@ function release(): void {
 	queue.shift()?.();
 }
 
-export function getProfile(pubkey: string): Promise<PublisherProfile | null> {
-	const hit = cache.get(pubkey);
+/** Cache key = trusted pool + pubkey. The fingerprint is the joined relay
+ * list: a hit or a miss is only ever replayed under the relays that earned it
+ * (issue #131 WP7). Deliberately order-sensitive — a reordered list is a
+ * different pool object as far as trust goes, and re-querying is cheap. */
+function lookupKey(pool: readonly string[], pubkey: string): string {
+	return `${pool.join('\n')}|${pubkey}`;
+}
+
+/** The chip's honest claim for a settled lookup — pure so the mapping is
+ * testable without mounting the component (node test env has no DOM). */
+export function profileClaim(lookup: ProfileLookup): ProfileClaim {
+	if (lookup === undefined) return 'unasked';
+	return lookup === null ? 'missing' : 'found';
+}
+
+/**
+ * Resolves a pubkey against the LIVE relay pool. Awaits the boot barrier
+ * first: a chip mounting before hydration would otherwise query the
+ * pre-hydration default relays and cache that answer under relays the user
+ * never chose (issue #131 WP7). ready() is single-flight and free after boot.
+ */
+export async function getProfile(pubkey: string): Promise<ProfileLookup> {
+	// Settings read at call time so this seam follows the live relay pool.
+	// Dynamic import REQUIRED (ts-no-dynamic-import exception): this net seam
+	// must not make the presentational chip pull the settings singleton as a
+	// hard module-load dependency — spec §9 wires nothing in components; the
+	// page owns the singleton.
+	const { settings } = await import('$lib/settings.svelte');
+	await settings.ready();
+	// Snapshot the hydrated pool: the key and the query must name the same
+	// relays even if the user edits the list mid-flight.
+	return queryProfile(pubkey, [...settings.relays]);
+}
+
+/**
+ * Pool-scoped resolve. An empty pool asks nothing and therefore answers
+ * undefined (never a miss: "no profile" is a claim about relays, and there
+ * are none). Everything else is served from the pool-keyed cache, the
+ * short-lived miss table, or one shared fresh query.
+ */
+function queryProfile(pubkey: string, pool: readonly string[]): Promise<ProfileLookup> {
+	if (pool.length === 0) return Promise.resolve(undefined);
+
+	const key = lookupKey(pool, pubkey);
+	const hit = cache.get(key);
 	if (hit !== undefined) return Promise.resolve(hit);
-	const missedAt = misses.get(pubkey);
+	const missedAt = misses.get(key);
 	if (missedAt !== undefined && Date.now() - missedAt < MISS_TTL_MS) return Promise.resolve(null);
 
-	const pending = inflight.get(pubkey);
+	const pending = inflight.get(key);
 	if (pending) return pending;
 
 	const fetch = (async () => {
 		await acquire();
 		try {
-			const profile = await queryProfile(pubkey);
-			if (profile === null) misses.set(pubkey, Date.now());
+			const profile = await fetchProfile(pubkey, pool);
+			if (profile === null) misses.set(key, Date.now());
 			else {
-				cache.set(pubkey, profile);
-				misses.delete(pubkey);
+				cache.set(key, profile);
+				misses.delete(key);
 			}
 			return profile;
 		} finally {
 			release();
 		}
-	})().finally(() => inflight.delete(pubkey));
-	inflight.set(pubkey, fetch);
+	})().finally(() => inflight.delete(key));
+	inflight.set(key, fetch);
 	return fetch;
 }
 
 /**
- * Resolves null on ANY failure (all relays refused / timed out, malformed
- * JSON) — never throws, so the component's fallback is always honest.
+ * Raw relay read against exactly the given relays. Resolves null on ANY
+ * failure (all relays refused / timed out, malformed JSON) — never throws, so
+ * the component's fallback is always honest.
  */
-async function queryProfile(pubkey: string): Promise<PublisherProfile | null> {
-	const pool = new SimplePool({ enableReconnect: false });
+async function fetchProfile(
+	pubkey: string,
+	relays: readonly string[]
+): Promise<PublisherProfile | null> {
+	const client = new SimplePool({ enableReconnect: false });
 	try {
-		// Settings read at call time so this seam follows the live relay pool.
-		// Dynamic import REQUIRED (ts-no-dynamic-import exception): this net seam
-		// must not make the presentational chip pull the settings singleton as a
-		// hard module-load dependency — spec §9 wires nothing in components; the
-		// page owns the singleton.
-		const { settings } = await import('$lib/settings.svelte');
 		// querySync's maxWait bounds the whole query and resolves [] on timeout.
-		const events = await pool.querySync(
-			settings.relays,
+		const events = await client.querySync(
+			[...relays],
 			{ kinds: [0], authors: [pubkey], limit: 1 },
 			{ maxWait: PROFILE_TIMEOUT_MS }
 		);
@@ -103,7 +159,7 @@ async function queryProfile(pubkey: string): Promise<PublisherProfile | null> {
 		// All relays refused or timed out — treat as no profile.
 		return null;
 	} finally {
-		pool.destroy();
+		client.destroy();
 	}
 }
 
@@ -129,8 +185,9 @@ function pickString(value: unknown): string | undefined {
 }
 
 /**
- * Test seam — same shape as resetInvestigation: clears both the settled
- * cache and any in-flight dedupe so a spec file starts from zero relays.
+ * Test seam — same shape as resetInvestigation: clears the pool-keyed settled
+ * cache, the miss table and any in-flight dedupe so a spec file starts from
+ * zero relays.
  */
 export function resetProfiles(): void {
 	cache.clear();

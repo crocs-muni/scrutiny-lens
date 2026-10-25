@@ -16,6 +16,7 @@ import {
 	getSessionRun,
 	initPersistence,
 	putSessionRun,
+	type PersistedSessionRun,
 	saveInterpretation
 } from '$lib/db';
 import { investigation, resetInvestigation } from '../src/lib/investigation.svelte';
@@ -72,11 +73,13 @@ function metadata(id: string): NostrEvent {
 	};
 }
 
-/** The settled-run row a reload-restore reads back (issue #83's frontier pin). */
+/** The settled-run row a reload-restore reads back (issue #83's frontier pin;
+ * `relays` is issue #131's run-pool receipt block). */
 async function pinRun(
 	sessionId: string,
 	admittedIds: string[],
-	elapsedMs: number | null = 4_200
+	elapsedMs: number | null = 4_200,
+	relays?: PersistedSessionRun['relays']
 ): Promise<void> {
 	await putSessionRun({
 		sessionId,
@@ -85,7 +88,8 @@ async function pinRun(
 		// hex's `len` parameter — the trap that made the first run's ids "" / "0".
 		admittedIds: admittedIds.map((id) => hex(id)),
 		settledAt: 1_700_000_001_000,
-		elapsedMs
+		elapsedMs,
+		...(relays === undefined ? {} : { relays })
 	});
 }
 
@@ -174,6 +178,35 @@ describe('restore — rebuilds the settled surface (issue #83)', () => {
 	});
 });
 
+// issue #131: a restored session names the relays ITS run asked — painted
+// from the pinned row, never from live Settings. A pool edit since that run
+// must not rewrite history (spec §2: the trace names the relays that were
+// actually asked).
+describe('restore — the relay pool comes from the record (issue #131)', () => {
+	it('paints the record’s pool, not the live Settings pool', async () => {
+		await cacheEvent(product('a1'));
+		await pinRun('s1', ['a1'], 4_200, {
+			pool: ['wss://persisted.test'],
+			perRelay: [{ url: 'wss://persisted.test', status: 'ok', received: 1 }]
+		});
+		settings.relays = ["wss://live.test"];
+
+		expect(await investigation.restore('s1')).toBe(true);
+
+		expect(investigation.runRelays).toEqual(['wss://persisted.test']);
+	});
+
+	it('a legacy row without the field restores as "not recorded", never as live relays', async () => {
+		await cacheEvent(product('a1'));
+		await pinRun('s1', ['a1']); // no relays block — the pre-#131 row shape
+		settings.relays = ["wss://live.test"];
+
+		expect(await investigation.restore('s1')).toBe(true);
+
+		expect(investigation.runRelays).toEqual([]);
+	});
+});
+
 describe('restore — honest declines (issue #83)', () => {
 	it('declines a session with no run row and names it for the relic placeholder', async () => {
 		expect(await investigation.restore('s-relic')).toBe(false);
@@ -206,8 +239,7 @@ describe('restore — displacement (owner ruling 2026-09-26: restore wins the su
 			searches: [],
 			admitted: [product('a1'), metadata('b1')],
 			invalidSkipped: 0,
-			notices: [],
-			relays: []
+			notices: []
 		} as SearchSession;
 
 		expect(await investigation.restore('s1')).toBe(true);
@@ -231,8 +263,7 @@ describe('restore — displacement (owner ruling 2026-09-26: restore wins the su
 			searches: [],
 			admitted: [product('c1')],
 			invalidSkipped: 0,
-			notices: [],
-			relays: []
+			notices: []
 		} as SearchSession;
 
 		expect(await investigation.restore('s1')).toBe(true);
@@ -363,9 +394,13 @@ describe('restore — supersession and shared opens (review H2/L8)', () => {
 		await pinRun('s1', ['a1']);
 		settings.relays = []; // start() settles locally — transport construction throws into its own net, no network
 		const restoring = investigation.restore('s1');
-		void investigation.start('fresh question');
+		const starting = investigation.start('fresh question');
 
 		expect(await restoring).toBe(false);
+		// start() crosses the settings.ready() boot barrier before it paints
+		// (issue #131: never query pre-hydration defaults), so the new run's
+		// session row lands when ITS promise settles — await it, then assert.
+		await starting;
 		// The new run owns the paint — the restore's session/cards/results
 		// never land, and the new session's row keeps its own identity.
 		expect(investigation.sessionId).toBe(shell.session?.id);
@@ -390,8 +425,12 @@ describe('restore — supersession and shared opens (review H2/L8)', () => {
 describe('resetInvestigation — full-surface seam (review L9)', () => {
 	it('clears every settled/restore field, including the backfilled five', async () => {
 		await cacheEvent(product('a1'));
-		await pinRun('s1', ['a1']);
+		await pinRun('s1', ['a1'], 4_200, {
+			pool: ['wss://persisted.test'],
+			perRelay: [{ url: 'wss://persisted.test', status: 'ok', received: 1 }]
+		});
 		expect(await investigation.restore('s1')).toBe(true);
+		expect(investigation.runRelays).toEqual(['wss://persisted.test']); // painted first
 		investigation.lastQuestion = 'dirty';
 		investigation.graphSubjectId = hex('a1');
 		investigation.expandedRelated = [hex('a1')];
@@ -400,6 +439,7 @@ describe('resetInvestigation — full-surface seam (review L9)', () => {
 		resetInvestigation();
 
 		expect(investigation.sessionId).toBeNull();
+		expect(investigation.runRelays).toEqual([]); // issue #131: pool dies with the run
 		expect(investigation.restoredEvicted).toBeNull();
 		expect(investigation.restoreMissId).toBeNull();
 		expect(investigation.lastQuestion).toBe('');

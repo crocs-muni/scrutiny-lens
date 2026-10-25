@@ -19,7 +19,7 @@ import type { Filter } from 'nostr-tools/filter';
 import { openSharedRecord, ShareNotFoundError, ShareRejectedError } from '../src/lib/pipeline/share-open';
 import type { SharePointer } from '$lib/share/deep-link';
 import type { PoolFactory, PoolLike, RelayLike } from '$lib/net/transport';
-import { _closeForTests, clearAllLocalData, initPersistence } from '$lib/db';
+import { _closeForTests, clearAllLocalData, initPersistence, saveSettings } from '$lib/db';
 import { indexEvent } from '$lib/search';
 import { resetSettings, settings } from '$lib/settings.svelte';
 
@@ -51,6 +51,27 @@ class FakePool implements PoolLike {
 				? script.filter((e) => e.kind === 10002)
 				: script.filter((e) => e.kind !== 10002)
 		);
+	}
+}
+
+/** FakePool whose ID queries fail while its relay-list queries still answer
+ * — one relay with CONTRADICTORY leg outcomes, the exact case the share
+ * receipt fold exists for (issue #131). The refusal has to happen inside
+ * querySync, not ensureRelay: only the filter tells the two legs apart. */
+class SplitPool extends FakePool {
+	constructor(
+		scripts: Scripts,
+		private readonly refuseIdQueries: string[]
+	) {
+		super(scripts);
+	}
+
+	override querySync(urls: string[], filter: Filter): Promise<NostrEvent[]> {
+		const wantsRelayList = filter.kinds?.includes(10002) ?? false;
+		if (!wantsRelayList && this.refuseIdQueries.includes(urls[0])) {
+			return Promise.reject(new Error(`refused the id query on ${urls[0]}`));
+		}
+		return super.querySync(urls, filter);
 	}
 }
 
@@ -303,6 +324,109 @@ describe('openSharedRecord — cold-open resolution (issue #31)', () => {
 
 		expect(res.subjectId).toBe(subject.id);
 		expect(res.failedHints).toEqual([]);
+		// Issue #131: nothing was asked of a relay, so the cold open says so
+		// — no receipts, and the source counter has no denominator to lie
+		// with (a cache hit must never read "0 of <configured pool>").
+		expect(res.openedFrom).toBe('cache');
+		expect(res.receipts).toEqual([]);
+	});
+
+	it('reports exactly the relays it asked, in first-asked order: hints, then configured (issue #131)', async () => {
+		const subject = scProduct();
+		settings.relays = ['wss://cfg-dead', 'wss://cfg-live'];
+		// No author on the pointer, so the NIP-65 leg never runs: the
+		// receipt list is leg 1 (hint) then leg 3 (configured pool).
+		const pool = new FakePool({
+			'wss://hint': undefined,
+			'wss://cfg-dead': undefined,
+			'wss://cfg-live': [subject]
+		});
+		const res = await openSharedRecord(pointer(subject.id, ['wss://hint']), () => pool);
+
+		expect(res.openedFrom).toBe('relays');
+		expect(res.receipts).toEqual([
+			{ url: 'wss://hint', status: 'refused', routes: 1, received: 0, rejected: 0 },
+			{ url: 'wss://cfg-dead', status: 'refused', routes: 1, received: 0, rejected: 0 },
+			{ url: 'wss://cfg-live', status: 'ok', routes: 1, received: 1, rejected: 0 }
+		]);
+		// `wss://cfg-dead` failed too but it is not a hint, so only the hint
+		// leg feeds the share footer (spec §4).
+		expect(res.failedHints).toEqual(['wss://hint']);
+	});
+
+	it('folds a relay’s legs to ONE receipt — refused the id leg, answered the relay-list leg (issue #131)', async () => {
+		const key = generateSecretKey();
+		const subject = scProductBy(key);
+		settings.relays = [];
+		const pool = new SplitPool(
+			{
+				'wss://shared': [subject, relayList(key, [['r', 'wss://write']])],
+				'wss://write': [subject]
+			},
+			['wss://shared']
+		);
+		const res = await openSharedRecord(
+			pointer(subject.id, ['wss://shared'], subject.pubkey),
+			() => pool
+		);
+
+		expect(res.subjectId).toBe(subject.id);
+		expect(res.openedFrom).toBe('relays');
+		// `wss://shared` is asked twice (hinted id leg, then the NIP-65 list
+		// leg): one relay, one verdict — ok wins, because the leg that
+		// answered proves the relay was reachable (relay-readout fold).
+		expect(res.receipts).toEqual([
+			{ url: 'wss://shared', status: 'ok', routes: 2, received: 1, rejected: 0 },
+			{ url: 'wss://write', status: 'ok', routes: 1, received: 1, rejected: 0 }
+		]);
+		// The failure ledger is NOT folded: the hint leg died, so the
+		// recipient is still told the hint failed (spec §4).
+		expect(res.failedHints).toEqual(['wss://shared']);
+	});
+
+	it('waits for the boot barrier: a cold open asks the PERSISTED pool, not the spec defaults (issue #131)', async () => {
+		await saveSettings({ relays: ['wss://persisted.test'] });
+		resetSettings(); // a fresh boot: defaults in state, nothing hydrated yet
+		const subject = scProduct();
+		const pool = new FakePool({ 'wss://persisted.test': [subject] });
+		let hydratedAtPool: boolean | null = null;
+		const res = await openSharedRecord(pointer(subject.id, []), () => {
+			// The ordering under test: the pool is built AFTER hydration, so
+			// the resolution asks (and can only blame) the configured pool.
+			hydratedAtPool = settings.hydrated;
+			return pool;
+		});
+
+		expect(res.subjectId).toBe(subject.id);
+		expect(hydratedAtPool).toBe(true);
+		expect(settings.relays).toEqual(['wss://persisted.test']);
+		expect(pool.queried).toEqual(['wss://persisted.test']);
+	});
+
+	it('canonicalizes NIP-65 write relays: a slashed spelling of an already-asked relay is never a second query (issue #131)', async () => {
+		const key = generateSecretKey();
+		const subject = scProductBy(key);
+		settings.relays = ['wss://nip65src'];
+		const pool = new FakePool({
+			'wss://dead': undefined,
+			'wss://nip65src': [relayList(key, [['r', 'wss://dead/'], ['r', 'wss://write/']])],
+			'wss://write': [subject]
+		});
+		const res = await openSharedRecord(
+			pointer(subject.id, ['wss://dead'], subject.pubkey),
+			() => pool
+		);
+
+		expect(res.subjectId).toBe(subject.id);
+		// `wss://dead/` folds onto the hinted `wss://dead` (already asked), so
+		// the host leg never re-asks it; the slashed write relay is asked —
+		// and receipted — under its canonical spelling only.
+		expect(pool.queried).toEqual(['wss://nip65src', 'wss://write']);
+		expect(res.receipts).toEqual([
+			{ url: 'wss://dead', status: 'refused', routes: 2, received: 0, rejected: 0 },
+			{ url: 'wss://nip65src', status: 'ok', routes: 1, received: 1, rejected: 0 },
+			{ url: 'wss://write', status: 'ok', routes: 1, received: 1, rejected: 0 }
+		]);
 	});
 
 	it('rejects a tampered record with the honest reason (spec §2 never-lie)', async () => {

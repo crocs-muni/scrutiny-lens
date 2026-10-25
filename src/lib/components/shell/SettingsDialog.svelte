@@ -20,10 +20,11 @@
 		IconX
 	} from '@tabler/icons-svelte';
 	import { fetchModels } from '$lib/ai/models';
+	import { persistNote } from '$lib/components/shell/persist-note';
 	import KeyField from '$lib/components/ui/KeyField.svelte';
-	import { RELAY_MAX, RELAY_MIN, type Appearance } from '$lib/config';
 	import { clearAllLocalData } from '$lib/db';
 	import { nextAutoModel, settings } from '$lib/settings.svelte';
+	import { RELAY_MAX, RELAY_MIN, type Appearance } from '$lib/config';
 
 	interface Props {
 		onClose: () => void;
@@ -34,6 +35,20 @@
 	// ── AI provider ──────────────────────────────────────────────────────────
 
 	let endpointDraft = $state(settings.endpoint);
+	/** True while the endpoint field carries typed-but-uncommitted text:
+		* the rebase $effect below must hold the draft then, not follow the
+		* committed endpoint. */
+	let endpointDirty = $state(false);
+	// Pristine endpoint drafts follow the committed endpoint — the same guard
+	// the relay drafts carry. The dialog can mount before settings.ready()
+	// resolves and would show DEFAULT_ENDPOINT while the hydrated one lands
+	// underneath; an innocent blur would then persist the default over the
+	// user's real endpoint (exactly the class the relay drafts were fixed
+	// for). Dirty drafts are the fresher truth and stay put.
+	$effect(() => {
+		if (endpointDirty) return;
+		endpointDraft = settings.endpoint;
+	});
 	// Focus management for the hand-rolled modal: land in the first field on
 	// open (the background is inert, +page.svelte),
 	// put focus back where it came from on unmount.
@@ -49,7 +64,13 @@
 
 	function commitEndpoint(): void {
 		const endpoint = endpointDraft.trim();
-		if (endpoint !== '' && endpoint !== settings.endpoint) void settings.setEndpoint(endpoint);
+		// Blank is "not entered yet", never a payload (same rule as the relay
+		// rows) — the draft stays as typed rather than being committed.
+		if (endpoint === '') return;
+		// Pristine again: setEndpoint writes settings.endpoint synchronously,
+		// so the rebase effect settles the draft on the committed value.
+		endpointDirty = false;
+		if (endpoint !== settings.endpoint) void settings.setEndpoint(endpoint);
 	}
 
 	/** Live model list (spec §5): refetches (debounced) whenever the endpoint
@@ -133,6 +154,22 @@
 
 	let relayDrafts = $state<string[]>(padRelayDrafts([...settings.relays]));
 	let relayError = $state('');
+	/** Save truth (issue #131, spec §2 never-lie): what the last save actually
+	 * did, rendered once under the pool editor. */
+	const note = $derived(persistNote(settings.persistState));
+	/** True while a relay row carries typed-but-uncommitted text (#131): the
+		* rebase $effect below must hold drafts then, not follow the pool. */
+	let dirty = $state(false);
+	// Pristine drafts follow the committed pool: the dialog can mount before
+	// settings.ready() resolves, and pre-hydration it would otherwise show the
+	// default pool while the hydrated one lands underneath — the editor showing
+	// anything other than settings.relays is exactly the #131 lie. Dirty drafts
+	// (user typing) are the fresher truth and stay put; the flip back to
+	// pristine after a commit or revert makes this re-run harmlessly.
+	$effect(() => {
+		if (dirty) return;
+		relayDrafts = padRelayDrafts([...settings.relays]);
+	});
 	// Backdrop close applies ONLY when the press itself started on the
 	// backdrop — a text-selection drag that leaves the dialog would
 	// otherwise close it with uncommitted drafts.
@@ -143,15 +180,27 @@
 		// "not entered yet", never a payload — committing them as entries would
 		// throw a spurious validation error on an innocent blur.
 		const drafts = relayDrafts.map((u) => u.trim()).filter((u) => u !== '');
-		if (drafts.length === settings.relays.length && drafts.every((u, i) => u === settings.relays[i])) {
-			relayError = '';
-			return;
-		}
+		// Identical list (blur with no edit, or a revert already applied):
+		// there is nothing to save; the finally below still rebuilds the
+		// padded view of the committed pool.
+		const unchanged =
+			drafts.length === settings.relays.length && drafts.every((u, i) => u === settings.relays[i]);
 		try {
-			await settings.setRelays(drafts);
-			relayDrafts = padRelayDrafts([...drafts]); // drop consumed blanks
+			// Save failures don't throw (SaveOutcome → persistState, rendered by
+			// the footer) — only validation reaches this catch, before any
+			// mutation, so settings.relays is still the last good pool.
+			if (!unchanged) await settings.setRelays(drafts);
 			relayError = '';
+			// Committed truth: blanks dropped, floor padded.
+			relayDrafts = padRelayDrafts([...settings.relays]);
+			dirty = false;
 		} catch (error) {
+			// KEEP the draft on a rejected edit (delta/spec review): the pool is
+			// untouched either way, so the #131 invariant (queried set ==
+			// committed set) already holds — while wiping the buffer would
+			// destroy typed input AND leave the error naming a list that is no
+			// longer on screen. Draft stays dirty so the hydrate rebase never
+			// overwrites it; the next clean commit clears both.
 			relayError = error instanceof Error ? error.message : String(error);
 		}
 	}
@@ -165,6 +214,16 @@
 		relayDrafts.push('');
 	}
 
+	/** Close-with-commit (#131): blur before unmounting. Chrome moves focus on
+		* mousedown so the row's onblur already fired by click time; Safari does
+		* NOT move focus on click, so without this a typed-but-unblurred relay
+		* would die silently with the dialog (the Esc path in shell.svelte.ts
+		* blurs first for the same reason). */
+	function closeDialog(): void {
+		(globalThis.document?.activeElement as HTMLElement | null)?.blur?.();
+		onClose();
+	}
+
 	// ── Data (spec §6: one Clear-all action) ─────────────────────────────────
 
 	async function clearAll(): Promise<void> {
@@ -176,11 +235,17 @@
 <div
 	class="fixed inset-0 z-50 flex items-center justify-center bg-black/20"
 	style:animation="fade-in 180ms ease-out both"
-	onclick={(event) => {
-		if (backdropPressed && event.target === event.currentTarget) onClose();
+	onmouseup={(event) => {
+		// Decide on mouseup, never click: a drag's click dispatches to the
+		// press/release COMMON ANCESTOR — the overlay — so a click handler
+		// would close the dialog even when the release landed inside the
+		// panel. mouseup's target is the real release point: only press AND
+		// release both on the overlay closes (Svelte a11y demands a keyboard
+		// route too — Escape in the shell map is it, shell.svelte.ts).
+		if (backdropPressed && event.target === event.currentTarget) closeDialog();
 		backdropPressed = false;
 	}}
-	onmousedown={(event) => (backdropPressed = event.target === event.currentTarget)}
+	onmousedown={(event) => (backdropPressed = event.button === 0 && event.target === event.currentTarget)}
 	role="presentation"
 >
 	<div
@@ -195,7 +260,7 @@
 			<button
 				type="button"
 				aria-label="Close settings"
-				onclick={onClose}
+				onclick={closeDialog}
 				class="primitive-icon-button text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
 			>
 				<IconX size={16} stroke-width={2} />
@@ -210,6 +275,7 @@
 				id="settings-endpoint"
 				bind:this={endpointEl}
 				bind:value={endpointDraft}
+				oninput={() => (endpointDirty = true)}
 				onblur={commitEndpoint}
 				onkeydown={(event) => event.key === 'Enter' && commitEndpoint()}
 				spellcheck="false"
@@ -342,6 +408,7 @@
 					<div class="flex items-center gap-1">
 						<input
 							bind:value={relayDrafts[index]}
+							oninput={() => (dirty = true)}
 							onblur={() => void commitRelays()}
 							placeholder="wss://…"
 							spellcheck="false"
@@ -371,7 +438,12 @@
 			{#if relayError}
 				<p class="mt-1.5 text-[11.5px] text-red">{relayError}</p>
 			{/if}
-			<p class="mt-1 text-[11.5px] text-ink-3">{RELAY_MIN}–{RELAY_MAX} relays; the pool is saved automatically once valid.</p>
+			<p class="mt-1 text-[11.5px] text-ink-3">{RELAY_MIN}–{RELAY_MAX} relays.</p>
+			<!-- Save truth (issue #131, spec §2 never-lie): renders what the
+				last save actually did, replacing the stale auto-save claim. -->
+			{#if note}
+				<p class="mt-0.5 font-mono text-[11.5px] text-ink-3">{note}</p>
+			{/if}
 		</section>
 
 		<!-- Data (spec §6) -->

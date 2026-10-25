@@ -151,7 +151,6 @@ describe("refreshSessionContext — settle wiring (lens #68)", () => {
 			admitted: [subject],
 			invalidSkipped: 0,
 			notices: [],
-			relays: [],
 		};
 		investigation.result = session;
 
@@ -181,7 +180,6 @@ describe("refreshSessionContext — settle wiring (lens #68)", () => {
 			admitted: [],
 			invalidSkipped: 0,
 			notices: [],
-			relays: [],
 		};
 		await investigation.refreshSessionContext();
 		expect(transport.routes).toEqual([]);

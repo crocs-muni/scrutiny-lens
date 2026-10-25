@@ -655,7 +655,7 @@
 											<!-- spec §4: relays confirmed searchable, zero matched -->
 											<ResultsEmpty
 												filtered={Object.keys(investigation.selections).length > 0}
-												relayCount={settings.relays.length}
+												relayCount={investigation.runRelays.length}
 												onClearFilters={() => investigation.clearFacets()}
 												onAskDifferently={() => shell.home()}
 											/>

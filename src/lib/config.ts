@@ -10,6 +10,7 @@
 // while wiring the first real search). static/public's typegen hazard
 // (vars frozen at sync time breaking pnpm check) is why dynamic is used.
 import { env } from '$env/dynamic/public';
+import { canonicalRelayUrl, canonicalRelayUrls } from '$lib/net/relay-url';
 
 /** Relay pool bounds (spec §8: 1–4 entries — owner ruling 2026-09-03,
  * one working relay is a fully usable pool per spec §7). The settings
@@ -38,24 +39,21 @@ export const HOST_CONCURRENCY_CEILINGS: Record<string, number> = {
  * test corpora with NIP-50 search; Primal is the free public mirror that
  * accepted+retained first, verified live — other publish targets stay
  * addable through Settings; env overrides, not replaces). */
-const SPEC_RELAYS = ['wss://lens-demo.feeds.relay.tools', 'wss://relay.primal.net/'];
+const SPEC_RELAYS = ['wss://lens-demo.feeds.relay.tools', 'wss://relay.primal.net'];
 
+/** Split/trim semantics stay here (comma list, blanks dropped); relay
+ * identity and validation moved into the canonicalizer (issue #131) so a
+ * pool carrying `…/`, `:443`, or uppercase hosts collapses to one relay
+ * instead of doubling as a phantom second entry. Invalid entries are
+ * dropped, keeping the historical lenient contract. */
 export function parseRelayUrls(raw: string): string[] {
-	const seen = new Set<string>();
-	for (const part of raw.split(',')) {
-		const url = part.trim();
-		if (url.length > 0) seen.add(url);
-	}
-	return [...seen];
+	return canonicalRelayUrls(raw.split(',')).urls;
 }
 
+/** Canonicalizable == valid (issue #131): a ws/wss URL free of credentials,
+ * query/fragment, and host surprises passes; everything else fails. */
 export function isValidRelayUrl(url: string): boolean {
-	try {
-		const parsed = new URL(url);
-		return parsed.protocol === 'ws:' || parsed.protocol === 'wss:';
-	} catch {
-		return false;
-	}
+	return canonicalRelayUrl(url).ok;
 }
 
 export type Appearance = 'light' | 'dark' | 'system';
@@ -64,8 +62,13 @@ export type Appearance = 'light' | 'dark' | 'system';
  * a trailing-slash URL — normalize once here so fetch paths join cleanly. */
 export const DEFAULT_ENDPOINT = (env.PUBLIC_LLM_ENDPOINT?.trim() || SPEC_ENDPOINT).replace(/\/+$/, '');
 export const DEFAULT_RELAYS = (() => {
-	const fromEnv = parseRelayUrls(env.PUBLIC_RELAY_URLS ?? '').filter(isValidRelayUrl);
-	return fromEnv.length > 0 ? fromEnv : [...SPEC_RELAYS];
+	const fromEnv = parseRelayUrls(env.PUBLIC_RELAY_URLS ?? '');
+	// Canonicalized + deduped either way, then truncated to RELAY_MAX:
+	// spec §8 fixes the pool at 1–4 entries, so an env lists with duplicates
+	// or slashed variants beyond that bound must not smuggle extra pool
+	// slots through defaults.
+	const pool = fromEnv.length > 0 ? fromEnv : canonicalRelayUrls(SPEC_RELAYS).urls;
+	return pool.slice(0, RELAY_MAX);
 })();
 export const DEFAULT_APPEARANCE: Appearance = 'system';
 

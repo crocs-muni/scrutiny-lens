@@ -19,8 +19,15 @@ describe('relay pool bounds (spec §8: 1–4 entries, owner ruling 2026-09-03)',
 });
 
 describe('parseRelayUrls', () => {
-	it('splits a comma list, trims, drops empties', () => {
-		expect(parseRelayUrls('wss://a, wss://b ,,c')).toEqual(['wss://a', 'wss://b', 'c']);
+	it('splits a comma list, trims, drops blanks and invalid entries', () => {
+		expect(parseRelayUrls('wss://a, wss://b ,,')).toEqual(['wss://a', 'wss://b']);
+	});
+
+	it('canonicalizes while deduplicating (issue #131: one relay, one string)', () => {
+		expect(parseRelayUrls('wss://a,wss://a/,WSS://A:443,wss://b')).toEqual([
+			'wss://a',
+			'wss://b'
+		]);
 	});
 
 	it('deduplicates while keeping first-seen order', () => {
@@ -54,5 +61,13 @@ describe('env defaults', () => {
 
 	it('DEFAULT_RELAYS carries only valid relay URLs (env entries are filtered)', () => {
 		for (const url of DEFAULT_RELAYS) expect(isValidRelayUrl(url)).toBe(true);
+	});
+
+	it('DEFAULT_RELAYS ships the canonical spec §8 pool', () => {
+		// The test environment sets no PUBLIC_RELAY_URLS.
+		expect(DEFAULT_RELAYS).toEqual([
+			'wss://lens-demo.feeds.relay.tools',
+			'wss://relay.primal.net'
+		]);
 	});
 });
