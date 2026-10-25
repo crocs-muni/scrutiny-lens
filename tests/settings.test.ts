@@ -84,9 +84,13 @@ describe('relay list validation (spec §8: 1–4 entries)', () => {
 		).rejects.toThrow(String(RELAY_MAX));
 	});
 
-	it('rejects duplicates and non-relay URLs', async () => {
-		await expect(settings.setRelays(['wss://a', 'wss://a'])).rejects.toThrow('duplicate');
+	it('rejects non-relay URLs and folds canonically-equal duplicates', async () => {
 		await expect(settings.setRelays(['https://a', 'wss://b'])).rejects.toThrow('ws');
+		// Canonical identity (issue #131): `wss://a` and `wss://a/` are ONE
+		// relay — the commit collapses them instead of rejecting a list whose
+		// every endpoint is real and reachable.
+		await settings.setRelays(['wss://a', 'wss://a/']);
+		expect(settings.relays).toEqual(['wss://a']);
 	});
 
 	it('a rejected list neither mutates state nor persists', async () => {

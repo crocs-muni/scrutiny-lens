@@ -13,6 +13,8 @@ import {
 	type PersistedSettings,
 	type SaveOutcome
 } from '$lib/db';
+import { canonicalRelayUrls } from '$lib/net/relay-url';
+
 import {
 	DEFAULT_APPEARANCE,
 	DEFAULT_ENDPOINT,
@@ -89,8 +91,15 @@ class Settings {
 		if (persisted?.endpoint !== undefined && !dirtyFields.has('endpoint'))
 			this.endpoint = persisted.endpoint;
 		if (persisted?.model !== undefined && !dirtyFields.has('model')) this.model = persisted.model;
-		if (persisted?.relays !== undefined && !dirtyFields.has('relays'))
-			this.relays = [...persisted.relays];
+		if (persisted?.relays !== undefined && !dirtyFields.has('relays')) {
+			// Canonicalize on read (issue #131): a legacy record can carry
+			// slashed/dup variants that would double-count one relay in every
+			// boundary keyed on the string. Empty after folding (all-invalid
+			// legacy row) keeps defaults rather than a pool createTransport
+			// would reject — hydrate must never brick the boot.
+			const canonical = canonicalRelayUrls(persisted.relays);
+			this.relays = canonical.urls.length > 0 ? canonical.urls : [...defaultSettings.relays];
+		}
 		if (persisted?.appearance !== undefined && !dirtyFields.has('appearance'))
 			this.appearance = persisted.appearance;
 		this.hydrated = true;
@@ -130,17 +139,24 @@ class Settings {
 	 * permanent for this tab and is never retried. Never throws on a save
 	 * failure; the returned outcome is the truth. */
 	async setRelays(urls: string[]): Promise<SaveOutcome> {
+		// Canonicalize BEFORE validating bounds (issue #131): `wss://x` and
+		// `wss://x/` are ONE relay — collapsing them first is the dedupe the
+		// pool owes anyway, and RELAY_MIN/MAX then count real endpoints.
+		// Silently dropping invalid entries here would HIDE a typo the user
+		// just typed, so entries that fail canonicalization still throw below.
 		const list = urls.map((u) => u.trim());
-		if (list.length < RELAY_MIN || list.length > RELAY_MAX)
-			throw new Error(`Relay pool needs ${RELAY_MIN}–${RELAY_MAX} entries, got ${list.length}.`);
-		for (const url of list)
-			if (!isValidRelayUrl(url)) throw new Error(`"${url}" is not a ws:// or wss:// URL.`);
-		if (new Set(list).size !== list.length) throw new Error('Relay list contains a duplicate.');
-		this.relays = list;
+		const canonical = canonicalRelayUrls(list);
+		if (canonical.issues.length > 0)
+			throw new Error(`"${canonical.issues[0].input}" is not a ws:// or wss:// URL.`);
+		if (canonical.urls.length < RELAY_MIN || canonical.urls.length > RELAY_MAX)
+			throw new Error(
+				`Relay pool needs ${RELAY_MIN}–${RELAY_MAX} entries, got ${canonical.urls.length}.`
+			);
+		this.relays = canonical.urls;
 		dirtyFields.add('relays');
 		this.persistState = 'saving';
-		let outcome = await saveSettings({ relays: list });
-		if (outcome === 'failed') outcome = await saveSettings({ relays: list });
+		let outcome = await saveSettings({ relays: canonical.urls });
+		if (outcome === 'failed') outcome = await saveSettings({ relays: canonical.urls });
 		this.persistState = outcome;
 		return outcome;
 	}

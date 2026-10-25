@@ -59,6 +59,7 @@ import { getEvent } from '$lib/db';
 import { indexEvent } from '$lib/search';
 import { admitEvent, type NostrEvent as FabricEvent } from '$lib/fabric';
 import { aggregatePerRelay } from '$lib/relay-readout';
+import { canonicalRelayUrls } from '$lib/net/relay-url';
 import { settings } from '$lib/settings.svelte';
 
 /** One relay's verdict for this resolution (issue #131): every leg that
@@ -179,11 +180,13 @@ export async function openSharedRecord(
 		return { subjectId: pointer.id, failedHints: [], openedFrom: 'cache', receipts: [] };
 	}
 
-	// Hintless links fall back to the receiver's configured pool — the same
-	// set a fresh search would use (spec §8). Dedupe: a hostile or sloppy
-	// nevent may repeat a hint, and fetchRouted would query it twice.
-	const hinted = [...new Set(pointer.relays)];
-	const configured = [...new Set(settings.relays)];
+	// Canonicalize BOTH input sets at this boundary (issue #131): a slashed
+	// nevent hint must not double as a second copy of a configured relay —
+	// the transport, receipts and every string-keyed ledger all share one
+	// spelling per endpoint. Hinted relays arrive from other clients, so
+	// invalid entries are dropped, not thrown.
+	const hinted = canonicalRelayUrls(pointer.relays).urls;
+	const configured = canonicalRelayUrls(settings.relays).urls;
 	if (hinted.length + configured.length === 0) {
 		// Nothing was contactable and nothing was even attempted — answeredOk
 		// stays false so the caller never claims "relays answered" (spec §4).
