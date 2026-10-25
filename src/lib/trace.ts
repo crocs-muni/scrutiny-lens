@@ -135,9 +135,9 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 	// one source. Without them the raw legs render exactly as before.
 	if (input.relayLines !== undefined) {
 		for (const line of input.relayLines) {
-			// `routes` is ABSENT for receipts whose source fold did not count
-			// legs (share resolutions, recorded restores): unknown stays
-			// unrecorded — never a fabricated "1 route" or a lying "0".
+			// `routes` is ABSENT only on receipts restored from a row written
+			// before the field existed: unknown stays unrecorded — never a
+			// fabricated "1 route" or a lying "0" (spec §2).
 			const legCount =
 				line.routes === undefined ? '' : ` - ${line.routes} ${line.routes === 1 ? 'route' : 'routes'}`;
 			addTick({

@@ -441,11 +441,13 @@ export interface PersistedSessionRun {
 	/** Wall-clock run time as the done row showed it; null while the run
 	 * was still settling when pinned (post-assembly, pre-settle row). */
 	elapsedMs: number | null;
-	/** Relays this run actually queried, canonical urls in configured order,
-	 * plus the per-relay receipts computed at settle. The receipt is the
-	 * RelayReceipt shape with `routes`/`rejected` optional where the source
-	 * fold did not observe them — unknown stays ABSENT, never zero (spec §2:
-	 * absent means unrecorded, zero would claim observed).
+	/** Relays this run asked (display/pin truth): canonical urls, configured
+	 * order first, then any hint relays the resolver queried — a share's row
+	 * names what was actually asked, not a configured-only subset. Paired
+	 * with the per-relay receipts computed at settle. `routes`/`rejected`
+	 * are optional on those receipts only for pre-field rows — unknown stays
+	 * ABSENT, never zero (spec §2: absent means unrecorded, zero would claim
+	 * observed).
 	 * Optional field: rows written before this field read back undefined and
 	 * callers must render "relay set not recorded" — never today's settings
 	 * (spec §2 rule 6: the trace shows real retrieval state, not a plausible
@@ -455,6 +457,11 @@ export interface PersistedSessionRun {
 	 * one, see v4–v7 above). */
 	relays?: {
 		pool: string[];
+		/** The relays this CLIENT may query for later context legs — the
+		 * configured snapshot at run entry, never the `pool` union. Absent on
+		 * rows written before this field: restore then falls back to today's
+		 * configured pool (same policy, pre-field rows only). */
+		query?: string[];
 		perRelay: { url: string; status: string; routes?: number; received: number; rejected?: number }[];
 	};
 }

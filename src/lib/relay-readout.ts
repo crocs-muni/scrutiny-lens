@@ -22,15 +22,16 @@ export interface RelayReceipt {
 	 * readout: a relay the run's snapshot names but no leg ever reached. */
 	status: RelayState | 'unasked';
 	/** Distinct routed legs that touched this relay (cache excluded).
-	 * ABSENT — never zero — when the receipt came from a recorded run whose
-	 * fold did not count legs: unknown stays unrecorded (spec §2), zero
-	 * would claim observed-nothing. */
+	 * Optional only for receipts restored from a row written before this
+	 * field existed — the live fold always counts legs. Unknown stays ABSENT,
+	 * never zero or a fabricated one (spec §2). */
 	routes?: number;
 	/** Events the relay returned, summed over its legs. */
 	received: number;
 	/** Candidates its legs produced that admission rejected, summed.
-	 * ABSENT under the same rule as routes: a fold that did not observe
-	 * rejections carries nothing rather than zero. */
+	 * Optional only for receipts restored from a row written before this
+	 * field existed; the live fold always observes it. Unknown stays ABSENT,
+	 * never zero (spec §2). */
 	rejected?: number;
 }
 

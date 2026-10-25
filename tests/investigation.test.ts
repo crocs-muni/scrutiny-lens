@@ -543,6 +543,10 @@ describe('runRelays — the run owns its relay pool (issue #131)', () => {
 		expect(investigation.recordedRelayReceipts).toEqual([
 			{ url: 'wss://hint.test', status: 'ok', routes: 2, received: 5, rejected: 1 },
 		]);
+		// Query rights stay CONFIGURED-ONLY (issue #131, delta review): the
+		// sender's hint relay is provenance to display, never a target this
+		// client's dossier legs may query.
+		expect(investigation.contextPool).toEqual(POOL);
 		const id = investigation.sessionId ?? '';
 		expect(id).not.toBe('');
 		await vi.waitFor(async () => {
@@ -551,9 +555,37 @@ describe('runRelays — the run owns its relay pool (issue #131)', () => {
 			// resolver asked the hints too); the row's receipts are the
 			// resolver's own fold, not an empty one claiming nobody was asked.
 			expect(row?.relays?.pool).toEqual([...POOL, 'wss://hint.test']);
+			// ...while the permission pool it persists is the configured set,
+			// so a restored share cannot query the hint either.
+			expect(row?.relays?.query).toEqual(POOL);
 			expect(row?.relays?.perRelay).toEqual([
 				{ url: 'wss://hint.test', status: 'ok', routes: 2, received: 5, rejected: 1 },
 			]);
 		});
+	});
+
+	it('a restored shared run queries its PERMISSION pool, not the hint union', async () => {
+		const a = cve();
+		await indexEvent(a);
+		shell.sessions = [{ id: 'run-share', title: 'share', createdAt: 1 }];
+		await putSessionRun({
+			sessionId: 'run-share',
+			searches: [],
+			admittedIds: [a.id],
+			settledAt: 1,
+			elapsedMs: null,
+			relays: {
+				pool: [...POOL, 'wss://hint.test'],
+				query: [...POOL],
+				perRelay: [{ url: 'wss://hint.test', status: 'ok', received: 2 }],
+			},
+		});
+		recordPools(new ProbeTransport([]));
+
+		expect(await investigation.restore('run-share')).toBe(true);
+		// Display truth keeps the union (the row names what was asked)...
+		expect(investigation.runRelays).toEqual([...POOL, 'wss://hint.test']);
+		// ...while query rights restore to the configured subset.
+		expect(investigation.contextPool).toEqual(POOL);
 	});
 });

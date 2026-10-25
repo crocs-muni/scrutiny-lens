@@ -205,19 +205,21 @@ class Investigation {
    * session-store work, spec §0). */
   sessionId = $state<string | null>(null);
 
-  /** The relay pool THIS run queried, frozen at start()/openShared()/
-   * restore() (issue #131): every later leg (settle traversal, dossier
-   * context, deletion re-polls) and every run-scoped display reads this
-   * snapshot; a Settings edit re-points the NEXT run, never a live one
-   * (spec §2: the trace names the relays that were actually asked). Empty
-   * means "not recorded" — a legacy restored row, never "ask everything". */
+  /** The relay pool THIS run asked — for DISPLAY and the pinned row, frozen
+   * at start()/openShared()/restore() (issue #131). For a share it is the
+   * union of configured relays and the hint relays the resolver queried
+   * (provenance: the row must name what was actually asked). Query rights
+   * are a separate datum — see contextPool. A Settings edit re-points the
+   * NEXT run, never a live one (spec §2: the trace names the relays that
+   * were actually asked). Empty means "not recorded" — a legacy restored
+   * row, never "ask everything". */
   runRelays = $state<readonly string[]>([]);
   /** The pool CONTEXT legs may query: the run's own configured snapshot,
    * deliberately separate from runRelays for shared opens (issue #131,
    * delta review): a share's receipts name sender-chosen hint relays, and
    * those are provenance to DISPLAY, never a license for this client to
    * send its dossier fetches to a third party's chosen relay. Public, not
-   * $state — the conformance guard and tests read it; nothing renders it. */
+   * $state: only contextLegPool() reads it; nothing renders it. */
   contextPool: readonly string[] = [];
 
   /** Reload-restore diagnostics (issue #83): null while a live run painted
@@ -440,6 +442,11 @@ class Investigation {
         : {
             relays: {
               pool: [...runRelays],
+              // The PERMISSION pool rides the row too (issue #131, delta
+              // review): a share's `pool` is configured ∪ hints, and a
+              // restored shared session must not derive its query licence
+              // from that union — senders choose hints, we choose relays.
+              query: [...this.contextPool],
               perRelay,
             },
           }),
@@ -712,7 +719,6 @@ class Investigation {
     hadHints: boolean,
     receipts?: RelayReceipt[],
   ): Promise<void> {
-    const startedAt = performance.now();
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
@@ -724,6 +730,10 @@ class Investigation {
     // run that asked nobody would be a recorded lie. Single-flight and
     // memoized: free after boot.
     await settings.ready();
+    // Clock starts AFTER the barrier, same point as start() — hydration is
+    // not this surface's work, and mixing the two produced a share timing a
+    // search never charged itself (delta review).
+    const startedAt = performance.now();
     // A newer start()/restore()/openShared() during that await owns the
     // surface — this invocation must not reset or repaint it (spec §8 abort
     // lifecycle, same identity rule as start()).
@@ -909,10 +919,12 @@ class Investigation {
     // Settings — a restored session must name the relays its run actually
     // asked. A legacy row without the field restores as "not recorded"
     this.runRelays = run.relays ? Object.freeze([...run.relays.pool]) : [];
-    // A restored run's context legs query its own recorded pool — the run's
-    // provenance is the honest source, not today's Settings (legacy rows
-    // without the field fall back via contextLegPool).
-    this.contextPool = this.runRelays;
+    // A restored run's context legs query its PERMISSION pool from the record
+    // (issue #131, delta review) — for a share that is the configured subset,
+    // never the union: a stored hint relay must not become a query target
+    // after a reload either. Pre-field rows carry none and fall back to
+    // today's configured pool through contextLegPool, same policy.
+    this.contextPool = run.relays?.query ? Object.freeze([...run.relays.query]) : [];
     // ...and the recorded receipts ride the same record (issue #131): this
     // paint has no relay legs (the slice below is the local-cache
     // reconstruction), so persistRunRecord re-pins THESE instead of folding
