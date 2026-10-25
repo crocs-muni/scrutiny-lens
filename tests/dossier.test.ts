@@ -15,7 +15,7 @@ import {
 	fencePatchPayload,
 	type UnsignedEvent
 } from '@scrutiny-fabric/core';
-import { deriveDossier } from '$lib/dossier';
+import { deriveDossier, fileProvenance } from '$lib/dossier';
 import type { NostrEvent } from '$lib/fabric';
 import type { ProductCard } from '$lib/pipeline/cards';
 
@@ -223,6 +223,109 @@ describe('retraction is protocol truth, not presentation', () => {
 });
 
 describe('files rows mirror the seam edge semantics', () => {
+	it('provenance reads as a sentence naming the record (#136/#141)', () => {
+		// The owner's read of this line, verbatim from the 2026-10-19 review:
+		// "this error means that it's wrong" — a bare arrow fragment with a
+		// hash-like token beside it reads as a failure, not as provenance.
+		const root = signed(
+			{
+				kind: 1,
+				created_at: 1000,
+				tags: [
+					['t', 'scrutiny-fabric'],
+					['t', 'scrutiny-v0.8.1'],
+					['t', 'scrutiny-product'],
+					['imeta', 'url https://x.test/st.pdf', 'alt Security Target']
+				],
+				content: 'prod\n'
+			},
+			AUTHOR,
+			'root'
+		);
+		const meta = signed(
+			{
+				kind: root.kind,
+				created_at: 1500,
+				tags: [
+					['t', 'scrutiny-fabric'],
+					['t', 'scrutiny-v0.8.1'],
+					['t', 'scrutiny-metadata'],
+					['i', 'cert:BSI-1'],
+					['imeta', 'url https://x.test/r.pdf', 'alt Certification Report']
+				],
+				content: 'Certification Report'
+			},
+			AUTHOR,
+			'meta1'
+		);
+		const binding = signed(
+			buildBinding({ id: 'root' }, { id: 'meta1' }, 'documents', 1600).template,
+			AUTHOR,
+			'bind1'
+		);
+		const d = deriveDossier('root', [root, meta, binding], [])!;
+		const own = d.files.find((r) => r.recordId === 'root')!;
+		const bound = d.files.find((r) => r.recordId === 'meta1')!;
+		expect(fileProvenance(own)).toEqual({ text: 'this record', interpreted: false });
+		expect(fileProvenance(bound)).toEqual({
+			text: 'incoming from Certification Report',
+			interpreted: false
+		});
+		// An AI-titled record keeps its sans voice inside the same sentence.
+		const aiTitled = deriveDossier('meta1', [root, meta, binding], [cardFor(root)])!;
+		const fromAi = aiTitled.files.find((r) => r.recordId === 'root')!;
+		expect(fileProvenance(fromAi)).toEqual({ text: 'incoming from AI title', interpreted: true });
+	});
+
+	it('a nameless source record is named, never identified by its hex id (#136)', () => {
+		// deriveFallbackTitle's last resort is the 64-hex event id (cards.ts:90),
+		// which on the provenance line reads as an error token. The record IS
+		// local — it simply carries no name, so say that (spec §2: name the
+		// record, never dress an id up as one).
+		const root = signed(
+			{
+				kind: 1,
+				created_at: 1000,
+				tags: [
+					['t', 'scrutiny-fabric'],
+					['t', 'scrutiny-v0.8.1'],
+					['t', 'scrutiny-product'],
+					['imeta', 'url https://x.test/st.pdf', 'alt Security Target']
+				],
+				content: 'prod\n'
+			},
+			AUTHOR,
+			'root'
+		);
+		const nameless = signed(
+			{
+				kind: root.kind,
+				created_at: 1500,
+				tags: [
+					['t', 'scrutiny-fabric'],
+					['t', 'scrutiny-v0.8.1'],
+					['t', 'scrutiny-metadata'],
+					['imeta', 'url https://x.test/n.pdf', 'alt Datasheet']
+				],
+				content: ''
+			},
+			AUTHOR,
+			'meta1'
+		);
+		const binding = signed(
+			buildBinding({ id: 'root' }, { id: 'meta1' }, 'documents', 1600).template,
+			AUTHOR,
+			'bind1'
+		);
+		const d = deriveDossier('root', [root, nameless, binding], [])!;
+		const row = d.files.find((r) => r.recordId === 'meta1')!;
+		expect(row.recordTitle).toEqual({ text: 'unnamed record', interpreted: false });
+		expect(fileProvenance(row)).toEqual({
+			text: 'incoming from unnamed record',
+			interpreted: false
+		});
+	});
+
 	it('product dossier rows: one per artifact, verb + provenance deep-link preserved (#77)', () => {
 		// Root product carries its OWN imeta artifact — subject-own rows exist
 		// (and in META1's dossier the root's rows are the cache-title voice).

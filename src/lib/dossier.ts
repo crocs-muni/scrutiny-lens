@@ -98,6 +98,27 @@ export interface FileRow {
 	destination: 'subject' | 'counterparty';
 }
 
+/** What the drawer's file row says about where the artifact came from
+ * (#136/#141). Rendered as one sentence, never a bare fragment beside a
+ * hash-like token — the 2026-10-19 review read that shape as an error
+ * ("this error means that it's wrong"), and a 64-hex event id standing in
+ * for a name is exactly that. Counterparty rows read "incoming from
+ * <record>"; the subject's own artifacts read "this record" (its tiles are
+ * interpreted elsewhere). */
+export function fileProvenance(row: FileRow): DossierTitle {
+	// fileRows always fills a title for counterparty rows; only subject-own
+	// rows are null. Guarding both keeps the sentence honest if that changes.
+	if (row.recordTitle === null) return { text: 'this record', interpreted: false };
+	// Every binding row's artifact belongs to its record — `destination` only
+	// says which end of the edge the SUBJECT sits on, which the arrow already
+	// carries. So the sentence is the same in both directions.
+	if (row.verb === null) return row.recordTitle;
+	return {
+		text: `incoming from ${row.recordTitle.text}`,
+		interpreted: row.recordTitle.interpreted
+	};
+}
+
 export interface DossierContent {
 	/** Frozen-but-signed content on halted/forked/aborted; null on absent. */
 	text: string | null;
@@ -341,10 +362,19 @@ function fileRows(
 		const counterparty = byId.get(counterpartyId);
 		if (counterparty === undefined) continue;
 		const card = cards.find((c) => c.id === counterpartyId);
+		// A record with neither content nor an identifier falls back to its
+		// own event id (cards.ts's rule-5 last resort). On the card face that
+		// is a unique handle; here it is a token beside an arrow, which reads
+		// as a failure (#136). The record exists and is unreadable-name — say
+		// that instead (spec §2: never dress an id up as a name).
+		const fallbackTitle = deriveFallbackTitle(counterparty);
 		const recordTitle =
 			card !== undefined && card.interpreted
 				? { text: card.title, interpreted: true }
-				: { text: deriveFallbackTitle(counterparty), interpreted: false };
+				: {
+						text: fallbackTitle === counterparty.id ? 'unnamed record' : fallbackTitle,
+						interpreted: false
+					};
 		for (const artifact of artifactsOf(counterparty)) {
 			rows.push({
 				id: artifact.id,
