@@ -243,7 +243,7 @@
 		});
 	}
 
-	/** Card click / graph node / Files-row deep-link (BIBLE 678): select,
+	/** Card click / Files-row deep-link / chat citation (BIBLE 678): select,
 	 * open, land on session. A PRODUCT subject re-anchors the graph on it
 	 * (#85, inside selectSubject); a metadata record moves ring + dossier
 	 * only; the FIRST subject anchors whatever its kind (#29b ruling 4).
@@ -254,6 +254,16 @@
 		shell.view = 'session';
 		// §8.2 dossier context (#68/#75): patches and deletions are unreachable
 		// by the search's discovery filters, so the dossier fetches them on open.
+		void investigation.ensureSubjectContext(id);
+	}
+	/** Canvas node click (issue #159): drawer-only, the ruling GraphCanvas is
+	 * built on ("Drawer-only click (6)"). The same selectSubject path would
+	 * re-anchor a product to the map's subject and rebuild the tree the user
+	 * is looking at — #85's re-anchor belongs to selections made OUTSIDE the
+	 * map, where the canvas shows an unrelated neighborhood. */
+	function selectNode(id: string): void {
+		investigation.selectSubject(id, 'map');
+		shell.drawerOpen = true;
 		void investigation.ensureSubjectContext(id);
 	}
 	/** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc. */
@@ -717,7 +727,7 @@
 									cards={investigation.cards}
 									root={investigation.graphSubjectId}
 									selectedEventId={investigation.selectedEventId}
-									onSelect={openDossier}
+									onSelect={selectNode}
 									onDeselect={clearSelection}
 								/>
 							{/key}

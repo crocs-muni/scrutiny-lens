@@ -230,6 +230,35 @@ describe('selectSubject — product re-anchor (issue #85, spec §9)', () => {
 		expect(investigation.graphSubjectId).toBe('ghost');
 	});
 
+	it('a map click never re-anchors — the canvas stays put (#159)', () => {
+		// GraphCanvas is built on the "Drawer-only click" ruling: a node click
+		// moves the ring + dossier, never the layout. Applied to a map click,
+		// #85's re-anchor rebuilt the tree under the pointer and left the user
+		// with the clicked product and its own bound record.
+		investigation.result = session([
+			event('p1', 'scrutiny-product'),
+			event('p2', 'scrutiny-product'),
+		]);
+		investigation.selectSubject('p1');
+		investigation.expandRelated('r1');
+		investigation.selectSubject('p2', 'map');
+		expect(investigation.selectedEventId).toBe('p2');
+		expect(investigation.graphSubjectId).toBe('p1');
+		// The neighborhood survives too: no swap happened (#29b ruling 8).
+		expect(investigation.expandedRelated).toEqual(['r1']);
+		// A results selection still re-anchors — #85 stays true.
+		investigation.selectSubject('p2');
+		expect(investigation.graphSubjectId).toBe('p2');
+	});
+
+	it('a map click still seeds the anchor when the graph has none', () => {
+		// Unreachable in the UI (a canvas needs an anchor to exist), but the
+		// guard must not strand a session: the first subject still anchors.
+		investigation.result = session([event('m1', 'scrutiny-metadata')]);
+		investigation.selectSubject('m1', 'map');
+		expect(investigation.graphSubjectId).toBe('m1');
+	});
+
 	it('expansion state clears on re-anchor and survives a same-anchor repeat', () => {
 		investigation.result = session([
 			event('p1', 'scrutiny-product'),

@@ -1114,12 +1114,21 @@ class Investigation {
   }
 
   /** Dossier-open from any surface (card row, graph node, citation). A
-   * PRODUCT subject re-anchors the graph on it (spec §9 glossary, issue #85);
-   * a metadata record moves only the ring and the dossier. The FIRST subject
-   * of an investigation anchors whatever its kind (#29b ruling 4 — a
-   * metadata-first session still gets a subject graph). */
-  selectSubject(id: string): void {
+   * PRODUCT subject selected from OUTSIDE the map re-anchors the graph on it
+   * (spec §9 glossary, issue #85); a metadata record moves only the ring and
+   * the dossier. The FIRST subject of an investigation anchors whatever its
+   * kind (#29b ruling 4 — a metadata-first session still gets a subject graph).
+   *
+   * `origin: 'map'` (issue #159): a click INSIDE the canvas is drawer-only —
+   * the ruling GraphCanvas is built on ("Drawer-only click (6)"). #85's
+   * re-anchor was about picking a card from the results, where the canvas is
+   * otherwise showing an unrelated neighborhood; applied to a map click it
+   * rebuilt the tree under the user's cursor, leaving them with the clicked
+   * node and its own bound record. So the map's own clicks never move the
+   * anchor — a deliberate "make this the subject" gesture is #142's. */
+  selectSubject(id: string, origin: "map" | "elsewhere" = "elsewhere"): void {
     this.selectedEventId = id;
+    if (origin === "map" && this.graphSubjectId !== null) return;
     const subject = this.result?.admitted.find((e) => e.id === id);
     // Same t-tag classification deriveSubjectGraph/deriveDossier gate on (spec
     // §9): 'product' re-anchors, 'metadata' never does. An event outside the
