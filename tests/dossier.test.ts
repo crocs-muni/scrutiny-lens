@@ -15,7 +15,7 @@ import {
 	fencePatchPayload,
 	type UnsignedEvent
 } from '@scrutiny-fabric/core';
-import { deriveDossier, fileProvenance } from '$lib/dossier';
+import { deriveDossier, incomingFrom } from '$lib/dossier';
 import type { NostrEvent } from '$lib/fabric';
 import type { ProductCard } from '$lib/pipeline/cards';
 
@@ -266,15 +266,20 @@ describe('files rows mirror the seam edge semantics', () => {
 		const d = deriveDossier('root', [root, meta, binding], [])!;
 		const own = d.files.find((r) => r.recordId === 'root')!;
 		const bound = d.files.find((r) => r.recordId === 'meta1')!;
-		expect(fileProvenance(own)).toEqual({ text: 'this record', interpreted: false });
-		expect(fileProvenance(bound)).toEqual({
+		// The subject's own artifacts keep "this record" in the template (its
+		// tiles are interpreted elsewhere), so the row carries NO title.
+		expect(own.recordTitle).toBeNull();
+		expect(incomingFrom(bound.recordTitle!)).toEqual({
 			text: 'incoming from Certification Report',
 			interpreted: false
 		});
 		// An AI-titled record keeps its sans voice inside the same sentence.
 		const aiTitled = deriveDossier('meta1', [root, meta, binding], [cardFor(root)])!;
 		const fromAi = aiTitled.files.find((r) => r.recordId === 'root')!;
-		expect(fileProvenance(fromAi)).toEqual({ text: 'incoming from AI title', interpreted: true });
+		expect(incomingFrom(fromAi.recordTitle!)).toEqual({
+			text: 'incoming from AI title',
+			interpreted: true
+		});
 	});
 
 	it('a nameless source record is named, never identified by its hex id (#136)', () => {
@@ -320,7 +325,7 @@ describe('files rows mirror the seam edge semantics', () => {
 		const d = deriveDossier('root', [root, nameless, binding], [])!;
 		const row = d.files.find((r) => r.recordId === 'meta1')!;
 		expect(row.recordTitle).toEqual({ text: 'unnamed record', interpreted: false });
-		expect(fileProvenance(row)).toEqual({
+		expect(incomingFrom(row.recordTitle!)).toEqual({
 			text: 'incoming from unnamed record',
 			interpreted: false
 		});

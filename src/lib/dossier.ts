@@ -98,25 +98,16 @@ export interface FileRow {
 	destination: 'subject' | 'counterparty';
 }
 
-/** What the drawer's file row says about where the artifact came from
- * (#136/#141). Rendered as one sentence, never a bare fragment beside a
- * hash-like token — the 2026-10-19 review read that shape as an error
- * ("this error means that it's wrong"), and a 64-hex event id standing in
- * for a name is exactly that. Counterparty rows read "incoming from
- * <record>"; the subject's own artifacts read "this record" (its tiles are
- * interpreted elsewhere). */
-export function fileProvenance(row: FileRow): DossierTitle {
-	// fileRows always fills a title for counterparty rows; only subject-own
-	// rows are null. Guarding both keeps the sentence honest if that changes.
-	if (row.recordTitle === null) return { text: 'this record', interpreted: false };
-	// Every binding row's artifact belongs to its record — `destination` only
-	// says which end of the edge the SUBJECT sits on, which the arrow already
-	// carries. So the sentence is the same in both directions.
-	if (row.verb === null) return row.recordTitle;
-	return {
-		text: `incoming from ${row.recordTitle.text}`,
-		interpreted: row.recordTitle.interpreted
-	};
+/** The drawer's provenance sentence for a bound record (#136/#141): never a
+ * bare fragment beside a hash-like token — the 2026-10-19 review read that
+ * shape as an error ("this error means that it's wrong"), and a 64-hex event
+ * id standing in for a name is exactly that.
+ *
+ * Takes a TITLE, not a row: subject-own rows have no title and the template
+ * keeps its own quieter "this record" voice for them, so a row-shaped input
+ * would only carry a null arm nothing renders. */
+export function incomingFrom(title: DossierTitle): DossierTitle {
+	return { text: `incoming from ${title.text}`, interpreted: title.interpreted };
 }
 
 export interface DossierContent {
