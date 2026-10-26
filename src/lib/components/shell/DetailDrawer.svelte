@@ -28,7 +28,7 @@
 	import { firstPaintBloom } from '../ui/bloom.svelte';
 	import { COLLAPSE } from '../ui/motion';
 	import { formatRel, shell, type DrawerSection } from '$lib/shell.svelte';
-	import { VERB_CLIP, type Dossier, type HistoryRow } from '$lib/dossier';
+	import { VERB_CLIP, incomingFrom, type Dossier, type HistoryRow } from '$lib/dossier';
 	import { artifactIcon, artifactName, formatBytes } from '$lib/artifacts';
 	import { IconArrowUpRight } from '@tabler/icons-svelte';
 	import { clipMiddle } from '$lib/text';
@@ -522,12 +522,13 @@
 									</span>
 								{/if}
 								{#if row.recordTitle !== null}
+									{@const provenance = incomingFrom(row.recordTitle)}
 									<span
-										class="truncate {row.recordTitle.interpreted
+										class="truncate {provenance.interpreted
 											? 'text-[12px] font-medium text-ink'
 											: 'font-mono text-[11px] text-ink-2'}"
 									>
-										{row.recordTitle.text}
+										{provenance.text}
 									</span>
 								{:else}
 									<span class="shrink-0 font-mono text-[10.5px] text-ink-3">this record</span>
