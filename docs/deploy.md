@@ -1,16 +1,18 @@
 # Deploying to GitHub Pages (issue #16)
 
-The app is a static SPA (spec §1, §8): no app server, browser talks to Nostr
-relays and the user's LLM endpoint directly. Hosting is therefore a plain file
 dump. The dashboard lives at this repo's **project site** —
 `https://crocs-muni.github.io/scrutiny-lens` — root-of-repo, no extra account
 or repo, no secrets. Ruled 2026-09-16 (supersedes the user-site idea from
 earlier the same day, rejected to avoid a second GitHub account).
 
+The production hostname is the custom domain `https://lens.scrutiny.cloud`
+(CNAME → `crocs-muni.github.io`, configured in Settings → Pages → Custom
+domain); the `github.io` URL keeps working and redirects to it.
+
 Deep links mount under the path prefix the same way as at a root mount:
-`…/scrutiny-lens/event/nevent1…` resolves through the same SPA fallback
-(`kit.paths.base` strips the prefix for the router). Paste-sharing works
-identically; only the URL text is longer.
+`…/event/nevent1…` resolves through the same SPA fallback
+(`kit.paths.base` strips any prefix for the router). Paste-sharing works
+identically; only the URL text is longer on the legacy `github.io` host.
 
 ## Architecture
 
