@@ -11,8 +11,10 @@ const config = {
 			fallback: 'index.html'
 		}),
 		paths: {
-			// GH Pages project sites mount at /<repo>; base is build-time only.
-			// CI sets BASE_PATH; root mounts need nothing. See issue #16.
+			// Base is build-time only. The production custom domain
+			// (lens.scrutiny.cloud) serves from /, so pages.yml sets no
+			// BASE_PATH anymore; CI can still override for other mounts.
+			// See issue #16.
 			base: process.env.BASE_PATH ?? ''
 		}
 	}

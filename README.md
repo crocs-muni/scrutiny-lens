@@ -8,7 +8,8 @@ The application runs without an app server. The browser talks only to the Nostr 
 
 ## Use the app
 
-Live instance: <https://crocs-muni.github.io/scrutiny-lens>
+Live instance: <https://lens.scrutiny.cloud> (also at the project site
+<https://crocs-muni.github.io/scrutiny-lens>)
 
 Searching and browsing need no setup. The optional AI features (search translation, card texts, chat answers with verbatim-verified citations) need an OpenAI-compatible endpoint, a model name, and an API key. These are entered in the Settings dialog (`Ctrl+,`) and persist across sessions except the key, which is never stored. The full set of first-run env variables lives in `.env.example`.
 
