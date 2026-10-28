@@ -36,12 +36,14 @@ jobs:
         run: pnpm test
 
       - name: Build static site
-        # Deploy pool for the BUILT artifact. Step-scoped on purpose: at job
-        # level it leaked into `pnpm test`, where DEFAULT_RELAYS must equal
-        # the in-source spec pool (tests/config.test.ts assumes no env) —
-        # broken main deploys since #152.
+        # Deploy pool for the BUILT artifact: our production scrutiny relay
+        # leads, so a fresh visitor lands on scrutiny data; public relays
+        # follow as fallback. Step-scoped on purpose: at job level it leaked
+        # into `pnpm test`, where DEFAULT_RELAYS must equal the in-source
+        # spec pool (tests/config.test.ts assumes no env) — broken main
+        # deploys since #152.
         env:
-          PUBLIC_RELAY_URLS: wss://lens-demo.feeds.relay.tools,wss://relay.damus.io,wss://nos.lol
+          PUBLIC_RELAY_URLS: wss://relay.scrutiny.cloud,wss://relay.damus.io,wss://nos.lol
         working-directory: lens
         run: pnpm build
 
