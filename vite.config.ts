@@ -1,5 +1,6 @@
 import tailwindcss from "@tailwindcss/vite";
 import { sveltekit } from "@sveltejs/kit/vite";
+import { svelteTesting } from "@testing-library/svelte/vite";
 import { defineConfig, type Plugin } from "vitest/config";
 import { smokeGatewayMiddleware } from "./scripts/smoke-gateway";
 
@@ -24,6 +25,20 @@ export default defineConfig({
           name: "lib",
           environment: "node",
           include: ["tests/**/*.test.ts"],
+          exclude: ["tests/dom/**"],
+        },
+      },
+      {
+        // Component render tests (issue #39). A docblock environment is not
+        // enough for Svelte 5: mount() needs the browser build, which
+        // svelteTesting() resolves (and registers auto-cleanup).
+        extends: "./vite.config.ts",
+        plugins: [svelteTesting()],
+        test: {
+          name: "dom",
+          environment: "jsdom",
+          include: ["tests/dom/**/*.test.ts"],
+          setupFiles: ["tests/dom/setup.ts"],
         },
       },
     ],
