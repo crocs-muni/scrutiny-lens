@@ -261,9 +261,11 @@
 
 		<!-- Settings dock — the rail's bottom slot (spec §9 rail chrome) -->
 		<div class="mx-2 mt-2 shrink-0 border-t border-line pt-2">
-			<KeyHint
-				label="Settings"
-				keys="Ctrl+,"
+			<!-- Visible label and visible keycap: a tooltip would only repeat
+				both (rulebook R1), so no KeyHint here. -->
+			<button
+				type="button"
+				aria-keyshortcuts="Control+,"
 				class="flex h-8 w-full items-center rounded-control px-2 text-left transition-colors duration-150 hover:bg-hover-2"
 				onclick={onSettings}
 			>
@@ -272,7 +274,7 @@
 				</span>
 				<span class="ml-1.5 min-w-0 flex-1 truncate text-[14px] font-medium text-ink-2">Settings</span>
 				<kbd class="shrink-0 font-mono text-[10px] text-ink-3">Ctrl+,</kbd>
-			</KeyHint>
+			</button>
 		</div>
 	</div>
 

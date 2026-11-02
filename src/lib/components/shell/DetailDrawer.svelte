@@ -265,6 +265,7 @@
 			label="Detail drawer"
 			keys="Ctrl+;"
 			side="top"
+			aria-expanded={open}
 			class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
 			onclick={onToggle}
 		>
