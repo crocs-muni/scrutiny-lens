@@ -290,17 +290,20 @@ const draftSnippet = $derived(draft !== null && draft.snippet !== '' ? draft.sni
 				IconFile = bound records (metadata), IconLink = artifacts
 				(pdf/csv/…) — the two surfaces must never disagree. -->
 			{#if c.files > 0}
-				<span class="inline-flex items-center gap-1">
+				<span
+					class="inline-flex items-center gap-1"
+					title="artifacts (pdf/csv/…) named by this record or its bound records"
+				>
 					<IconLink size={12} stroke={1.8} aria-hidden="true" />
 					{c.files} file{c.files === 1 ? '' : 's'}
 				</span>
 			{/if}
-			<span class="inline-flex items-center gap-1">
+			<span class="inline-flex items-center gap-1" title="bound records (metadata)">
 				<IconFile size={12} stroke={1.8} aria-hidden="true" />
 				{c.boundMetadata} metadata
 			</span>
 			{#if c.updates > 0}
-				<span class="inline-flex items-center gap-1">
+				<span class="inline-flex items-center gap-1" title="patches: edits to this record's content">
 					<IconPencil size={12} stroke={1.8} aria-hidden="true" />
 					{c.updates} update{c.updates === 1 ? '' : 's'}
 				</span>

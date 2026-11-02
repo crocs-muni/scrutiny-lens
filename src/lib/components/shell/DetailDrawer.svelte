@@ -304,8 +304,10 @@
 			</p>
 		{:else if active === 'summary'}
 			<div class="flex items-center gap-2.5">
-				<!-- ① kind-mapped neutral icon tile (BIBLE N1/N2) -->
+				<!-- ① kind-mapped neutral icon tile (BIBLE N1/N2); its hover names
+					the vocabulary: spec §0 — every record is an event. -->
 				<span
+					title="{dossier.subjectType} · in SCRUTINY every record (product, metadata, binding, patch) is an event: a signed Nostr note"
 					class="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[8px] border border-line bg-inset {dossier.subjectType ===
 					'product'
 						? 'text-accent-ink'
