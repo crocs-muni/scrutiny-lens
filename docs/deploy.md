@@ -28,7 +28,7 @@ Two workflows, one shared recipe:
   `pnpm test`.
 - `.github/workflows/pages.yml` — on every push to `main` (plus manual
   *Run workflow*), two jobs: `gate-and-build` (recipe → check → test →
-  `vite build` with `BASE_PATH=/scrutiny-lens` and the baked relay pool →
+  `vite build` with the baked relay pool →
   `upload-pages-artifact`) then `deploy` (`deploy-pages` into the
   `github-pages` environment, authenticated by the built-in `GITHUB_TOKEN`
   with `pages: write` + `id-token: write` — no secrets configured at all).
@@ -51,11 +51,13 @@ later. After that, every green push to `main` redeploys itself.
 
 - `PUBLIC_RELAY_URLS` — the first-run relay pool (spec: 1–4, user-editable in
   Settings afterwards). Currently
-  `wss://lens-demo.feeds.relay.tools,wss://relay.damus.io,wss://nos.lol` —
-  `wss` only, because an HTTPS page cannot open `ws://`. The demo corpus
-  relay leads: a fresh visitor must land on the seeded corpus (published
-  out-of-band 2026-09-17), the public pair follows for anything else. To
-  retarget, change the one line in `pages.yml` and re-run the workflow.
+  `wss://relay.scrutiny.cloud,wss://relay.damus.io,wss://nos.lol` —
+  `wss` only, because an HTTPS page cannot open `ws://`. Our production
+  relay leads, so a fresh visitor lands on scrutiny data; the public pair
+  follows as fallback. The variable is set on the build step only: at job
+  level it leaks into `pnpm test`, where `DEFAULT_RELAYS` must equal the
+  in-source spec pool. To retarget, change the one line in `pages.yml` and
+  re-run the workflow.
 - `PUBLIC_LLM_ENDPOINT` — unset; falls back to the spec §5 default.
 
 No deployment secrets exist at all; the app itself is secretless by design
@@ -63,11 +65,11 @@ No deployment secrets exist at all; the app itself is secretless by design
 
 ## Retargeting
 
-- **Custom domain at a root mount** (the pretty-URL upgrade when the spec §1
-  `/event/…` pages resume): add the domain's CNAME in Settings → Pages, set
-  `BASE_PATH: ''` in `pages.yml` — nothing else changes. Pasted links from
-  the path-mounted era would need redirects, so mount changes belong to
-  feature boundaries, not casual edits.
+- **Custom domain at a root mount** (done: `lens.scrutiny.cloud`): add the
+  domain's CNAME in Settings → Pages and leave `BASE_PATH` unset in
+  `pages.yml` — nothing else changes. Pasted links from the path-mounted era
+  need the `github.io` redirect, so mount changes belong to feature
+  boundaries, not casual edits.
 - **User-site repo (pretty URL without a domain):** requires a separate
   account/org plus a `contents: write` PAT the workflow pushes with — ruled
   out (no second account wanted, no secrets wanted).
