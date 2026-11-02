@@ -6,7 +6,16 @@
 	import SharePopover from '$lib/components/shell/SharePopover.svelte';
 	import type { NostrEvent } from 'nostr-tools';
 
-	type Variant = 'icon' | 'text' | 'value' | 'span' | 'link' | 'hover-only' | 'share' | 'disabled';
+	type Variant =
+		| 'icon'
+		| 'text'
+		| 'value'
+		| 'span'
+		| 'link'
+		| 'hover-only'
+		| 'share'
+		| 'disabled'
+		| 'siblings';
 
 	interface Props {
 		variant: Variant;
@@ -64,6 +73,21 @@
 				<span {...props}>3 metadata</span>
 			{/snippet}
 		</KeyHint>
+	{:else if variant === 'siblings'}
+		<!-- GraphNode shape: the title tip and the chip tip are siblings inside
+			a card, so each owns its own pointer-enter. -->
+		<div data-testid="card">
+			<KeyHint hoverOnly nameless label="Full title">
+				{#snippet trigger({ props })}
+					<div {...props}>Title</div>
+				{/snippet}
+			</KeyHint>
+			<KeyHint hoverOnly nameless label="Publisher">
+				{#snippet trigger({ props })}
+					<span {...props}>Chip</span>
+				{/snippet}
+			</KeyHint>
+		</div>
 	{:else if variant === 'disabled'}
 		<KeyHint label="Zoom in" disabled>icon</KeyHint>
 	{:else}

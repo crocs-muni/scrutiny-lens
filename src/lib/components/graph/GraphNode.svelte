@@ -150,11 +150,16 @@
 <!-- The title is CSS-clipped (truncate) and the dense tiers drop it, so the
 	 * tooltip carries the full text in the same face as the visible title.
 	 * `silent`: the card's own name already holds the whole title. -->
-<KeyHint nameless silent side="right">
-	{#snippet content()}
-		<span class={data.interpreted ? '' : 'font-mono break-all'}>{data.title}</span>
-	{/snippet}
-	{#snippet trigger({ props })}
+{#snippet fullTitle()}
+	<span class={data.interpreted ? '' : 'font-mono break-all'}>{data.title}</span>
+{/snippet}
+
+<!-- The title tip sits on the title text only (full and line tiers), never on
+	 * the whole card: a tip on the card would swallow the pointer-enter after
+	 * a child tip (publisher chip, counts) closed, so moving back to the title
+	 * showed nothing until the pointer left the card. The disc tier has no
+	 * title text, so there the card itself is the trigger. -->
+{#snippet card(props: Record<string, unknown>)}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div
@@ -197,10 +202,15 @@
 						class={mapping.warn ? 'text-[var(--orange)]' : data.kind === 'product' ? 'text-accent-ink' : 'text-ink-2'}
 					/>
 				</span>
-				<span
-					class="truncate font-mono text-[10px] {data.retracted ? 'text-ink-3 line-through' : 'text-ink-2'} {bloom.active ? 'settle-flip' : ''}"
-					>{data.title}</span
-				>
+				<KeyHint hoverOnly nameless silent side="right" content={fullTitle}>
+					{#snippet trigger({ props })}
+						<span
+							{...props}
+							class="truncate font-mono text-[10px] {data.retracted ? 'text-ink-3 line-through' : 'text-ink-2'} {bloom.active ? 'settle-flip' : ''}"
+							>{data.title}</span
+						>
+					{/snippet}
+				</KeyHint>
 			{:else}
 				<!-- full tier (N1) -->
 				<div class="flex items-center {data.kind === 'product' ? 'gap-2.5' : 'gap-2'}">
@@ -218,14 +228,19 @@
 						/>
 					</span>
 					<div class="min-w-0">
-						<div
-							class="truncate font-semibold {data.kind === 'product' ? 'text-[13.5px]' : 'text-[13px]'}
-								{data.interpreted ? 'font-sans' : 'font-mono text-[11.5px]'}
-								{data.retracted ? 'text-ink-3 line-through' : 'text-ink'}
-								{bloom.active ? 'settle-flip' : ''}"
-						>
-							{data.title}
-						</div>
+						<KeyHint hoverOnly nameless silent side="right" content={fullTitle}>
+							{#snippet trigger({ props })}
+								<div
+									{...props}
+									class="truncate font-semibold {data.kind === 'product' ? 'text-[13.5px]' : 'text-[13px]'}
+										{data.interpreted ? 'font-sans' : 'font-mono text-[11.5px]'}
+										{data.retracted ? 'text-ink-3 line-through' : 'text-ink'}
+										{bloom.active ? 'settle-flip' : ''}"
+								>
+									{data.title}
+								</div>
+							{/snippet}
+						</KeyHint>
 						<!-- N5: publisher name ALWAYS (npub fallback mono inside the chip);
 							the avatar badge lives in the chip itself. -->
 						<PublisherChip pubkey={data.pubkey} />
@@ -299,8 +314,17 @@
 				>
 			{/if}
 		</div>
-	{/snippet}
-</KeyHint>
+{/snippet}
+
+{#if tier === 'disc'}
+	<KeyHint nameless silent side="right" content={fullTitle}>
+		{#snippet trigger({ props })}
+			{@render card(props)}
+		{/snippet}
+	</KeyHint>
+{:else}
+	{@render card({})}
+{/if}
 
 <!-- The bloom mark is the shared `.settle-flip` class (app.css, issue #82) —
 	the single ~200ms "graph updated" on trickle merge, one motion vocabulary. -->

@@ -153,3 +153,25 @@ describe('KeyHint composed with a Popover trigger (SharePopover)', () => {
 		await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
 	});
 });
+
+// Hover the chip, then the title of the same node: the title tip must open
+// without leaving the node first. jsdom could not reproduce the original bug
+// (a tip on the whole card swallowed the pointer-enter once a child tip had
+// closed; checked with delayDuration 0, both shapes pass), so this guards the
+// sibling shape GraphNode uses now; the real-browser check stays manual.
+describe('KeyHint tips side by side', () => {
+	const leave = (el: HTMLElement) => fireEvent.pointerLeave(el, { pointerType: 'mouse' });
+
+	it('sibling tips: chip tip, then the title tip opens straight away', async () => {
+		render(Harness, { variant: 'siblings' });
+		const title = screen.getByText('Title');
+		const chip = screen.getByText('Chip');
+
+		await hover(chip);
+		expect((await screen.findByRole('tooltip')).textContent).toContain('Publisher');
+
+		await leave(chip);
+		await hover(title);
+		await waitFor(() => expect(screen.getByRole('tooltip').textContent).toContain('Full title'));
+	});
+});
