@@ -166,18 +166,17 @@
 					<span>Sessions</span>
 				</button>
 
-				<button
-					type="button"
-					aria-label="Search sessions"
+				<KeyHint
+					label="Search sessions"
 					aria-expanded={searchOpen}
 					onclick={() => (searchOpen = true)}
 					class="absolute top-0 right-0 z-10 flex size-8 items-center justify-center rounded-control text-ink-3 transition-[opacity,background-color,color,transform] hover:bg-hover-2 hover:text-ink active:scale-[0.96] {searchOpen
 						? 'pointer-events-none opacity-0'
 						: 'opacity-100'}"
-					style:transition-duration="{SEARCH_MOTION.duration}ms"
+					style="transition-duration: {SEARCH_MOTION.duration}ms"
 				>
 					<IconSearch size={16} stroke-width={1.8} />
-				</button>
+				</KeyHint>
 
 				<div
 					class="absolute top-0 right-0 z-20 flex h-8 items-center overflow-hidden rounded-control bg-field text-ink-3 shadow-hairline transition-[width,opacity] focus-within:text-ink-2 {searchOpen
@@ -200,14 +199,14 @@
 						aria-label="Search sessions"
 						class="ml-1.5 min-w-0 flex-1 bg-transparent text-[13px] font-medium text-ink outline-none placeholder:text-ink-3"
 					/>
-					<button
-						type="button"
-						aria-label="Close session search"
+					<KeyHint
+						label="Close search"
+						side="bottom"
 						onclick={closeSearch}
 						class="flex size-8 shrink-0 items-center justify-center rounded-control text-ink-3 transition-[background-color,color,transform] duration-150 hover:bg-hover-2 hover:text-ink active:scale-[0.96]"
 					>
 						<IconX size={16} stroke-width={1.8} />
-					</button>
+					</KeyHint>
 				</div>
 			</div>
 
@@ -249,9 +248,8 @@
 									</button>
 								{/snippet}
 							</KeyHint>
-							<button
-								type="button"
-								aria-label="Close session"
+							<KeyHint
+								label="Close session"
 								onclick={(event) => {
 									event.stopPropagation();
 									onClose(item.id);
@@ -259,7 +257,7 @@
 								class="absolute top-1.5 right-1 hidden size-5 items-center justify-center rounded-[5px] text-ink-3 group-hover/session:flex group-focus-within/session:flex hover:bg-hover hover:text-ink"
 							>
 								<IconX size={13} stroke-width={2} />
-							</button>
+							</KeyHint>
 						</div>
 					{/each}
 					{#if query && visibleSessions.length === 0}
@@ -299,14 +297,13 @@
 			class="primitive-icon-button mb-1 shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover-2 hover:text-ink"
 			onclick={onToggle}><IconArrowBarToRight size={18} stroke-width={1.8} /></KeyHint
 		>
-		<button
-			type="button"
-			aria-label="New session"
+		<KeyHint
+			label="New session"
 			onclick={onHome}
 			class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover-2 hover:text-ink"
 		>
 			<IconPencil size={17} stroke-width={1.8} />
-		</button>
+		</KeyHint>
 		<span class="flex-1"></span>
 		<KeyHint
 			label="Settings"
