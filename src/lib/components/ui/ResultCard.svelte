@@ -289,10 +289,12 @@ const draftSnippet = $derived(draft !== null && draft.snippet !== '' ? draft.sni
 		<span class="flex-1"></span>
 		<span class="inline-flex shrink-0 items-center gap-2 font-mono text-[11px] text-ink-2">
 			<!-- One icon pair across node + card (issue #77, pinned §9):
-				IconFile = bound records (metadata), IconLink = artifacts
-				(pdf/csv/…) — the two surfaces must never disagree. -->
+				IconFile = bound records (metadata), IconLink = artifacts named
+				by the record or its bound records (TERM_ARTIFACTS) — the two
+				surfaces must never disagree. -->
 			<!-- Hover-only: the whole card is the click target, and the visible
-				words already name each count (rulebook R2/R3). -->
+				words already name each count, so nothing essential lives only in the
+				tip (spec §9 keyboard rule, #39). -->
 			{#if c.files > 0}
 				<KeyHint hoverOnly nameless label={TERM_ARTIFACTS}>
 					{#snippet trigger({ props })}

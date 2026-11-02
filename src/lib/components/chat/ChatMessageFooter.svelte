@@ -109,6 +109,8 @@
 					>
 						<span class="row-n">{citation.n}</span>
 						{#if pubkey !== undefined}
+							<!-- Hover-only: the chip sits inside this row's <button>, so a
+								tab stop would nest. The dossier header shows the full npub. -->
 							<PublisherChip {pubkey} />
 						{:else}
 							<!-- grounding event left memory: mono machine id, the honest cell -->

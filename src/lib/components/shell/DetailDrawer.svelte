@@ -449,14 +449,15 @@
 						{#if row.author === ''}
 							<span class="shrink-0 font-mono text-[11px] text-ink-3">{npubShort(row.author)}</span>
 						{:else}
+							{@const npub = nip19.npubEncode(row.author)}
 							<KeyHint hoverOnly nameless side="top">
 								{#snippet content()}
-									<span class="font-mono break-all">{nip19.npubEncode(row.author)}</span>
+									<span class="font-mono break-all">{npub}</span>
 								{/snippet}
 								{#snippet trigger({ props })}
 									<span {...props} class="shrink-0 font-mono text-[11px] text-ink-3">
 										<span aria-hidden="true">{npubShort(row.author)}</span>
-										<span class="sr-only">{nip19.npubEncode(row.author)}</span>
+										<span class="sr-only">{npub}</span>
 									</span>
 								{/snippet}
 							</KeyHint>

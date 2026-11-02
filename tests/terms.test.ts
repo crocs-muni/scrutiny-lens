@@ -1,4 +1,4 @@
-// Tooltip wording rules (rulebook R5/R6): sentence case, no trailing period,
+// Tooltip wording rules (spec §9 writing rule, #39): sentence case, no trailing period,
 // B-kind terms within two lines (about 90 chars). The strings live in one
 // module so card, node and dossier cannot drift apart (spec §9).
 

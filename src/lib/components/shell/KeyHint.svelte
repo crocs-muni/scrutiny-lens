@@ -31,11 +31,14 @@
 		/** The trigger has visible text of its own: no aria-label, keep aria-describedby. */
 		nameless?: boolean;
 		/** The tooltip repeats text the trigger already exposes (CSS-clipped
-		 * text is complete in the DOM): drop aria-describedby. */
+		 * text is complete in the DOM): drop aria-describedby. Redundant with
+		 * `hoverOnly`, which already drops it. */
 		silent?: boolean;
 		/** Mouse supplement on a child of an interactive parent (card, node):
 		 * no tab stop, no aria-describedby. The meaning must also exist as
-		 * visible or sr-only text (rulebook R2/R3). */
+		 * visible or sr-only text: nothing essential lives only in a tooltip, and
+		 * a child of an interactive parent must not add a second tab stop
+		 * (spec §9 keyboard rule, #39). */
 		hoverOnly?: boolean;
 		/** Wrap an existing element: spread `props` on it. `type` is removed
 		 * (bits adds type="button" even for non-buttons); real buttons set it themselves. */
@@ -83,7 +86,8 @@
 		{/snippet}
 	</Tooltip.Trigger>
 	<Tooltip.Portal>
-		<!-- One surface (rulebook R9): wraps, never clips, stays inside the
+		<!-- One surface (spec §9 writing rule): full values are shown complete and
+			wrapped, never clipped, and stay inside the
 			viewport. Values go in `content` as mono + break-all. -->
 		<Tooltip.Content
 			{side}

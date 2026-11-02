@@ -26,7 +26,8 @@
 		pubkey: string;
 		/** A tab stop, for chips that are not inside an interactive parent
 		 * (dossier header). Inside a card, graph node or source row the
-		 * tooltip stays hover-only (rulebook R3). */
+		 * tooltip stays hover-only: a second tab stop inside an interactive parent
+		 * breaks keyboard flow (spec §9 keyboard rule, #39). */
 		focusable?: boolean;
 	}
 

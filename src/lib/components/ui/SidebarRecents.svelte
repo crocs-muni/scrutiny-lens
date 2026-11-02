@@ -270,7 +270,8 @@
 		<!-- Settings dock — the rail's bottom slot (spec §9 rail chrome) -->
 		<div class="mx-2 mt-2 shrink-0 border-t border-line pt-2">
 			<!-- Visible label and visible keycap: a tooltip would only repeat
-				both (rulebook R1), so no KeyHint here. -->
+				both (keycap only where a shortcut exists, and it is visible here), so
+				no KeyHint here. -->
 			<button
 				type="button"
 				aria-keyshortcuts="Control+,"
