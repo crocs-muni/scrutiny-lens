@@ -9,6 +9,7 @@
 	 * rule). */
 
 	import { IconEye, IconEyeOff } from '@tabler/icons-svelte';
+	import KeyHint from '../shell/KeyHint.svelte';
 
 	interface Props {
 		id?: string;
@@ -35,9 +36,9 @@
 		oninput={(event) => oninput(event.currentTarget.value)}
 		class="min-w-0 flex-1 bg-transparent px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none placeholder:text-ink-3"
 	/>
-	<button
-		type="button"
-		aria-label={revealed ? 'Hide API key' : 'Show API key'}
+	<KeyHint
+		label={revealed ? 'Hide API key' : 'Show API key'}
+		side="left"
 		onclick={() => (revealed = !revealed)}
 		class="primitive-icon-button mr-0.5 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
 	>
@@ -46,5 +47,5 @@
 		{:else}
 			<IconEye size={14} stroke-width={2} />
 		{/if}
-	</button>
+	</KeyHint>
 </div>

@@ -75,8 +75,10 @@
 	import { IconClock, IconFile, IconLink } from '@tabler/icons-svelte';
 	import { iconForNode } from '$lib/graph/icons';
 	import PublisherChip from '../ui/PublisherChip.svelte';
+	import KeyHint from '../shell/KeyHint.svelte';
 	import { firstPaintBloom } from '../ui/bloom.svelte';
 	import { formatRel } from '$lib/shell.svelte';
+	import { TERM_ARTIFACTS, TERM_BOUND_RECORDS } from '$lib/terms';
 
 	interface Props {
 		data: GraphNodeData;
@@ -145,12 +147,26 @@
  *	keyboard path (Enter/Space) stays on keySelect. The +N bubble is the
  *	expansion gesture (#97): single-click, discrete hit target — it never
  *	selects. -->
+<!-- The title is CSS-clipped (truncate) and the dense tiers drop it, so the
+	 * tooltip carries the full text in the same face as the visible title. -->
+{#snippet fullTitle()}
+	<span class={data.interpreted ? '' : 'font-mono break-all'}>{data.title}</span>
+{/snippet}
+
+<!-- The title tip sits on the title text (full and line tiers) or the disc
+	 * icon, never on the whole card: a tip on the card would swallow the
+	 * pointer-enter after a child tip (publisher chip, counts, +N bubble)
+	 * closed, so moving back to the title showed nothing until the pointer
+	 * left the card. The full title is in the node's accessible name and opens
+	 * in the Dossier on Enter/Space, so the tip is a mouse supplement
+	 * (hoverOnly) by design: a child of an interactive parent gets no tab
+	 * stop (spec §9 keyboard rule, #39). -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
 	role="button"
 	tabindex="0"
-	title={data.title}
+	aria-label={tier === 'disc' ? data.title : undefined}
 	onkeydown={keySelect}
 	onmouseenter={() => {
 		hovered = true;
@@ -173,7 +189,15 @@
 		: undefined}
 >
 	{#if tier === 'disc'}
-		<IconComponent size={14} stroke-width={1.8} class={mapping.warn ? 'text-[var(--orange)]' : 'text-ink-2'} />
+		<!-- The disc has no text, so the root button's aria-label names it; this
+			wrapper is the tip trigger so the +N bubble is its sibling, not a child. -->
+		<KeyHint hoverOnly nameless side="right" content={fullTitle}>
+			{#snippet trigger({ props })}
+				<span {...props} class="flex h-full w-full items-center justify-center rounded-full">
+					<IconComponent size={14} stroke-width={1.8} class={mapping.warn ? 'text-[var(--orange)]' : 'text-ink-2'} />
+				</span>
+			{/snippet}
+		</KeyHint>
 	{:else if tier === 'line'}
 		<span
 			class="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border
@@ -187,10 +211,15 @@
 				class={mapping.warn ? 'text-[var(--orange)]' : data.kind === 'product' ? 'text-accent-ink' : 'text-ink-2'}
 			/>
 		</span>
-		<span
-			class="truncate font-mono text-[10px] {data.retracted ? 'text-ink-3 line-through' : 'text-ink-2'} {bloom.active ? 'settle-flip' : ''}"
-			>{data.title}</span
-		>
+		<KeyHint hoverOnly nameless side="right" content={fullTitle}>
+			{#snippet trigger({ props })}
+				<span
+					{...props}
+					class="truncate font-mono text-[10px] {data.retracted ? 'text-ink-3 line-through' : 'text-ink-2'} {bloom.active ? 'settle-flip' : ''}"
+					>{data.title}</span
+				>
+			{/snippet}
+		</KeyHint>
 	{:else}
 		<!-- full tier (N1) -->
 		<div class="flex items-center {data.kind === 'product' ? 'gap-2.5' : 'gap-2'}">
@@ -208,14 +237,19 @@
 				/>
 			</span>
 			<div class="min-w-0">
-				<div
-					class="truncate font-semibold {data.kind === 'product' ? 'text-[13.5px]' : 'text-[13px]'}
-						{data.interpreted ? 'font-sans' : 'font-mono text-[11.5px]'}
-						{data.retracted ? 'text-ink-3 line-through' : 'text-ink'}
-						{bloom.active ? 'settle-flip' : ''}"
-				>
-					{data.title}
-				</div>
+				<KeyHint hoverOnly nameless side="right" content={fullTitle}>
+					{#snippet trigger({ props })}
+						<div
+							{...props}
+							class="truncate font-semibold {data.kind === 'product' ? 'text-[13.5px]' : 'text-[13px]'}
+								{data.interpreted ? 'font-sans' : 'font-mono text-[11.5px]'}
+								{data.retracted ? 'text-ink-3 line-through' : 'text-ink'}
+								{bloom.active ? 'settle-flip' : ''}"
+						>
+							{data.title}
+						</div>
+					{/snippet}
+				</KeyHint>
 				<!-- N5: publisher name ALWAYS (npub fallback mono inside the chip);
 					the avatar badge lives in the chip itself. -->
 				<PublisherChip pubkey={data.pubkey} />
@@ -248,13 +282,24 @@
 			{/each}
 			{#if data.kind === 'product'}
 				<!-- Icon pair pinned with ResultCard (§9): IconFile =
-					bound records, IconLink = artifacts (issue #77). -->
-				<span class="ml-auto flex items-center gap-1" title="bound records (metadata)"
-					><IconFile size={11} stroke-width={2} />{data.boundMetadata}</span
-				>
-				<span class="flex items-center gap-1" title="artifacts (pdf/csv/…) named by this record or its bound records"
-					><IconLink size={11} stroke-width={2} />{data.files}</span
-				>
+					bound records, IconLink = artifacts named by the record or its
+						bound records (TERM_ARTIFACTS, issue #77). -->
+				<!-- Hover-only: the card is the focusable target, so the
+					sr-only words carry the meaning for assistive tech. -->
+				<KeyHint hoverOnly nameless label={TERM_BOUND_RECORDS}>
+					{#snippet trigger({ props })}
+						<span {...props} class="ml-auto flex items-center gap-1"
+							><IconFile size={11} stroke-width={2} aria-hidden="true" />{data.boundMetadata}<span class="sr-only"> bound records</span></span
+						>
+					{/snippet}
+				</KeyHint>
+				<KeyHint hoverOnly nameless label={TERM_ARTIFACTS}>
+					{#snippet trigger({ props })}
+						<span {...props} class="flex items-center gap-1"
+							><IconLink size={11} stroke-width={2} aria-hidden="true" />{data.files}<span class="sr-only"> artifacts</span></span
+						>
+					{/snippet}
+				</KeyHint>
 			{/if}
 		</div>
 	{/if}
@@ -264,18 +309,18 @@
 	 * never a selection. Meaning is role-bound: records hide PRODUCT
 	 * bridges, relateds hide RECORDS. -->
 	{#if data.badge !== null}
-		<button
-			type="button"
+		<!-- The visible "+N" is not a name: the label says what expands. -->
+		<KeyHint
+			label={data.role === 'related'
+				? `Expand: ${data.badge} admitted ${data.badge === 1 ? 'record' : 'records'} hidden`
+				: `Expand: ${data.badge} related ${data.badge === 1 ? 'product' : 'products'} hidden`}
 			class="absolute -bottom-2 -right-2 flex h-[22px] w-[22px] items-center justify-center rounded-full border-[1.5px] border-line bg-surface font-mono text-[9px] font-semibold text-ink-2 transition-colors hover:border-accent"
-			title={data.role === 'related'
-				? `${data.badge} admitted ${data.badge === 1 ? 'record' : 'records'} hidden — click to expand`
-				: `${data.badge} related ${data.badge === 1 ? 'product' : 'products'} hidden — click to expand`}
 			onclick={(e) => {
 				e.stopPropagation();
 				data.onExpand(data.id);
 			}}
 			onpointerdown={(e) => e.stopPropagation()}
-			>+{data.badge}</button
+			>+{data.badge}</KeyHint
 		>
 	{/if}
 </div>

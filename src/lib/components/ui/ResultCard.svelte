@@ -49,6 +49,8 @@
 	import type { SkeletonCard } from '$lib/pipeline';
 	import { formatRel } from '$lib/shell.svelte';
 	import PublisherChip from './PublisherChip.svelte';
+	import KeyHint from '../shell/KeyHint.svelte';
+	import { TERM_ARTIFACTS, TERM_BOUND_RECORDS, TERM_PATCHES } from '$lib/terms';
 	import { firstPaintBloom } from './bloom.svelte';
 	import { IconClock, IconFile, IconLink, IconPencil } from '@tabler/icons-svelte';
 
@@ -287,23 +289,39 @@ const draftSnippet = $derived(draft !== null && draft.snippet !== '' ? draft.sni
 		<span class="flex-1"></span>
 		<span class="inline-flex shrink-0 items-center gap-2 font-mono text-[11px] text-ink-2">
 			<!-- One icon pair across node + card (issue #77, pinned §9):
-				IconFile = bound records (metadata), IconLink = artifacts
-				(pdf/csv/…) — the two surfaces must never disagree. -->
+				IconFile = bound records (metadata), IconLink = artifacts named
+				by the record or its bound records (TERM_ARTIFACTS) — the two
+				surfaces must never disagree. -->
+			<!-- Hover-only: the whole card is the click target, and the visible
+				words already name each count, so nothing essential lives only in the
+				tip (spec §9 keyboard rule, #39). -->
 			{#if c.files > 0}
-				<span class="inline-flex items-center gap-1">
-					<IconLink size={12} stroke={1.8} aria-hidden="true" />
-					{c.files} file{c.files === 1 ? '' : 's'}
-				</span>
+				<KeyHint hoverOnly nameless label={TERM_ARTIFACTS}>
+					{#snippet trigger({ props })}
+						<span {...props} class="inline-flex items-center gap-1">
+							<IconLink size={12} stroke={1.8} aria-hidden="true" />
+							{c.files} file{c.files === 1 ? '' : 's'}
+						</span>
+					{/snippet}
+				</KeyHint>
 			{/if}
-			<span class="inline-flex items-center gap-1">
-				<IconFile size={12} stroke={1.8} aria-hidden="true" />
-				{c.boundMetadata} metadata
-			</span>
+			<KeyHint hoverOnly nameless label={TERM_BOUND_RECORDS}>
+				{#snippet trigger({ props })}
+					<span {...props} class="inline-flex items-center gap-1">
+						<IconFile size={12} stroke={1.8} aria-hidden="true" />
+						{c.boundMetadata} metadata
+					</span>
+				{/snippet}
+			</KeyHint>
 			{#if c.updates > 0}
-				<span class="inline-flex items-center gap-1">
-					<IconPencil size={12} stroke={1.8} aria-hidden="true" />
-					{c.updates} update{c.updates === 1 ? '' : 's'}
-				</span>
+				<KeyHint hoverOnly nameless label={TERM_PATCHES}>
+					{#snippet trigger({ props })}
+						<span {...props} class="inline-flex items-center gap-1">
+							<IconPencil size={12} stroke={1.8} aria-hidden="true" />
+							{c.updates} update{c.updates === 1 ? '' : 's'}
+						</span>
+					{/snippet}
+				</KeyHint>
 			{/if}
 		</span>
 	</div>

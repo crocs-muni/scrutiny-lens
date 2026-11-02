@@ -22,6 +22,7 @@
 	import { fetchModels } from '$lib/ai/models';
 	import { persistNote } from '$lib/components/shell/persist-note';
 	import KeyField from '$lib/components/ui/KeyField.svelte';
+	import KeyHint from './KeyHint.svelte';
 	import { clearAllLocalData } from '$lib/db';
 	import { nextAutoModel, settings } from '$lib/settings.svelte';
 	import { RELAY_MAX, RELAY_MIN, type Appearance } from '$lib/config';
@@ -257,14 +258,14 @@
 	>
 		<div class="mb-3 flex items-center">
 			<span class="flex-1 text-[14px] font-semibold text-ink">Settings</span>
-			<button
-				type="button"
-				aria-label="Close settings"
+			<KeyHint
+				label="Close settings"
+				side="bottom"
 				onclick={closeDialog}
 				class="primitive-icon-button text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
 			>
 				<IconX size={16} stroke-width={2} />
-			</button>
+			</KeyHint>
 		</div>
 
 		<!-- AI provider (spec §5) -->
@@ -414,15 +415,15 @@
 							spellcheck="false"
 							class="min-w-0 flex-1 rounded-control bg-field px-2 py-1.5 font-mono text-[12.5px] text-ink shadow-hairline outline-none transition-shadow duration-150 placeholder:text-ink-3 focus:shadow-card"
 						/>
-						<button
-							type="button"
-							aria-label="Remove relay"
+						<KeyHint
+							label="Remove relay"
+							side="left"
 							disabled={relayDrafts.length <= RELAY_MIN}
 							onclick={() => removeRelay(index)}
 							class="primitive-icon-button text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-red disabled:opacity-40"
 						>
 							<IconTrash size={14} stroke-width={2} />
-						</button>
+						</KeyHint>
 					</div>
 				{/each}
 			</div>
