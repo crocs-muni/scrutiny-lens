@@ -105,14 +105,19 @@
 		<div class="mb-2 flex h-10 shrink-0 items-center px-2">
 			<!-- brand = the home affordance (owner ruling 2026-09-03: plain
 				text, no logo chip) — "home" is the search hero. -->
-			<button
-				type="button"
-				title="Home"
-				onclick={onHome}
-				class="min-w-0 flex-1 truncate rounded-control px-1 text-left text-[14px] font-semibold text-ink"
-			>
-				Scrutiny Lens
-			</button>
+			<div class="min-w-0 flex-1">
+				<KeyHint label="Home" nameless onclick={onHome}>
+					{#snippet trigger({ props })}
+						<button
+							type="button"
+							{...props}
+							class="block w-full truncate rounded-control px-1 text-left text-[14px] font-semibold text-ink"
+						>
+							Scrutiny Lens
+						</button>
+					{/snippet}
+				</KeyHint>
+			</div>
 			<KeyHint
 				label="Sessions rail"
 				keys="Ctrl+\"
@@ -218,27 +223,32 @@
 							role="presentation"
 							class="group/session relative z-10 mx-2 rounded-control"
 						>
-							<button
-								type="button"
-								title={item.title}
-								onclick={() => onPick(item.id)}
-								class="sidebar-action-row flex w-full flex-col gap-0.5 rounded-control px-2 py-1.5 text-left transition-transform duration-150 active:scale-[0.98] {item.id ===
-								activeId
-									? 'group-hover/glide:bg-transparent'
-									: ''}"
-							>
-								<span
-									class="min-w-0 truncate pr-5 text-[14px] font-medium {item.id === activeId
-										? 'text-ink'
-										: 'text-ink-2'}">{item.title}</span
-								>
-								<span class="flex items-center gap-1.5">
-									{#if item.unseen}
-										<span class="size-1.5 shrink-0 rounded-full bg-accent" aria-label="Unseen updates"></span>
-									{/if}
-									<span class="font-mono text-[11px] text-ink-3">{formatRel(item.createdAt)}</span>
-								</span>
-							</button>
+							<!-- The title is CSS-clipped (truncate), so the tooltip carries
+								the full text; no conditional detection (jsdom has no layout). -->
+							<KeyHint label={item.title} nameless onclick={() => onPick(item.id)}>
+								{#snippet trigger({ props })}
+									<button
+										type="button"
+										{...props}
+										class="sidebar-action-row flex w-full flex-col gap-0.5 rounded-control px-2 py-1.5 text-left transition-transform duration-150 active:scale-[0.98] {item.id ===
+										activeId
+											? 'group-hover/glide:bg-transparent'
+											: ''}"
+									>
+										<span
+											class="min-w-0 truncate pr-5 text-[14px] font-medium {item.id === activeId
+												? 'text-ink'
+												: 'text-ink-2'}">{item.title}</span
+										>
+										<span class="flex items-center gap-1.5">
+											{#if item.unseen}
+												<span class="size-1.5 shrink-0 rounded-full bg-accent" aria-label="Unseen updates"></span>
+											{/if}
+											<span class="font-mono text-[11px] text-ink-3">{formatRel(item.createdAt)}</span>
+										</span>
+									</button>
+								{/snippet}
+							</KeyHint>
 							<button
 								type="button"
 								aria-label="Close session"

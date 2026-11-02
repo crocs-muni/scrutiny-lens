@@ -15,17 +15,22 @@
 	 * Three-way honesty (issue #131 WP7, spec §2 never-lie): the seam answers
 	 * found / asked-and-empty / never-asked, and the chip claims exactly that
 	 * much. A never-asked lookup (no relays configured) renders the identicon
-	 * with no "no profile" claim anywhere in its title or labels. */
+	 * with no "no profile" claim anywhere in its tooltip or labels. */
 
 	import { fly } from 'svelte/transition';
 	import { npubEncode } from 'nostr-tools/nip19';
 	import { getProfile, profileClaim, type ProfileLookup } from '$lib/net/profiles';
+	import KeyHint from '../shell/KeyHint.svelte';
 
 	interface Props {
 		pubkey: string;
+		/** A tab stop, for chips that are not inside an interactive parent
+		 * (dossier header). Inside a card, graph node or source row the
+		 * tooltip stays hover-only (rulebook R3). */
+		focusable?: boolean;
 	}
 
-	let { pubkey }: Props = $props();
+	let { pubkey, focusable = false }: Props = $props();
 
 	/** undefined = not asked yet (or nothing to ask) — no claim is rendered. */
 	let profile = $state<ProfileLookup>(undefined);
@@ -34,7 +39,7 @@
 	/** Gates the arrival fade: content mounts only once the profile settles. */
 	let settled = $state(false);
 
-	/** Full npub for the title; falls back to the raw hex if bech32 encode fails. */
+	/** Full npub for the tooltip; falls back to the raw hex if bech32 encode fails. */
 	const npub = $derived(encodeNpub(pubkey));
 	/** label token: bech32 npub's first 8 chars + trailing 4 (mono, machine-made). */
 	const labelToken = $derived(`${npub.slice(0, 8)}…${npub.slice(-4)}`);
@@ -45,14 +50,15 @@
 	/** What the settled lookup licenses this chip to claim. */
 	const claim = $derived(profileClaim(profile));
 
-	/** Tooltip: only a real, asked miss may claim "no kind-0 profile on your
-	 * relays"; an unasked lookup shows the bare npub (issue #131 WP7). */
-	const title = $derived(
+	/** Tooltip second line: only a real, asked miss may claim "no kind-0
+	 * profile on your relays"; an unasked lookup shows the bare npub
+	 * (issue #131 WP7). */
+	const claimLine = $derived(
 		claim === 'found'
-			? `${npub} · kind-0 profile found`
+			? 'Nostr profile found'
 			: claim === 'missing'
-				? `${npub} · no kind-0 profile on your relays`
-				: npub
+				? 'No kind-0 profile on your relays'
+				: null
 	);
 
 	$effect(() => {
@@ -111,61 +117,69 @@
 	}
 </script>
 
-<span title={title} class="inline-flex max-w-full items-center gap-1.5 align-middle">
-	{#if settled}
-		<!-- profile resolved: fade up ~160ms into place -->
-		<span class="inline-flex max-w-full items-center gap-1.5" transition:fly={{ x: 0, y: 1, duration: 160 }}>
-			{#if claim === 'found' && profile?.picture && !imgFailed}
-				<!-- kind-0 picture; onerror drops to the identicon -->
-				<img
-					src={profile.picture}
-					alt=""
-					loading="lazy"
-					class="h-4 w-4 shrink-0 rounded-full bg-inset object-cover outline outline-1 outline-line"
-					onerror={() => (imgFailed = true)}
-				/>
-			{:else}
-				<!-- deterministic inline identicon (spec §1: no third-party hosts).
-					Covers all three states — found-without-picture, asked-and-empty,
-					never-asked — and asserts nothing either way. -->
-				<svg
-					viewBox="0 0 5 5"
-					shape-rendering="crispEdges"
-					class="h-4 w-4 shrink-0 rounded-full"
-					role="img"
-					aria-label="publisher identicon"
-				>
-					<rect width="5" height="5" fill="oklch(0.955 0.003 264)" />
-					{#each cells as row, y}
-						{#each row as on, x}
-							{#if on}
-								<rect
-									x={x}
-									y={y}
-									width="1"
-									height="1"
-									fill="oklch(0.52 0.025 {hue})"
-								/>
-							{/if}
-						{/each}
-					{/each}
-				</svg>
-			{/if}
-			{#if claim === 'found' && profile?.name}
-				<!-- human prose → sans; truncate long author names -->
-				<!-- line-height 1.3: leading-none clips the "g"/"y" descender under
-			truncate's overflow-hidden (owner report 2026-09-09) -->
-			<span class="max-w-[140px] truncate font-sans text-[11.5px] leading-[1.3] text-ink">
-					{profile.name}
+<KeyHint nameless hoverOnly={!focusable} side="bottom">
+	{#snippet content()}
+		<span class="block font-mono break-all">{npub}</span>
+		{#if claimLine !== null}<span class="mt-0.5 block">{claimLine}</span>{/if}
+	{/snippet}
+	{#snippet trigger({ props })}
+		<span {...props} class="inline-flex max-w-full items-center gap-1.5 align-middle">
+			{#if settled}
+				<!-- profile resolved: fade up ~160ms into place -->
+				<span class="inline-flex max-w-full items-center gap-1.5" transition:fly={{ x: 0, y: 1, duration: 160 }}>
+					{#if claim === 'found' && profile?.picture && !imgFailed}
+						<!-- kind-0 picture; onerror drops to the identicon -->
+						<img
+							src={profile.picture}
+							alt=""
+							loading="lazy"
+							class="h-4 w-4 shrink-0 rounded-full bg-inset object-cover outline outline-1 outline-line"
+							onerror={() => (imgFailed = true)}
+						/>
+					{:else}
+						<!-- deterministic inline identicon (spec §1: no third-party hosts).
+							Covers all three states — found-without-picture, asked-and-empty,
+							never-asked — and asserts nothing either way. -->
+						<svg
+							viewBox="0 0 5 5"
+							shape-rendering="crispEdges"
+							class="h-4 w-4 shrink-0 rounded-full"
+							role="img"
+							aria-label="publisher identicon"
+						>
+							<rect width="5" height="5" fill="oklch(0.955 0.003 264)" />
+							{#each cells as row, y}
+								{#each row as on, x}
+									{#if on}
+										<rect
+											x={x}
+											y={y}
+											width="1"
+											height="1"
+											fill="oklch(0.52 0.025 {hue})"
+										/>
+									{/if}
+								{/each}
+							{/each}
+						</svg>
+					{/if}
+					{#if claim === 'found' && profile?.name}
+						<!-- human prose → sans; truncate long author names -->
+						<!-- line-height 1.3: leading-none clips the "g"/"y" descender under
+					truncate's overflow-hidden (owner report 2026-09-09) -->
+					<span class="max-w-[140px] truncate font-sans text-[11.5px] leading-[1.3] text-ink">
+							{profile.name}
+						</span>
+					{:else}
+						<!-- machine-made npub token → mono (missing and unasked alike: the
+							token is the honest cell, the tooltip carries the difference) -->
+						<span class="font-mono text-[10.5px] leading-none text-ink-3">{labelToken}</span>
+					{/if}
 				</span>
 			{:else}
-				<!-- machine-made npub token → mono (missing and unasked alike: the
-					token is the honest cell, the title carries the difference) -->
-				<span class="font-mono text-[10.5px] leading-none text-ink-3">{labelToken}</span>
+				<!-- fetching: neutral tint pulse 16px circle (no canon shimmer in tree) -->
+				<span class="h-4 w-4 shrink-0 animate-pulse rounded-full bg-inset" aria-hidden="true"></span>
 			{/if}
 		</span>
-	{:else}
-		<!-- fetching: neutral tint pulse 16px circle (no canon shimmer in tree) -->
-		<span class="h-4 w-4 shrink-0 animate-pulse rounded-full bg-inset" aria-hidden="true"></span>
-	{/if}
-</span>
+	{/snippet}
+</KeyHint>

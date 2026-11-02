@@ -32,6 +32,7 @@
 	import { artifactIcon, artifactName, formatBytes } from '$lib/artifacts';
 	import { IconArrowUpRight } from '@tabler/icons-svelte';
 	import { clipMiddle } from '$lib/text';
+	import { recordTypeTerm } from '$lib/terms';
 
 	interface Section {
 		key: DrawerSection;
@@ -149,14 +150,20 @@
 		applyHeight(next);
 	}
 
-	/** BIBLE's hover convention: relative clock, absolute ISO on hover. */
+	/** Machine-readable form for <time datetime>. */
+	function isoOf(createdAt: number): string {
+		return new Date(createdAt * 1000).toISOString();
+	}
+
+	/** BIBLE's hover convention: relative clock, absolute time in the tooltip. */
 	function absolute(createdAt: number): string {
-		const iso = new Date(createdAt * 1000).toISOString();
+		const iso = isoOf(createdAt);
 		return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
 	}
 
 	/** History rows name authors as short npubs (mono) — kind-0 profiles
-	 * belong to the publisher chip, not per-row fetches. */
+	 * belong to the publisher chip, not per-row fetches. The tooltip carries
+	 * the same encoding in full, so the two can be matched. */
 	function npubShort(pubkey: string): string {
 		if (pubkey === '') return 'unknown';
 		const npub = nip19.npubEncode(pubkey);
@@ -305,21 +312,28 @@
 			</p>
 		{:else if active === 'summary'}
 			<div class="flex items-center gap-2.5">
-				<!-- ① kind-mapped neutral icon tile (BIBLE N1/N2); its hover names
-					the vocabulary: spec §0 — every record is an event. -->
-				<span
-					title="{dossier.subjectType} · in SCRUTINY every record (product, metadata, binding, patch) is an event: a signed Nostr note"
-					class="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[8px] border border-line bg-inset {dossier.subjectType ===
-					'product'
-						? 'text-accent-ink'
-						: 'text-ink-2'}"
-				>
-					{#if dossier.subjectType === 'product'}
-						<IconCpu size={16} stroke={1.7} aria-hidden="true" />
-					{:else}
-						<IconShield size={16} stroke={1.7} aria-hidden="true" />
-					{/if}
-				</span>
+				<!-- ① kind-mapped neutral icon tile (BIBLE N1/N2); the record type
+					exists only here, so the tile is a named, focusable image and its
+					tooltip names the vocabulary: spec §0 — every record is an event. -->
+				<KeyHint nameless side="bottom" label={recordTypeTerm(dossier.subjectType)}>
+					{#snippet trigger({ props })}
+						<span
+							{...props}
+							role="img"
+							aria-label="{dossier.subjectType} record"
+							class="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[8px] border border-line bg-inset {dossier.subjectType ===
+							'product'
+								? 'text-accent-ink'
+								: 'text-ink-2'}"
+						>
+							{#if dossier.subjectType === 'product'}
+								<IconCpu size={16} stroke={1.7} aria-hidden="true" />
+							{:else}
+								<IconShield size={16} stroke={1.7} aria-hidden="true" />
+							{/if}
+						</span>
+					{/snippet}
+				</KeyHint>
 				<!-- ② title: sans on a cache hit, mono rule-5 on a miss — the
 					exact same two faces the card has (§2 rule 5). -->
 				<span
@@ -341,14 +355,22 @@
 				{/if}
 				<span class="flex-1"></span>
 				<!-- ③ publisher (kind-0 dot+name, npub fallback) · ⑤ time -->
-				<PublisherChip pubkey={dossier.publisher} />
-				<span
-					class="inline-flex shrink-0 items-center gap-1.5 text-ink-2"
-					title={absolute(dossier.createdAt)}
-				>
-					<IconClock size={12} stroke={2} aria-hidden="true" />
-					<span class="font-mono text-[11px]">{formatRel(dossier.createdAt * 1000)}</span>
-				</span>
+				<PublisherChip pubkey={dossier.publisher} focusable />
+				<KeyHint nameless side="bottom">
+					{#snippet content()}
+						<span class="font-mono">{absolute(dossier.createdAt)}</span>
+					{/snippet}
+					{#snippet trigger({ props })}
+						<time
+							{...props}
+							datetime={isoOf(dossier.createdAt)}
+							class="inline-flex shrink-0 items-center gap-1.5 text-ink-2"
+						>
+							<IconClock size={12} stroke={2} aria-hidden="true" />
+							<span class="font-mono text-[11px]">{formatRel(dossier.createdAt * 1000)}</span>
+						</time>
+					{/snippet}
+				</KeyHint>
 			</div>
 			<!-- ④ description: products only, one line, cache-only — a miss
 				renders no line at all rather than fabricated prose. -->
@@ -421,15 +443,38 @@
 						<span class="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-3">
 							{row.id.slice(0, 16)}…
 						</span>
-						<span class="shrink-0 font-mono text-[11px] text-ink-3" title={row.author}>
-							{npubShort(row.author)}
-						</span>
-						<span
-							class="shrink-0 font-mono text-[11px] text-ink-2"
-							title={absolute(row.createdAt)}
-						>
-							{formatRel(row.createdAt * 1000)}
-						</span>
+						<!-- Row values are hover-only (no per-row tab stops on a long
+							history): the full npub rides as sr-only text and the time as
+							a time element with its datetime. -->
+						{#if row.author === ''}
+							<span class="shrink-0 font-mono text-[11px] text-ink-3">{npubShort(row.author)}</span>
+						{:else}
+							<KeyHint hoverOnly nameless side="top">
+								{#snippet content()}
+									<span class="font-mono break-all">{nip19.npubEncode(row.author)}</span>
+								{/snippet}
+								{#snippet trigger({ props })}
+									<span {...props} class="shrink-0 font-mono text-[11px] text-ink-3">
+										<span aria-hidden="true">{npubShort(row.author)}</span>
+										<span class="sr-only">{nip19.npubEncode(row.author)}</span>
+									</span>
+								{/snippet}
+							</KeyHint>
+						{/if}
+						<KeyHint hoverOnly nameless side="top">
+							{#snippet content()}
+								<span class="font-mono">{absolute(row.createdAt)}</span>
+							{/snippet}
+							{#snippet trigger({ props })}
+								<time
+									{...props}
+									datetime={isoOf(row.createdAt)}
+									class="shrink-0 font-mono text-[11px] text-ink-2"
+								>
+									{formatRel(row.createdAt * 1000)}
+								</time>
+							{/snippet}
+						</KeyHint>
 					</div>
 				{/each}
 			</div>
@@ -447,14 +492,6 @@
 				<div class="flex flex-col gap-1">
 					{#each dossier.files as row (row.id)}
 						{@const RowIcon = artifactIcon(row.artifact)}
-						<!-- Full hash lives on the name tooltip (design review: the
-							10px pill was the loudest non-action element in the row and
-							decides nothing) -->
-						{@const rowTitle =
-							artifactName(row.artifact) +
-							' · ' +
-							row.artifact.url +
-							(row.artifact.sha256 !== undefined ? ' · SHA-256 ' + row.artifact.sha256 : '')}
 						<div
 							class="group/row rounded-[8px] px-1.5 py-1.5 transition-colors duration-100 hover:bg-hover"
 						>
@@ -470,20 +507,36 @@
 								</div>
 								<!-- Name+url block is one anchor: alt, else the URL's own
 									basename — never a hash (human name beats machine id). -->
-								<a
-									href={row.artifact.url}
-									target="_blank"
-									rel="noopener noreferrer"
-									class="block min-w-0 flex-1 rounded-[6px] outline-offset-2 focus-visible:outline-2 focus-visible:outline-accent"
-									title={rowTitle}
-								>
-									<div class="truncate text-[13px] font-medium text-ink group-hover/row:text-accent-ink">
-										{artifactName(row.artifact)}
-									</div>
-									<div class="truncate font-mono text-[10.5px] text-ink-3">
-										{clipMiddle(row.artifact.url, 72)}
-									</div>
-								</a>
+								<!-- Full hash lives on the name tooltip (design review: the
+									10px pill was the loudest non-action element in the row and
+									decides nothing) -->
+								<KeyHint nameless side="top">
+									{#snippet content()}
+										<span class="block {row.artifact.label !== undefined ? '' : 'font-mono break-all'}"
+											>{artifactName(row.artifact)}</span
+										>
+										<span class="mt-1 block font-mono break-all">{row.artifact.url}</span>
+										{#if row.artifact.sha256 !== undefined}
+											<span class="mt-1 block font-mono break-all">SHA-256 {row.artifact.sha256}</span>
+										{/if}
+									{/snippet}
+									{#snippet trigger({ props })}
+										<a
+											{...props}
+											href={row.artifact.url}
+											target="_blank"
+											rel="noopener noreferrer"
+											class="block min-w-0 flex-1 rounded-[6px] outline-offset-2 focus-visible:outline-2 focus-visible:outline-accent"
+										>
+											<div class="truncate text-[13px] font-medium text-ink group-hover/row:text-accent-ink">
+												{artifactName(row.artifact)}
+											</div>
+											<div class="truncate font-mono text-[10.5px] text-ink-3">
+												{clipMiddle(row.artifact.url, 72)}
+											</div>
+										</a>
+									{/snippet}
+								</KeyHint>
 								<!-- Size is decision context for a download — honest
 									placeholder when the descriptor never stated one. -->
 								<span
@@ -493,49 +546,68 @@
 								>
 									{row.artifact.sizeBytes !== undefined ? formatBytes(row.artifact.sizeBytes) : 'size unknown'}
 								</span>
-								<a
-									href={row.artifact.url}
-									target="_blank"
-									rel="noopener noreferrer"
-									class="flex h-[30px] shrink-0 items-center gap-1.5 rounded-[8px] border border-line-strong bg-surface px-2.5 text-[12px] font-medium text-ink shadow-[var(--shadow-btn)] transition-colors duration-100 hover:bg-ink hover:text-surface outline-offset-2 focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.99]"
-									title="Open file: {artifactName(row.artifact)}"
-								>
-									<IconArrowUpRight size={14} stroke={2} />
-									<span>Open</span>
-								</a>
+								<KeyHint nameless side="top" label="Open {artifactName(row.artifact)} in a new tab">
+									{#snippet trigger({ props })}
+										<a
+											{...props}
+											href={row.artifact.url}
+											target="_blank"
+											rel="noopener noreferrer"
+											aria-label="Open {artifactName(row.artifact)}"
+											class="flex h-[30px] shrink-0 items-center gap-1.5 rounded-[8px] border border-line-strong bg-surface px-2.5 text-[12px] font-medium text-ink shadow-[var(--shadow-btn)] transition-colors duration-100 hover:bg-ink hover:text-surface outline-offset-2 focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.99]"
+										>
+											<IconArrowUpRight size={14} stroke={2} />
+											<span>Open</span>
+										</a>
+									{/snippet}
+								</KeyHint>
 							</div>
-							<button
-								type="button"
-								class="mt-0.5 flex min-w-0 items-center gap-1.5 text-left"
-								title="{row.destination === 'subject' ? 'root' : 'link'} endpoint · {row.recordId}"
-								onclick={() => onSelect?.(row.recordId)}
-							>
-								<span class="shrink-0 font-mono text-[10.5px] text-ink-3">
-									{row.destination === 'subject' && row.verb !== null ? '←' : row.verb !== null ? '→' : '·'}
-								</span>
-								{#if row.verb !== null && row.verb !== ''}
-									<!-- corpus bindings carry machine sentences, not
-										four-letter verbs — the chip clips (full text on
-										hover + in Content); the count is untouched. -->
-									<span
-										class="shrink-0 rounded-[6px] border border-line bg-inset px-1.5 py-px font-mono text-[10px] text-ink-2"
-										title={clipMiddle(row.verb, VERB_CLIP) !== row.verb ? row.verb : undefined}
+							<!-- "Endpoint" is protocol jargon: the tooltip says what the click
+								opens, then the full id; the full verb joins it only when the
+								chip clipped it. -->
+							<KeyHint nameless side="top" onclick={() => onSelect?.(row.recordId)}>
+								{#snippet content()}
+									<span class="block"
+										>{row.destination === 'subject' ? 'Open root record' : 'Open linked record'}</span
 									>
-										{clipMiddle(row.verb, VERB_CLIP)}
-									</span>
-								{/if}
-								{#if row.recordTitle !== null}
-									<span
-										class="truncate {row.recordTitle.interpreted
-											? 'text-[12px] font-medium text-ink'
-											: 'font-mono text-[11px] text-ink-2'}"
+									<span class="mt-1 block font-mono break-all">{row.recordId}</span>
+									{#if row.verb !== null && clipMiddle(row.verb, VERB_CLIP) !== row.verb}
+										<span class="mt-1 block font-mono break-all">{row.verb}</span>
+									{/if}
+								{/snippet}
+								{#snippet trigger({ props })}
+									<button
+										type="button"
+										{...props}
+										class="mt-0.5 flex min-w-0 items-center gap-1.5 text-left"
 									>
-										{row.recordTitle.text}
-									</span>
-								{:else}
-									<span class="shrink-0 font-mono text-[10.5px] text-ink-3">this record</span>
-								{/if}
-							</button>
+										<span class="shrink-0 font-mono text-[10.5px] text-ink-3">
+											{row.destination === 'subject' && row.verb !== null ? '←' : row.verb !== null ? '→' : '·'}
+										</span>
+										{#if row.verb !== null && row.verb !== ''}
+											<!-- corpus bindings carry machine sentences, not
+												four-letter verbs — the chip clips (full text on
+												hover + in Content); the count is untouched. -->
+											<span
+												class="shrink-0 rounded-[6px] border border-line bg-inset px-1.5 py-px font-mono text-[10px] text-ink-2"
+											>
+												{clipMiddle(row.verb, VERB_CLIP)}
+											</span>
+										{/if}
+										{#if row.recordTitle !== null}
+											<span
+												class="truncate {row.recordTitle.interpreted
+													? 'text-[12px] font-medium text-ink'
+													: 'font-mono text-[11px] text-ink-2'}"
+											>
+												{row.recordTitle.text}
+											</span>
+										{:else}
+											<span class="shrink-0 font-mono text-[10.5px] text-ink-3">this record</span>
+										{/if}
+									</button>
+								{/snippet}
+							</KeyHint>
 						</div>
 					{/each}
 				</div>

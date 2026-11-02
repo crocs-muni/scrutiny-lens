@@ -16,11 +16,12 @@
 -->
 <script lang="ts">
 	import type { NostrEvent } from 'nostr-tools';
-	import { Popover } from 'bits-ui';
+	import { Popover, mergeProps } from 'bits-ui';
 	import { IconCheck, IconShare } from '@tabler/icons-svelte';
 	import { seenOnRelays } from '$lib/net/seen-on';
 	import { buildShareLinks } from '$lib/share/deep-link';
 	import { clipMiddle } from '$lib/text';
+	import KeyHint from './KeyHint.svelte';
 
 	interface Props {
 		/** The dossier's subject event — id/author/kind/seen-on are what the
@@ -65,12 +66,22 @@
 </script>
 
 <Popover.Root bind:open>
-	<Popover.Trigger
-		aria-label="Share this record"
-		title="Share — copies link"
-		class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
-	>
-		<IconShare size={16} stroke-width={2} />
+	<!-- One button, two behaviours: the popover trigger's props and the
+		tooltip's are merged onto it (a tooltip trigger would otherwise nest a
+		button in the popover's). The button opens a popover, it does not copy. -->
+	<Popover.Trigger>
+		{#snippet child({ props: popoverProps })}
+			<KeyHint label="Share this record" side="bottom">
+				{#snippet trigger({ props: hintProps })}
+					<button
+						{...mergeProps(hintProps, popoverProps)}
+						class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
+					>
+						<IconShare size={16} stroke-width={2} />
+					</button>
+				{/snippet}
+			</KeyHint>
+		{/snippet}
 	</Popover.Trigger>
 	<Popover.Portal>
 		<!-- side=top: the trigger sits in the 32px drawer-header handle, so the
@@ -89,28 +100,38 @@
 </Popover.Root>
 
 {#snippet row(which: 'link' | 'nostr', label: string, value: string)}
-	<button
-		type="button"
+	<!-- URLs/nevents are machine-made (§9 writing rule): mono, middle-clipped;
+		the full value is the tooltip on the whole row button (focusable). -->
+	<KeyHint
+		nameless
+		side="left"
 		disabled={value === ''}
-		class="flex w-full flex-col gap-0.5 rounded-control px-2 py-1.5 text-left transition-colors duration-100 hover:bg-hover disabled:opacity-80"
 		onclick={() => void copy(which, value)}
 	>
-		<span class="flex items-center gap-1.5 text-[12px] font-medium text-ink">
-			{#if copied === which}
-				<IconCheck size={13} stroke-width={2} class="shrink-0 text-green" />
-				copied
-			{:else}
-				<IconShare size={13} stroke-width={2} class="shrink-0 text-ink-3" />
-				{label}
-			{/if}
-		</span>
-		<!-- URLs/nevents are machine-made (§9 writing rule): mono, middle-clipped;
-			the full value hangs on the title for hover reveal. -->
-		<span
-			class="w-full truncate font-mono text-[11px] {value === '' ? 'text-ink-3' : 'text-ink-2'}"
-			title={value}
-		>
-			{value === '' ? '…' : clipMiddle(value, 42)}
-		</span>
-	</button>
+		{#snippet content()}
+			<span class="font-mono break-all">{value}</span>
+		{/snippet}
+		{#snippet trigger({ props })}
+			<button
+				type="button"
+				{...props}
+				class="flex w-full flex-col gap-0.5 rounded-control px-2 py-1.5 text-left transition-colors duration-100 hover:bg-hover disabled:opacity-80"
+			>
+				<span class="flex items-center gap-1.5 text-[12px] font-medium text-ink">
+					{#if copied === which}
+						<IconCheck size={13} stroke-width={2} class="shrink-0 text-green" />
+						copied
+					{:else}
+						<IconShare size={13} stroke-width={2} class="shrink-0 text-ink-3" />
+						{label}
+					{/if}
+				</span>
+				<span
+					class="w-full truncate font-mono text-[11px] {value === '' ? 'text-ink-3' : 'text-ink-2'}"
+				>
+					{value === '' ? '…' : clipMiddle(value, 42)}
+				</span>
+			</button>
+		{/snippet}
+	</KeyHint>
 {/snippet}

@@ -180,10 +180,9 @@
 				<button
 					type="button"
 					class="rounded-full px-3 py-1.5 text-[12px] font-medium text-ink-2 hover:bg-inset"
-					title="Settings lives on the overview — edit your relay list there"
 					onclick={goHome}
 				>
-					Edit relay list in Settings
+					Open overview to edit relays
 				</button>
 			</div>
 		</div>
