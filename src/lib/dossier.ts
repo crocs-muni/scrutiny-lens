@@ -98,6 +98,18 @@ export interface FileRow {
 	destination: 'subject' | 'counterparty';
 }
 
+/** The drawer's provenance sentence for a bound record (#136/#141): never a
+ * bare fragment beside a hash-like token — the 2026-10-19 review read that
+ * shape as an error ("this error means that it's wrong"), and a 64-hex event
+ * id standing in for a name is exactly that.
+ *
+ * Takes a TITLE, not a row: subject-own rows have no title and the template
+ * keeps its own quieter "this record" voice for them, so a row-shaped input
+ * would only carry a null arm nothing renders. */
+export function incomingFrom(title: DossierTitle): DossierTitle {
+	return { text: `incoming from ${title.text}`, interpreted: title.interpreted };
+}
+
 export interface DossierContent {
 	/** Frozen-but-signed content on halted/forked/aborted; null on absent. */
 	text: string | null;
@@ -341,10 +353,19 @@ function fileRows(
 		const counterparty = byId.get(counterpartyId);
 		if (counterparty === undefined) continue;
 		const card = cards.find((c) => c.id === counterpartyId);
+		// A record with neither content nor an identifier falls back to its
+		// own event id (cards.ts's rule-5 last resort). On the card face that
+		// is a unique handle; here it is a token beside an arrow, which reads
+		// as a failure (#136). The record exists and is unreadable-name — say
+		// that instead (spec §2: never dress an id up as a name).
+		const fallbackTitle = deriveFallbackTitle(counterparty);
 		const recordTitle =
 			card !== undefined && card.interpreted
 				? { text: card.title, interpreted: true }
-				: { text: deriveFallbackTitle(counterparty), interpreted: false };
+				: {
+						text: fallbackTitle === counterparty.id ? 'unnamed record' : fallbackTitle,
+						interpreted: false
+					};
 		for (const artifact of artifactsOf(counterparty)) {
 			rows.push({
 				id: artifact.id,
