@@ -63,10 +63,13 @@ export type ChainPointState =
 	| 'overlay'
 	| 'retraction';
 
-export interface HistoryRow {
+/** One History row. A discriminated union (issue #165): an OBSERVED row
+ * carries the admitted event itself, so the drawer reads author and signed
+ * time from evidence and neither field can be invented; a reference the
+ * admitted set does not hold is an explicit UNOBSERVED row naming only the
+ * id — no author, no timestamp (spec §2 rule 5, never placeholder text). */
+interface HistoryRowBase {
 	id: string;
-	author: string;
-	createdAt: number;
 	position: number | null;
 	state: ChainPointState;
 	/** §7.3 state word — set iff state === 'overlay'. */
@@ -76,6 +79,18 @@ export interface HistoryRow {
 	/** False → renders under the "not in the canonical chain" group. */
 	canonical: boolean;
 }
+
+export interface ObservedHistoryRow extends HistoryRowBase {
+	observed: true;
+	/** The admitted event this row is about. */
+	event: NostrEvent;
+}
+
+export interface UnobservedHistoryRow extends HistoryRowBase {
+	observed: false;
+}
+
+export type HistoryRow = ObservedHistoryRow | UnobservedHistoryRow;
 
 export interface FileRow {
 	/** Artifact identity (`${recordId}#${fnv1a(url)}`) — unique per
@@ -185,71 +200,60 @@ function retractionOf(
 	);
 }
 
-function historyRows(
+/** A referenced id → its row: the admitted event when the set holds it,
+ * else the explicit unobserved row. This is the only construction point, so
+ * a row with a synthesized author or timestamp has no shape to fit (#165). */
+function rowFor(
+	id: string,
+	byId: ReadonlyMap<string, NostrEvent>,
+	point: Omit<HistoryRowBase, 'id'>
+): HistoryRow {
+	const event = byId.get(id);
+	return event === undefined
+		? { id, ...point, observed: false }
+		: { id, ...point, observed: true, event };
+}
+
+/** History = canonical chain + retraction row + the non-canonical group
+ * (issue #29 ruling 5). Exported for the #165 trust gate only — the four-input
+ * join itself is the seam #166 moves into core's buildDossier(); do not grow
+ * it here. */
+export function historyRows(
 	subject: NostrEvent,
 	resolution: Resolution,
 	events: NostrEvent[],
 	coreEvents: CoreNostrEvent[]
 ): HistoryRow[] {
 	const byId = new Map(events.map((e) => [e.id, e]));
-	const rows: HistoryRow[] = [];
 	// The root row is the subject verbatim: deriveDossier already returned
-	// null when the subject isn't in `events`, and admission dedupes by id —
-	// a `byId.get(subject.id) ?? subject` lookup here would be self-identity.
-	rows.push({
-		id: subject.id,
-		author: subject.pubkey,
-		createdAt: subject.created_at,
-		position: 0,
-		state: 'root',
-		canonical: true
-	});
+	// null when the subject isn't in `events`, so the lookup is self-identity.
+	// Pushing it (rather than pushing a template) keeps the row's author/time
+	// read from the event like every other observed row.
+	const rows: HistoryRow[] = [
+		rowFor(subject.id, byId, { position: 0, state: 'root', canonical: true })
+	];
 
 	const chain = resolution.chain;
 	if (chain.status === 'resolved' || chain.status === 'halted' || chain.status === 'aborted') {
 		chain.applied.forEach((id, i) => {
-			const ev = byId.get(id);
-			rows.push({
-				id,
-				author: ev?.pubkey ?? '',
-				createdAt: ev?.created_at ?? 0,
-				position: i + 1,
-				state: 'applied',
-				canonical: true
-			});
+			rows.push(rowFor(id, byId, { position: i + 1, state: 'applied', canonical: true }));
 		});
 	}
 	if (chain.status === 'halted') {
-		const ev = byId.get(chain.haltedAt);
-		rows.push({
-			id: chain.haltedAt,
-			author: ev?.pubkey ?? '',
-			createdAt: ev?.created_at ?? 0,
-			position: chain.applied.length + 1,
-			state: 'halted-here',
-			canonical: true
-		});
+		rows.push(
+			rowFor(chain.haltedAt, byId, {
+				position: chain.applied.length + 1,
+				state: 'halted-here',
+				canonical: true
+			})
+		);
 	}
 	if (chain.status === 'forked') {
-		const parent = byId.get(chain.forkParentId);
-		rows.push({
-			id: chain.forkParentId,
-			author: parent?.pubkey ?? '',
-			createdAt: parent?.created_at ?? 0,
-			position: null,
-			state: 'fork-parent',
-			canonical: true
-		});
+		rows.push(
+			rowFor(chain.forkParentId, byId, { position: null, state: 'fork-parent', canonical: true })
+		);
 		for (const id of chain.branchIds) {
-			const ev = byId.get(id);
-			rows.push({
-				id,
-				author: ev?.pubkey ?? '',
-				createdAt: ev?.created_at ?? 0,
-				position: null,
-				state: 'fork-branch',
-				canonical: false
-			});
+			rows.push(rowFor(id, byId, { position: null, state: 'fork-branch', canonical: false }));
 		}
 	}
 
@@ -259,41 +263,26 @@ function historyRows(
 	// "not in the canonical chain" bucket regardless of what else resolves).
 	const retraction = retractionOf(subject as unknown as CoreNostrEvent, coreEvents);
 	if (retraction !== undefined) {
-		rows.push({
-			id: retraction.id,
-			author: retraction.pubkey,
-			createdAt: retraction.created_at,
-			position: null,
-			state: 'retraction',
-			canonical: true
-		});
+		rows.push(
+			rowFor(retraction.id, byId, { position: null, state: 'retraction', canonical: true })
+		);
 	}
 
 	// Non-canonical group (issue #29 ruling 5): root-author pending patches,
 	// then foreign overlays carrying their §7.3 state word.
 	for (const id of resolution.pending) {
-		const ev = byId.get(id);
-		rows.push({
-			id,
-			author: ev?.pubkey ?? '',
-			createdAt: ev?.created_at ?? 0,
-			position: null,
-			state: 'pending',
-			canonical: false
-		});
+		rows.push(rowFor(id, byId, { position: null, state: 'pending', canonical: false }));
 	}
 	for (const overlay of resolution.overlays) {
-		const ev = byId.get(overlay.id);
-		rows.push({
-			id: overlay.id,
-			author: ev?.pubkey ?? overlay.author,
-			createdAt: ev?.created_at ?? 0,
-			position: null,
-			state: 'overlay',
-			overlayState: overlay.state,
-			targetId: overlay.targetId,
-			canonical: false
-		});
+		rows.push(
+			rowFor(overlay.id, byId, {
+				position: null,
+				state: 'overlay',
+				overlayState: overlay.state,
+				targetId: overlay.targetId,
+				canonical: false
+			})
+		);
 	}
 	return rows;
 }

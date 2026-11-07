@@ -165,10 +165,13 @@
 	 * belong to the publisher chip, not per-row fetches. The tooltip carries
 	 * the same encoding in full, so the two can be matched. */
 	function npubShort(pubkey: string): string {
-		if (pubkey === '') return 'unknown';
 		const npub = nip19.npubEncode(pubkey);
 		return `${npub.slice(0, 14)}…`;
 	}
+
+	/** #165: an unobserved row says what it is instead of a chain word — the
+	 * reference is real, its event is not in the admitted set. */
+	const UNOBSERVED_WORD = 'referenced, not fetched';
 
 	/** State word per row (mono vocabulary, all computed). */
 	function rowState(row: HistoryRow): string {
@@ -417,11 +420,20 @@
 							not in the canonical chain
 						</div>
 					{/if}
-					<div class="flex items-center gap-2 text-[12px] text-ink-2">
+					<div class="flex items-center gap-2 text-[12px] text-ink-2" data-history-row>
 						<span class="w-7 shrink-0 font-mono text-[11px] text-ink-3">
 							{row.position !== null ? `#${row.position}` : '·'}
 						</span>
-						{#if row.state === 'retraction'}
+						{#if !row.observed}
+							<!-- #165: the reference is real, its event is not in the
+								admitted set — say that, never a blank author or 1970. A
+								dashed chip marks the absence (nothing is claimed). -->
+							<span
+								class="shrink-0 rounded-[6px] border border-dashed border-line bg-inset px-2 py-px font-mono text-[10.5px] text-ink-2"
+							>
+								{UNOBSERVED_WORD}
+							</span>
+						{:else if row.state === 'retraction'}
 							<span
 								class="shrink-0 rounded-full border border-[oklch(0.93_0.04_20)] bg-red-tint px-2 py-px font-mono text-[10.5px] font-medium text-red"
 							>
@@ -445,37 +457,37 @@
 						</span>
 						<!-- Row values are hover-only (no per-row tab stops on a long
 							history): the full npub rides as sr-only text and the time as
-							a time element with its datetime. -->
-						{#if row.author === ''}
-							<span class="shrink-0 font-mono text-[11px] text-ink-3">{npubShort(row.author)}</span>
-						{:else}
-							{@const npub = nip19.npubEncode(row.author)}
+							a time element with its datetime. Author and time come from
+							the row's own admitted event — an unobserved row renders
+							neither (issue #165). -->
+						{#if row.observed}
+							{@const npub = nip19.npubEncode(row.event.pubkey)}
 							<KeyHint hoverOnly nameless side="top">
 								{#snippet content()}
 									<span class="font-mono break-all">{npub}</span>
 								{/snippet}
 								{#snippet trigger({ props })}
 									<span {...props} class="shrink-0 font-mono text-[11px] text-ink-3">
-										<span aria-hidden="true">{npubShort(row.author)}</span>
+										<span aria-hidden="true">{npubShort(row.event.pubkey)}</span>
 										<span class="sr-only">{npub}</span>
 									</span>
 								{/snippet}
 							</KeyHint>
+							<KeyHint hoverOnly nameless side="top">
+								{#snippet content()}
+									<span class="font-mono">{absolute(row.event.created_at)}</span>
+								{/snippet}
+								{#snippet trigger({ props })}
+									<time
+										{...props}
+										datetime={isoOf(row.event.created_at)}
+										class="shrink-0 font-mono text-[11px] text-ink-2"
+									>
+										{formatRel(row.event.created_at * 1000)}
+									</time>
+								{/snippet}
+							</KeyHint>
 						{/if}
-						<KeyHint hoverOnly nameless side="top">
-							{#snippet content()}
-								<span class="font-mono">{absolute(row.createdAt)}</span>
-							{/snippet}
-							{#snippet trigger({ props })}
-								<time
-									{...props}
-									datetime={isoOf(row.createdAt)}
-									class="shrink-0 font-mono text-[11px] text-ink-2"
-								>
-									{formatRel(row.createdAt * 1000)}
-								</time>
-							{/snippet}
-						</KeyHint>
 					</div>
 				{/each}
 			</div>
