@@ -25,8 +25,8 @@ export interface NavCrumb {
 	label: string;
 	/** A real destination: renders as a button. The current crumb is a span. */
 	interactive: boolean;
-	/** Always the deepest crumb: carries aria-current and receives focus
-	 * after an ascend. */
+	/** Always the deepest crumb: carries aria-current. After an ascend the
+	 * bar focuses the next back control (the chevron) or the bar itself. */
 	current: boolean;
 }
 
