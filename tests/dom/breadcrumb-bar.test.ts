@@ -109,7 +109,7 @@ describe('BreadcrumbBar', () => {
 		expect(screen.queryByText(/fetched/)).toBeNull();
 	});
 
-	it('focusAfterAscend() lands on the next back control, else the current level', async () => {
+	it('focusAfterAscend() lands on the next back control, else the bar itself', async () => {
 		const { unmount } = render(BreadcrumbHarness, { crumbs: SUBJECT, up: 'clear-subject' });
 		await fireEvent.click(screen.getByTestId('focus-ascend'));
 		expect(document.activeElement?.getAttribute('aria-label')).toBe('Back to session');
@@ -120,8 +120,12 @@ describe('BreadcrumbBar', () => {
 
 		render(BreadcrumbHarness, { crumbs: RESULTS, up: null });
 		await fireEvent.click(screen.getByTestId('focus-ascend'));
-		expect(document.activeElement?.textContent?.trim()).toBe('Which ROCA keys still ship?');
-		expect(document.activeElement?.getAttribute('aria-current')).toBe('page');
+		// The landmark, not the current crumb: a crumb focus would open its
+		// tooltip over the bar for no reason at the trail root.
+		expect(document.activeElement).toBe(
+			screen.getByRole('navigation', { name: 'Breadcrumb' })
+		);
+		expect(screen.queryByRole('tooltip')).toBeNull();
 	});
 
 	it('tooltip closes on Escape without moving focus (SC 1.4.13)', async () => {

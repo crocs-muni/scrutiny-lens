@@ -9,6 +9,12 @@
 	import { fillNote, investigation } from '$lib/investigation.svelte';
 	import { deriveDossier } from '$lib/dossier';
 	import { deriveNavTrail, type AscendTarget } from '$lib/nav';
+	import {
+		EMPTY_RESULTS_SCROLL,
+		captureResultsScroll as captureScrollMemory,
+		restoreResultsScroll,
+		type ResultsScrollMemory
+	} from '$lib/scroll-memory';
 	import { tick } from 'svelte';
 	import { settings } from '$lib/settings.svelte';
 	import SearchHero from '$lib/components/ui/SearchHero.svelte';
@@ -42,9 +48,6 @@
 	/** The bar persists across the results↔session hop; the focus target
 	 * after an ascend lives on it (issue #142). */
 	let breadcrumbBar = $state<{ focusAfterAscend: () => void } | null>(null);
-
-	// The drawer may grow until the canvas keeps a usable strip.
-	const drawerMax = $derived(Math.max(240, centerHeight - 120));
 
 	// — Results surface derivations (#38) —
 	// i-tag filter first, then the semantic axes (type/status/interpretation,
@@ -92,64 +95,17 @@
 	// scroll events cost nothing.
 	let resultsScroller = $state<HTMLDivElement | null>(null);
 	// In-app stack (issue #142): the results scroller unmounts on the session
-	// hop, so the DOM cannot hold its position. The offset alone would drift —
-	// cards keep settling as fills land (their heights above the fold change)
-	// — so the first visible card + its viewport offset is the anchor, with
-	// the numeric offset as the fallback for empty/edge states.
-	interface ResultsAnchor {
-		id: string;
-		/** Card top minus the scroller's viewport top, in px. */
-		offset: number;
-	}
-	/** Keyed by session: a new run (fresh UUID) must never inherit the
-	 * previous session's offset, and a rail jump to another session starts
-	 * its results where its own evidence begins. */
-	interface ResultsScrollMemory {
-		sessionId: string | null;
-		top: number;
-		anchor: ResultsAnchor | null;
-	}
-	let resultsScroll: ResultsScrollMemory = { sessionId: null, top: 0, anchor: null };
+	// hop, so the DOM cannot hold its position. The memory is keyed by
+	// session and anchored to the first visible card ($lib/scroll-memory).
+	let resultsScroll: ResultsScrollMemory = EMPTY_RESULTS_SCROLL;
 	/** True while the restore is writing scrollTop: the browser fires scroll
 	 * events for those writes (and for its own scroll anchoring), and a
 	 * capture there would overwrite the target with a clamped intermediate. */
 	let restoringScroll = false;
 
 	function captureResultsScroll(): void {
-		const el = resultsScroller;
-		if (el === null || restoringScroll) return;
-		resultsScroll = {
-			sessionId: shell.session?.id ?? null,
-			top: el.scrollTop,
-			anchor: captureAnchor(el)
-		};
-	}
-
-	/** First card whose bottom edge is below the scroller's top — binary
-	 * search, because wrappers render in visual order and a scan of 100+
-	 * rects on every scroll event is needless. */
-	function captureAnchor(el: HTMLDivElement): ResultsAnchor | null {
-		const cards = el.querySelectorAll<HTMLElement>('[data-card-id]');
-		if (cards.length === 0) return null;
-		const top = el.getBoundingClientRect().top;
-		let lo = 0;
-		let hi = cards.length - 1;
-		let found: HTMLElement | null = null;
-		while (lo <= hi) {
-			const mid = (lo + hi) >> 1;
-			const rect = cards[mid].getBoundingClientRect();
-			if (rect.bottom > top) {
-				found = cards[mid];
-				hi = mid - 1;
-			} else {
-				lo = mid + 1;
-			}
-		}
-		if (found === null) return null;
-		return {
-			id: found.getAttribute('data-card-id') ?? '',
-			offset: found.getBoundingClientRect().top - top
-		};
+		if (resultsScroller === null || restoringScroll) return;
+		resultsScroll = captureScrollMemory(resultsScroller, shell.session?.id ?? null);
 	}
 	let cardObserver: IntersectionObserver | null = null;
 	$effect(() => {
@@ -193,33 +149,20 @@
 		};
 	});
 	// Restore the captured position when the results surface remounts
-	// (issue #142). Reads only the element binding, so this never fights the
-	// user's own scrolling. Cards are `content-visibility: auto` and keep
-	// settling after mount, so a single write would be clamped short: write
-	// the numeric offset, re-align the anchor card, then repeat on the next
-	// two frames. Captures are muted until the last write, because the
+	// (issue #142). Captures are muted until the last write, because the
 	// browser's own scroll events for these writes would otherwise feed a
-	// clamped intermediate back in as the target.
+	// clamped intermediate back in as the target. The anchor card is
+	// re-aligned on the next two frames, after the list's heights settle.
 	$effect(() => {
 		const el = resultsScroller;
 		const sessionId = shell.session?.id ?? null;
 		if (el === null) return;
-		// Another session's offset is not this surface's position.
+		// Another session's position is not this surface's position (and
+		// muting captures for its frames would be pointless).
 		if (resultsScroll.sessionId !== sessionId) return;
-		const { top, anchor } = resultsScroll;
 		restoringScroll = true;
 		const restore = () => {
-			el.scrollTop = top;
-			if (anchor !== null) {
-				const card = el.querySelector<HTMLElement>(
-					`[data-card-id="${CSS.escape(anchor.id)}"]`
-				);
-				if (card !== null) {
-					const delta =
-						card.getBoundingClientRect().top - el.getBoundingClientRect().top - anchor.offset;
-					if (delta !== 0) el.scrollTop += delta;
-				}
-			}
+			restoreResultsScroll(el, resultsScroll, sessionId);
 		};
 		restore();
 		let frame = requestAnimationFrame(() => {
@@ -296,13 +239,28 @@
 	// already shows (cache-first, else the rule-5 fallback); the bar never
 	// calls AI. Gated on session ownership for the same reason the canvas is:
 	// a foreign run's title must never paint under this session's heading.
+	// A session surface without its own run is the honest placeholder (#83)
+	// — it has no Results of its own to promise, so neither the bar nor Esc
+	// may leave for results (that surface would paint whatever run is still
+	// in memory under this session's title).
 	const subjectTitle = $derived(sessionOwnsRun ? (dossier?.title.text ?? null) : null);
 	const trail = $derived(
-		deriveNavTrail({
-			view: shell.view,
-			sessionTitle: shell.session?.title ?? null,
-			subjectTitle
-		})
+		shell.view === 'session' && !sessionOwnsRun
+			? null
+			: deriveNavTrail({
+					view: shell.view,
+					sessionTitle: shell.session?.title ?? null,
+					subjectTitle
+				})
+	);
+	// The drawer may grow until the canvas keeps a usable strip. The 44px
+	// step bar sits above the canvas on the session surface too (#142), so
+	// the strip floor is measured below it.
+	const drawerMax = $derived(
+		Math.max(
+			240,
+			centerHeight - 120 - (shell.view === 'session' && trail !== null ? 44 : 0)
+		)
 	);
 
 	// — Chat lifecycle (issue #30) —
@@ -697,10 +655,8 @@
 		<!-- In-app step stack (issue #142): one 44px bar for the results and
 			session surfaces, hoisted above the surface switch so it persists
 			across the hop (focus target stays mounted; no remount flicker).
-			A session surface without its own run is the honest placeholder
-			(#83): no bar there, because Results would paint whatever run is
-			still in memory under this session's title (spec §2 identity rule). -->
-		{#if trail !== null && (shell.view !== 'session' || sessionOwnsRun)}
+			`trail` is null on the honest no-run placeholder (see above). -->
+		{#if trail !== null}
 			<BreadcrumbBar
 				bind:this={breadcrumbBar}
 				{trail}

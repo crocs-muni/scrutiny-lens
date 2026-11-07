@@ -29,13 +29,11 @@
 
 	/** After an ascend the pressed control may not exist at the new level
 	 * (the subject crumb disappears), so focus moves to the control that
-	 * continues the ascent — the back chevron — and otherwise to the current
-	 * level. Landing on the current crumb while a chevron exists would open
-	 * that crumb's focus tooltip, whose own Escape would eat the next press. */
+	 * continues the ascent — the back chevron — and otherwise to the bar
+	 * itself. Landing on the current crumb at the root would open that
+	 * crumb's focus tooltip, and the tooltip would eat the next Escape. */
 	export function focusAfterAscend(): void {
-		const target =
-			navEl?.querySelector<HTMLElement>('button[aria-label]') ??
-			navEl?.querySelector<HTMLElement>('[aria-current]');
+		const target = navEl?.querySelector<HTMLElement>('button[aria-label]') ?? navEl;
 		target?.focus();
 	}
 
@@ -65,6 +63,7 @@
 
 <nav
 	bind:this={navEl}
+	tabindex="-1"
 	aria-label="Breadcrumb"
 	class="flex h-11 shrink-0 items-center border-b border-line px-4"
 >
