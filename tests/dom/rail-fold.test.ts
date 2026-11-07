@@ -21,6 +21,7 @@ function event(id: string): NostrEvent {
 			['t', 'scrutiny-product'],
 			['i', 'cve:CVE-2017-15361']
 		],
+		sig: '00'.repeat(64),
 		content: ''
 	};
 }
