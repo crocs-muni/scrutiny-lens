@@ -10,7 +10,7 @@
 
 import type { NostrEvent } from 'nostr-tools/core';
 import { tTags } from '$lib/fabric';
-import { applyFacets, type FacetGroup, type ProductCard } from '$lib/pipeline/cards';
+import { applyFacets, foldById, type FacetGroup, type ProductCard } from '$lib/pipeline/cards';
 
 /** Semantic facet axes on top of the i-tag groups (BIBLE J2 rail): these
  * are coded group names, not prefixes — an event i-tag prefix literally
@@ -92,5 +92,9 @@ export function visibleCards(
 			.filter((event) => tTags(event).includes('scrutiny-product'))
 			.map((event) => event.id)
 	);
-	return cards.filter((card) => visibleProductIds.has(card.id));
+	// issue #160: the rail's keyed each keys on card.id, so the derivation
+	// can never hand it two cards for one event — one card per id, first
+	// arrival wins (the session invariant is "admitted is unique by id";
+	// this fold keeps the surface alive even if a writer breaks it).
+	return foldById(cards.filter((card) => visibleProductIds.has(card.id)));
 }

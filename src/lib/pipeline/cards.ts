@@ -91,6 +91,22 @@ export function deriveFallbackTitle(event: NostrEvent): string {
   );
 }
 
+/** First card per id — the results rail's keyed each keys on `id` (its
+ * cards and its skeletons alike, +page.svelte), and Svelte's
+ * `each_key_duplicate` is a page-level crash, not a warning (issue #160: a
+ * 548-card run reached the rail with one id twice). Whichever writer
+ * duplicated an admission, every surface keys on the FIRST arrival — paint
+ * order is arrival order, and the invariant is one card per event. Unique
+ * input passes through unchanged. */
+export function foldById<T extends { id: string }>(cards: T[]): T[] {
+  const seen = new Set<string>();
+  return cards.filter((card) => {
+    if (seen.has(card.id)) return false;
+    seen.add(card.id);
+    return true;
+  });
+}
+
 export function assembleCards(
   graph: GraphView,
   patchSources: NostrEvent[] = [],
