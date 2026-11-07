@@ -5,9 +5,11 @@
 	 * with the DetailDrawer below the canvas · chat column resident only
 	 * while a session is open. */
 
-	import { handleShellKeydown, shell } from '$lib/shell.svelte';
+	import { handleShellKeydown, isTypingTarget, shell } from '$lib/shell.svelte';
 	import { fillNote, investigation } from '$lib/investigation.svelte';
 	import { deriveDossier } from '$lib/dossier';
+	import { deriveNavTrail, type AscendTarget } from '$lib/nav';
+	import { tick } from 'svelte';
 	import { settings } from '$lib/settings.svelte';
 	import SearchHero from '$lib/components/ui/SearchHero.svelte';
 	import TaskTrace from '$lib/components/ui/TaskTrace.svelte';
@@ -30,12 +32,16 @@
 	import GraphCanvas from '$lib/components/graph/GraphCanvas.svelte';
 	import ChatColumn from '$lib/components/shell/ChatColumn.svelte';
 	import SettingsDialog from '$lib/components/shell/SettingsDialog.svelte';
+	import BreadcrumbBar from '$lib/components/shell/BreadcrumbBar.svelte';
 	import { chat } from '$lib/chat.svelte';
 	import type { ProviderOverrideInput } from '$lib/ai/provider';
 	import { bestIdentifier } from '$lib/ai/projector';
 	import { subjectGrounding, type NostrEvent } from '$lib/fabric';
 
 	let centerHeight = $state(0);
+	/** The bar persists across the results↔session hop; the focus target
+	 * after an ascend lives on it (issue #142). */
+	let breadcrumbBar = $state<{ focusAfterAscend: () => void } | null>(null);
 
 	// The drawer may grow until the canvas keeps a usable strip.
 	const drawerMax = $derived(Math.max(240, centerHeight - 120));
@@ -85,6 +91,66 @@
 	// with no claimable work is a no-op in the store, so a settled run's
 	// scroll events cost nothing.
 	let resultsScroller = $state<HTMLDivElement | null>(null);
+	// In-app stack (issue #142): the results scroller unmounts on the session
+	// hop, so the DOM cannot hold its position. The offset alone would drift —
+	// cards keep settling as fills land (their heights above the fold change)
+	// — so the first visible card + its viewport offset is the anchor, with
+	// the numeric offset as the fallback for empty/edge states.
+	interface ResultsAnchor {
+		id: string;
+		/** Card top minus the scroller's viewport top, in px. */
+		offset: number;
+	}
+	/** Keyed by session: a new run (fresh UUID) must never inherit the
+	 * previous session's offset, and a rail jump to another session starts
+	 * its results where its own evidence begins. */
+	interface ResultsScrollMemory {
+		sessionId: string | null;
+		top: number;
+		anchor: ResultsAnchor | null;
+	}
+	let resultsScroll: ResultsScrollMemory = { sessionId: null, top: 0, anchor: null };
+	/** True while the restore is writing scrollTop: the browser fires scroll
+	 * events for those writes (and for its own scroll anchoring), and a
+	 * capture there would overwrite the target with a clamped intermediate. */
+	let restoringScroll = false;
+
+	function captureResultsScroll(): void {
+		const el = resultsScroller;
+		if (el === null || restoringScroll) return;
+		resultsScroll = {
+			sessionId: shell.session?.id ?? null,
+			top: el.scrollTop,
+			anchor: captureAnchor(el)
+		};
+	}
+
+	/** First card whose bottom edge is below the scroller's top — binary
+	 * search, because wrappers render in visual order and a scan of 100+
+	 * rects on every scroll event is needless. */
+	function captureAnchor(el: HTMLDivElement): ResultsAnchor | null {
+		const cards = el.querySelectorAll<HTMLElement>('[data-card-id]');
+		if (cards.length === 0) return null;
+		const top = el.getBoundingClientRect().top;
+		let lo = 0;
+		let hi = cards.length - 1;
+		let found: HTMLElement | null = null;
+		while (lo <= hi) {
+			const mid = (lo + hi) >> 1;
+			const rect = cards[mid].getBoundingClientRect();
+			if (rect.bottom > top) {
+				found = cards[mid];
+				hi = mid - 1;
+			} else {
+				lo = mid + 1;
+			}
+		}
+		if (found === null) return null;
+		return {
+			id: found.getAttribute('data-card-id') ?? '',
+			offset: found.getBoundingClientRect().top - top
+		};
+	}
 	let cardObserver: IntersectionObserver | null = null;
 	$effect(() => {
 		// runLive tracks the run's presence, railLive the skeleton→card
@@ -124,6 +190,48 @@
 		return () => {
 			observer.disconnect();
 			if (cardObserver === observer) cardObserver = null;
+		};
+	});
+	// Restore the captured position when the results surface remounts
+	// (issue #142). Reads only the element binding, so this never fights the
+	// user's own scrolling. Cards are `content-visibility: auto` and keep
+	// settling after mount, so a single write would be clamped short: write
+	// the numeric offset, re-align the anchor card, then repeat on the next
+	// two frames. Captures are muted until the last write, because the
+	// browser's own scroll events for these writes would otherwise feed a
+	// clamped intermediate back in as the target.
+	$effect(() => {
+		const el = resultsScroller;
+		const sessionId = shell.session?.id ?? null;
+		if (el === null) return;
+		// Another session's offset is not this surface's position.
+		if (resultsScroll.sessionId !== sessionId) return;
+		const { top, anchor } = resultsScroll;
+		restoringScroll = true;
+		const restore = () => {
+			el.scrollTop = top;
+			if (anchor !== null) {
+				const card = el.querySelector<HTMLElement>(
+					`[data-card-id="${CSS.escape(anchor.id)}"]`
+				);
+				if (card !== null) {
+					const delta =
+						card.getBoundingClientRect().top - el.getBoundingClientRect().top - anchor.offset;
+					if (delta !== 0) el.scrollTop += delta;
+				}
+			}
+		};
+		restore();
+		let frame = requestAnimationFrame(() => {
+			restore();
+			frame = requestAnimationFrame(() => {
+				restore();
+				restoringScroll = false;
+			});
+		});
+		return () => {
+			cancelAnimationFrame(frame);
+			restoringScroll = false;
 		};
 	});
 	// Ref action (same convention as GraphCanvas's registerWrapper): card
@@ -180,6 +288,21 @@
 	// gate holds (ADR 0002); older sessions replay in a future slice.
 	const sessionOwnsRun = $derived(
 		investigation.sessionId === shell.session?.id && investigation.result !== null
+	);
+
+	// — In-app step stack (issue #142) —
+	// Results → session → subject, derived from shell state plus the live
+	// selection. The subject label is the dossier title the drawer/card
+	// already shows (cache-first, else the rule-5 fallback); the bar never
+	// calls AI. Gated on session ownership for the same reason the canvas is:
+	// a foreign run's title must never paint under this session's heading.
+	const subjectTitle = $derived(sessionOwnsRun ? (dossier?.title.text ?? null) : null);
+	const trail = $derived(
+		deriveNavTrail({
+			view: shell.view,
+			sessionTitle: shell.session?.title ?? null,
+			subjectTitle
+		})
 	);
 
 	// — Chat lifecycle (issue #30) —
@@ -248,6 +371,7 @@
 	 * only; the FIRST subject anchors whatever its kind (#29b ruling 4).
 	 * Clicking the selected card again re-affirms (#29a ruling 10). */
 	function openDossier(id: string): void {
+		captureResultsScroll();
 		investigation.selectSubject(id);
 		shell.drawerOpen = true;
 		shell.view = 'session';
@@ -269,25 +393,56 @@
 	function clearSelection(): void {
 		investigation.clearSelection();
 	}
-	/** Esc deselect runs before the shell's Ctrl-map (ruling 7); the settings
-	 * modal's own dismissal is untouched (guarded). An Escape a floating layer
-	 * already consumed (open tooltip or popover preventDefaults it) only
-	 * dismisses that layer — the selection survives the first press. */
+
+	/** One-level ascend (issue #142): subject → clear the selected subject
+	 * (the graph anchor and drawer chrome stay); session root → results at
+	 * the preserved scroll. Focus lands where the user now is, never <body>. */
+	async function ascend(target: AscendTarget): Promise<void> {
+		if (target === 'clear-subject') clearSelection();
+		else returnToResults();
+		await tick();
+		breadcrumbBar?.focusAfterAscend();
+	}
+
+	function goToCrumb(level: 'results' | 'session'): void {
+		// Session crumb = clear the subject; Results = the results surface.
+		// The bar renders these as buttons only when they are real levels up.
+		void ascend(level === 'results' ? 'results' : 'clear-subject');
+	}
+
+	/** Session root → results (issue #142). The card ring survives because
+	 * selectedEventId is investigation state, not results-surface state. */
+	function returnToResults(): void {
+		captureResultsScroll();
+		shell.view = 'results';
+	}
+
+	/** Esc precedence (issue #142): the settings modal (inside
+	 * handleShellKeydown) and any floating layer that already consumed the
+	 * press stay first; then the step stack ascends exactly one level.
+	 * Typing targets keep Esc for their own dismissals. */
 	function onShellKeydown(event: KeyboardEvent): void {
 		if (
 			event.key === 'Escape' &&
 			!event.defaultPrevented &&
-			shell.view === 'session' &&
 			!shell.settingsOpen &&
-			investigation.selectedEventId !== null
+			!isTypingTarget(event.target) &&
+			trail !== null &&
+			trail.up !== null
 		) {
-			clearSelection();
+			event.preventDefault();
+			void ascend(trail.up);
 			return;
 		}
 		handleShellKeydown(event);
 	}
 	const fetched = $derived(investigation.slices.reduce((sum, s) => sum + s.received, 0));
 	const truncated = $derived(investigation.notices.some((n) => n.kind === 'truncated'));
+	/** Results bar ledger (BIBLE J2). The session bar shows no count: the
+	 * canvas has no fetch of its own. */
+	const fetchedLine = $derived(
+		`fetched ${fetched}${truncated ? ' · relays may hold more' : ''}`
+	);
 	// Owner ruling 2026-09-09: the 'N invalid skipped' ledger is removed from
 	// the results surface (§4 line to follow via the docs ritual); the
 	// pipeline still emits the notice — it surfaces only inside the trace's
@@ -539,6 +694,21 @@
 		bind:clientHeight={centerHeight}
 		class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-window bg-surface shadow-card"
 	>
+		<!-- In-app step stack (issue #142): one 44px bar for the results and
+			session surfaces, hoisted above the surface switch so it persists
+			across the hop (focus target stays mounted; no remount flicker).
+			A session surface without its own run is the honest placeholder
+			(#83): no bar there, because Results would paint whatever run is
+			still in memory under this session's title (spec §2 identity rule). -->
+		{#if trail !== null && (shell.view !== 'session' || sessionOwnsRun)}
+			<BreadcrumbBar
+				bind:this={breadcrumbBar}
+				{trail}
+				meta={shell.view === 'results' ? fetchedLine : ''}
+				onCrumb={goToCrumb}
+				onAscend={(target) => void ascend(target)}
+			/>
+		{/if}
 		<div class="flex min-h-0 flex-1 flex-col {shell.view === 'results' ? '' : 'p-6'}">
 			{#if shell.view === 'search'}
 				<!-- J1 hero (issue #37) — the trace (#36) and results (#38)
@@ -551,32 +721,14 @@
 					/>
 				</div>
 				{:else if shell.view === 'results'}
-				<!-- The results surface (#38): BIBLE J2 anatomy — 44px breadcrumb
-					bar spans the whole window; rail + cards below; §4 edge
-					states replace the body. -->
+				<!-- The results surface (#38): rail + cards below the shared bar;
+					§4 edge states replace the body. -->
 				<!-- #108: the fill's one audible surface — visually hidden,
 					polite, chunk-granular (logic above). Kept OUTSIDE the
 					{#key} remount so announcements stay pure text diffs in a
 					persistent region. -->
 				<div aria-live="polite" class="sr-only">{fillLive}</div>
 				{#key shell.session?.id}
-					<!-- BIBLE J2 header bar: full window width, 44px hairline -->
-					<div class="flex h-11 shrink-0 items-center border-b border-line px-4">
-						<!-- baseline-aligned cluster (owner report, PR #42 polish):
-							items-center misaligned the mixed 12.5/13/11px rows; one true
-							baseline per item + svg on the same line, group centered by
-							the bar. leading-none so the line-box extents match the
-							glyph extents. -->
-						<div class="flex min-w-0 flex-1 items-baseline gap-2">
-							<span class="leading-none text-[12.5px] text-ink-2">Results</span>
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="shrink-0 text-ink-2"><path d="M9 6l6 6-6 6"/></svg>
-							<span class="min-w-0 truncate leading-none text-[13px] font-semibold text-ink">{shell.session?.title ?? ''}</span>
-							<span class="flex-1"></span>
-							<span class="shrink-0 font-mono leading-none text-[11px] text-ink-2">
-								fetched {fetched}{truncated ? ' · relays may hold more' : ''}
-							</span>
-						</div>
-					</div>
 					{#if relayDead}
 						<!-- Receipts folded per relay (issue #132): ResultsError keys its
 							list by url, so a per-leg list gave one dead host two entries
@@ -654,6 +806,7 @@
 								<div
 									class="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto p-1 pb-3"
 									bind:this={resultsScroller}
+									onscroll={captureResultsScroll}
 								>
 									<div class="w-full max-w-[760px] shrink-0">
 										<TaskTrace />
