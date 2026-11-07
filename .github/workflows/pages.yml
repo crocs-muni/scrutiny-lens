@@ -1,9 +1,9 @@
 name: pages
 
 # Deploys the static SPA to THIS repo's GitHub Pages (issue #16; deploy doc:
-# docs/deploy.md) — https://crocs-muni.github.io/scrutiny-lens.
-# Project site → BASE_PATH=/scrutiny-lens baked into the build.
-# Uses GITHUB_TOKEN only: no secrets, no external repo.
+# docs/deploy.md) — https://lens.scrutiny.cloud (custom domain), which also
+# keeps answering at https://crocs-muni.github.io/scrutiny-lens.
+# Custom domain → site serves from /, so no BASE_PATH is baked into the build.
 
 on:
   push:
@@ -18,12 +18,6 @@ concurrency:
 jobs:
   gate-and-build:
     runs-on: ubuntu-latest
-    env:
-      # HTTPS host → wss relays only. Pool per docs/deploy.md: the seeded
-      # demo corpus relay FIRST (a fresh visitor must land on data), the
-      # public pair after it (3 ≤ the 1–4 spec window).
-      PUBLIC_RELAY_URLS: wss://lens-demo.feeds.relay.tools,wss://relay.damus.io,wss://nos.lol
-      BASE_PATH: /scrutiny-lens
     steps:
       - name: Check out lens
         uses: actions/checkout@v4
@@ -42,6 +36,14 @@ jobs:
         run: pnpm test
 
       - name: Build static site
+        # Deploy pool for the BUILT artifact: our production scrutiny relay
+        # leads, so a fresh visitor lands on scrutiny data; public relays
+        # follow as fallback. Step-scoped on purpose: at job level it leaked
+        # into `pnpm test`, where DEFAULT_RELAYS must equal the in-source
+        # spec pool (tests/config.test.ts assumes no env) — broken main
+        # deploys since #152.
+        env:
+          PUBLIC_RELAY_URLS: wss://relay.scrutiny.cloud,wss://relay.damus.io,wss://nos.lol
         working-directory: lens
         run: pnpm build
 

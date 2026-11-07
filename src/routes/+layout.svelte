@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../app.css';
+	import { Tooltip } from 'bits-ui';
 	import { onMount } from 'svelte';
 	import { listSessions } from '$lib/db';
 	import { hydrateDeadLetters } from '$lib/ai/deadLetter';
@@ -29,4 +30,8 @@
 	});
 </script>
 
-{@render children()}
+<!-- One provider for every route: KeyHint tooltips need it as an ancestor,
+	 * and the delay is a single app-wide value (issue #39). -->
+<Tooltip.Provider delayDuration={350}>
+	{@render children()}
+</Tooltip.Provider>

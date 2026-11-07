@@ -105,14 +105,19 @@
 		<div class="mb-2 flex h-10 shrink-0 items-center px-2">
 			<!-- brand = the home affordance (owner ruling 2026-09-03: plain
 				text, no logo chip) — "home" is the search hero. -->
-			<button
-				type="button"
-				title="Home"
-				onclick={onHome}
-				class="min-w-0 flex-1 truncate rounded-control px-1 text-left text-[14px] font-semibold text-ink"
-			>
-				Scrutiny Lens
-			</button>
+			<div class="min-w-0 flex-1">
+				<KeyHint label="Home" nameless onclick={onHome}>
+					{#snippet trigger({ props })}
+						<button
+							type="button"
+							{...props}
+							class="block w-full truncate rounded-control px-1 text-left text-[14px] font-semibold text-ink"
+						>
+							Scrutiny Lens
+						</button>
+					{/snippet}
+				</KeyHint>
+			</div>
 			<KeyHint
 				label="Sessions rail"
 				keys="Ctrl+\"
@@ -161,18 +166,17 @@
 					<span>Sessions</span>
 				</button>
 
-				<button
-					type="button"
-					aria-label="Search sessions"
+				<KeyHint
+					label="Search sessions"
 					aria-expanded={searchOpen}
 					onclick={() => (searchOpen = true)}
 					class="absolute top-0 right-0 z-10 flex size-8 items-center justify-center rounded-control text-ink-3 transition-[opacity,background-color,color,transform] hover:bg-hover-2 hover:text-ink active:scale-[0.96] {searchOpen
 						? 'pointer-events-none opacity-0'
 						: 'opacity-100'}"
-					style:transition-duration="{SEARCH_MOTION.duration}ms"
+					style="transition-duration: {SEARCH_MOTION.duration}ms"
 				>
 					<IconSearch size={16} stroke-width={1.8} />
-				</button>
+				</KeyHint>
 
 				<div
 					class="absolute top-0 right-0 z-20 flex h-8 items-center overflow-hidden rounded-control bg-field text-ink-3 shadow-hairline transition-[width,opacity] focus-within:text-ink-2 {searchOpen
@@ -195,14 +199,14 @@
 						aria-label="Search sessions"
 						class="ml-1.5 min-w-0 flex-1 bg-transparent text-[13px] font-medium text-ink outline-none placeholder:text-ink-3"
 					/>
-					<button
-						type="button"
-						aria-label="Close session search"
+					<KeyHint
+						label="Close search"
+						side="bottom"
 						onclick={closeSearch}
 						class="flex size-8 shrink-0 items-center justify-center rounded-control text-ink-3 transition-[background-color,color,transform] duration-150 hover:bg-hover-2 hover:text-ink active:scale-[0.96]"
 					>
 						<IconX size={16} stroke-width={1.8} />
-					</button>
+					</KeyHint>
 				</div>
 			</div>
 
@@ -218,30 +222,34 @@
 							role="presentation"
 							class="group/session relative z-10 mx-2 rounded-control"
 						>
-							<button
-								type="button"
-								title={item.title}
-								onclick={() => onPick(item.id)}
-								class="sidebar-action-row flex w-full flex-col gap-0.5 rounded-control px-2 py-1.5 text-left transition-transform duration-150 active:scale-[0.98] {item.id ===
-								activeId
-									? 'group-hover/glide:bg-transparent'
-									: ''}"
-							>
-								<span
-									class="min-w-0 truncate pr-5 text-[14px] font-medium {item.id === activeId
-										? 'text-ink'
-										: 'text-ink-2'}">{item.title}</span
-								>
-								<span class="flex items-center gap-1.5">
-									{#if item.unseen}
-										<span class="size-1.5 shrink-0 rounded-full bg-accent" aria-label="Unseen updates"></span>
-									{/if}
-									<span class="font-mono text-[11px] text-ink-3">{formatRel(item.createdAt)}</span>
-								</span>
-							</button>
-							<button
-								type="button"
-								aria-label="Close session"
+							<!-- The title is CSS-clipped (truncate), so the tooltip carries
+								the full text; no conditional detection (jsdom has no layout). -->
+							<KeyHint label={item.title} nameless onclick={() => onPick(item.id)}>
+								{#snippet trigger({ props })}
+									<button
+										type="button"
+										{...props}
+										class="sidebar-action-row flex w-full flex-col gap-0.5 rounded-control px-2 py-1.5 text-left transition-transform duration-150 active:scale-[0.98] {item.id ===
+										activeId
+											? 'group-hover/glide:bg-transparent'
+											: ''}"
+									>
+										<span
+											class="min-w-0 truncate pr-5 text-[14px] font-medium {item.id === activeId
+												? 'text-ink'
+												: 'text-ink-2'}">{item.title}</span
+										>
+										<span class="flex items-center gap-1.5">
+											{#if item.unseen}
+												<span class="size-1.5 shrink-0 rounded-full bg-accent" aria-label="Unseen updates"></span>
+											{/if}
+											<span class="font-mono text-[11px] text-ink-3">{formatRel(item.createdAt)}</span>
+										</span>
+									</button>
+								{/snippet}
+							</KeyHint>
+							<KeyHint
+								label="Close session"
 								onclick={(event) => {
 									event.stopPropagation();
 									onClose(item.id);
@@ -249,7 +257,7 @@
 								class="absolute top-1.5 right-1 hidden size-5 items-center justify-center rounded-[5px] text-ink-3 group-hover/session:flex group-focus-within/session:flex hover:bg-hover hover:text-ink"
 							>
 								<IconX size={13} stroke-width={2} />
-							</button>
+							</KeyHint>
 						</div>
 					{/each}
 					{#if query && visibleSessions.length === 0}
@@ -261,9 +269,12 @@
 
 		<!-- Settings dock — the rail's bottom slot (spec §9 rail chrome) -->
 		<div class="mx-2 mt-2 shrink-0 border-t border-line pt-2">
-			<KeyHint
-				label="Settings"
-				keys="Ctrl+,"
+			<!-- Visible label and visible keycap: a tooltip would only repeat
+				both (keycap only where a shortcut exists, and it is visible here), so
+				no KeyHint here. -->
+			<button
+				type="button"
+				aria-keyshortcuts="Control+,"
 				class="flex h-8 w-full items-center rounded-control px-2 text-left transition-colors duration-150 hover:bg-hover-2"
 				onclick={onSettings}
 			>
@@ -272,7 +283,7 @@
 				</span>
 				<span class="ml-1.5 min-w-0 flex-1 truncate text-[14px] font-medium text-ink-2">Settings</span>
 				<kbd class="shrink-0 font-mono text-[10px] text-ink-3">Ctrl+,</kbd>
-			</KeyHint>
+			</button>
 		</div>
 	</div>
 
@@ -287,14 +298,13 @@
 			class="primitive-icon-button mb-1 shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover-2 hover:text-ink"
 			onclick={onToggle}><IconArrowBarToRight size={18} stroke-width={1.8} /></KeyHint
 		>
-		<button
-			type="button"
-			aria-label="New session"
+		<KeyHint
+			label="New session"
 			onclick={onHome}
 			class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover-2 hover:text-ink"
 		>
 			<IconPencil size={17} stroke-width={1.8} />
-		</button>
+		</KeyHint>
 		<span class="flex-1"></span>
 		<KeyHint
 			label="Settings"

@@ -5,6 +5,7 @@
 	 * events not in memory) are computed by the column. */
 
 	import { IconArrowUp } from '@tabler/icons-svelte';
+	import KeyHint from '../shell/KeyHint.svelte';
 
 	interface Props {
 		disabled: boolean;
@@ -50,14 +51,15 @@
 			{placeholder}
 			class="composer-input"
 		></textarea>
-		<button
-			type="submit"
-			aria-label="Send"
-			disabled={disabled || draft.trim() === ''}
-			class="composer-send"
-		>
-			<IconArrowUp size={16} stroke-width={2.2} />
-		</button>
+		<!-- Own element (trigger snippet): .composer-send is scoped CSS and
+			would not reach a button rendered inside KeyHint. -->
+		<KeyHint label="Send" keys="Enter" side="top" disabled={disabled || draft.trim() === ''}>
+			{#snippet trigger({ props })}
+				<button type="submit" {...props} class="composer-send">
+					<IconArrowUp size={16} stroke-width={2.2} />
+				</button>
+			{/snippet}
+		</KeyHint>
 	</form>
 	{#if note}
 		<p class="composer-note">{note}</p>

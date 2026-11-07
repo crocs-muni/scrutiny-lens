@@ -17,6 +17,7 @@
 
 	import type { RowStatus, TraceTick as Tick } from '$lib/trace';
 	import TraceTick from './TraceTick.svelte';
+	import KeyHint from '../shell/KeyHint.svelte';
 
 	interface Props {
 		/** 1-based row slot (1..3): ring number + entrance stagger. */
@@ -151,27 +152,31 @@
 			<!-- Retry is a focusable role=button span, not a <button>: the row
 				header IS the expand <button> and real buttons don't nest.
 				stopPropagation keeps retry from toggling the row's fold. -->
-			<span
-				role="button"
-				tabindex="0"
-				aria-label="Retry"
-				title="Retry"
-				class="flex size-3.5 items-center justify-center rounded-full"
-				style:animation="spin 1.2s linear infinite"
+			<KeyHint
+				label="Retry"
 				onclick={(e) => {
 					e.stopPropagation();
 					onRetry();
 				}}
-				onkeydown={(e) => {
-					if (e.key === 'Enter' || e.key === ' ') {
-						e.preventDefault();
-						e.stopPropagation();
-						onRetry();
-					}
-				}}
 			>
-				{@render retryIcon()}
-			</span>
+				{#snippet trigger({ props })}
+					<span
+						{...props}
+						role="button"
+						class="flex size-3.5 items-center justify-center rounded-full"
+						style:animation="spin 1.2s linear infinite"
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								e.stopPropagation();
+								onRetry();
+							}
+						}}
+					>
+						{@render retryIcon()}
+					</span>
+				{/snippet}
+			</KeyHint>
 		{:else}
 			<span style:animation="spin 1.2s linear infinite" class="flex">
 				{@render retryIcon()}

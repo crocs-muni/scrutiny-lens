@@ -99,16 +99,6 @@ select:focus-visible,
 	transform: translateY(0);
 }
 
-/* #93 W1 (#39): the canvas subject card is keyboard-reachable (GraphNode
- * role=button tabindex=0) but its SELECTED state already paints an --accent
- * border + citation ring, so the generic :focus-visible ring sat flush to
- * that border and focus read as selection. Lift the keyboard ring clear of
- * the card; keyboard-only (:focus-visible), never pointer-focus. */
-.stage [role="button"]:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: 3px;
-}
-
 /* ── shared helpers — the subset of canon's primitive-* classes the
  * vendored components use; same vendoring contract as tokens.css ─── */
 .primitive-icon-button {

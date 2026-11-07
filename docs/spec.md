@@ -113,7 +113,7 @@ Works with zero setup. For AI features the user pastes their own API key; it liv
 
 - **Must**: search→cards, graph, DetailDrawer (detail + patch history + retraction + chain states), chat w/ verified citations, share link, honest fallbacks, settings.
 - **Could**: table view toggle (SegmentedControl + RecordsTable), saved-session auto-title, command palette (⌘K — deferred, owner-liked).
-- **Won't (this cycle)**: Nostr login, trust lists, publishing events, SEO/event pages, profiles, citation hover flourish beyond the coordination store, Docker self-host bundle, multi-relay conflict UI beyond dedupe, mobile-specific work (baseline: usable at 360px, enhanced beyond).
+- **Won't (this cycle)**: Nostr login, trust lists, publishing events, SEO/event pages, profiles, citation hover flourish beyond the coordination store, Docker self-host bundle, multi-relay conflict UI beyond dedupe, small-screen and mobile support (the shell is a desktop layout — fixed 216px facet rail and 320px chat column, no breakpoints — so nothing is tailored below desktop width and no minimum width is promised; parked in #121).
 
 ## 11. Build order (each step ships usable)
 

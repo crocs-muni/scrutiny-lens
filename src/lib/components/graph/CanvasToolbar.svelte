@@ -25,6 +25,7 @@
 	} from '@tabler/icons-svelte';
 	import { investigation } from '$lib/investigation.svelte';
 	import { shell } from '$lib/shell.svelte';
+	import KeyHint from '../shell/KeyHint.svelte';
 
 	interface Props {
 		actions: CanvasViewportActions | null;
@@ -46,36 +47,31 @@
 	role="toolbar"
 	aria-label="Graph toolbar"
 >
-	<button class={btn} title="Zoom in" aria-label="Zoom in" disabled={actions === null} onclick={() => actions?.zoomIn()}
-		><IconZoomIn size={14} /></button
+	<KeyHint label="Zoom in" side="bottom" class={btn} disabled={actions === null} onclick={() => actions?.zoomIn()}
+		><IconZoomIn size={14} /></KeyHint
 	>
-	<button class={btn} title="Zoom out" aria-label="Zoom out" disabled={actions === null} onclick={() => actions?.zoomOut()}
-		><IconZoomOut size={14} /></button
+	<KeyHint label="Zoom out" side="bottom" class={btn} disabled={actions === null} onclick={() => actions?.zoomOut()}
+		><IconZoomOut size={14} /></KeyHint
 	>
-	<button
+	<KeyHint
+		label="Fit to view"
+		side="bottom"
 		class={btn}
-		title="Fit to view"
-		aria-label="Fit to view"
 		disabled={actions === null}
-		onclick={() => actions?.fit()}><IconMaximize size={14} /></button
+		onclick={() => actions?.fit()}><IconMaximize size={14} /></KeyHint
 	>
-	<button
-		class={btn}
-		title="Redistribute: snap every card back to its ring slot — instant"
-		aria-label="Redistribute all"
-		onclick={onRedistribute}><IconRefresh size={14} /></button
+	<KeyHint label="Snap cards to ring slots" side="bottom" class={btn} onclick={onRedistribute}
+		><IconRefresh size={14} /></KeyHint
 	>
 	<!-- The map's own honesty about motion (#95): only ever SETTLING while
 	 * a gesture's episode lives; FROZEN is the baseline, not a button. -->
 	<span
 		class="ml-1 font-mono text-[10px] {settling ? 'text-[var(--orange)]' : 'text-ink-3'}"
-		title={settling ? 'physics running — it stops by itself' : 'fully frozen — nothing moves at rest'}
 		>{settling ? 'settling…' : 'frozen'}</span
 	>
 	{#if investigation.expansionLog.length > 0}
 		<button
 			class="flex h-8 items-center gap-1.5 rounded-[7px] border border-line px-2.5 text-[12px] text-ink-2 transition-colors hover:bg-hover"
-			title="Undo last expansion"
 			onclick={() => investigation.undoExpandRelated()}
 		>
 			<IconArrowBackUp size={13} />undo expand
