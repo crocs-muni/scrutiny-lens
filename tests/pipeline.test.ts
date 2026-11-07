@@ -224,7 +224,7 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 			(n) =>
 				n.kind === 'capability' &&
 				n.message.includes('schema_failure') &&
-				n.message.includes('plain-text search of your words')
+				n.message.includes("plain-text searches of your question's terms")
 		)).toBe(true);
 	});
 
@@ -266,7 +266,7 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 			transport,
 			admit: () => ({ ok: true }),
 			emit: (e) => {
-				if (e.type === 'notice' && e.notice.message.includes('plain-text search of your words')) {
+				if (e.type === 'notice' && e.notice.message.includes("plain-text searches of your question's terms")) {
 					emitted.push(e.notice.message);
 				}
 			}
@@ -274,7 +274,7 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 		expect(emitted).toHaveLength(1);
 	});
 
-	it('mixed branch: failing AI + direct identifiers → identifier-only notice, never "your words"', async () => {
+	it('mixed branch: failing AI + identifiers → tag legs keep their route, remaining prose becomes probes (issue #164)', async () => {
 		const transport = new FakeTransport({ 'wss://a': { events: [] } });
 		const session = await runSearch({
 			question: 'cc:ANSSI-CC-2015/12 maintenance',
@@ -284,11 +284,21 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 			transport,
 			admit: () => ({ ok: true })
 		});
+		// The identifier keeps its direct tag leg…
+		expect(session.searches).toContainEqual({
+			kind: 'tag',
+			value: 'cc:ANSSI-CC-2015/12',
+			source: 'identifier'
+		});
+		// …and the leftover prose ("maintenance") degrades to a probe, not
+		// silence — the notice names both halves of the plan.
+		expect(
+			session.searches.some((s) => s.source === 'fallback' && s.value === 'maintenance')
+		).toBe(true);
 		const notice = session.notices.find(
 			(n) => n.kind === 'capability' && n.message.includes('AI translate degraded')
 		);
-		expect(notice?.message).toContain('identifier-only searches');
-		expect(notice?.message).not.toContain('your words');
+		expect(notice?.message).toContain("plain-text searches of your question's terms");
 	});
 });
 

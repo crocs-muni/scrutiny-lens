@@ -1,8 +1,9 @@
 /**
  * Query translation (issue #28, spec §1/§3): identifiers route DIRECTLY to
  * tag searches, never through AI; prose goes through one zod-gated AI call
- * (≤3 searches, prefixes open per IR-4); no key / AI-down → one free-text
- * search, never nothing.
+ * (≤3 searches, prefixes open per IR-4); no key / AI-down → the deterministic
+ * ladder of issue #164 — identifier tag legs plus ≤3 short rare-term text
+ * probes, never the raw question.
  */
 
 import { z } from "zod";
@@ -189,6 +190,76 @@ async function translateViaAi(
 }
 
 /* ------------------------------------------------------------------ *
+ * Deterministic fallback ladder (issue #164, spec §2 rule 5 spirit)
+ * ------------------------------------------------------------------ */
+
+/** Words the corpus's record texts do not carry — question grammar, not
+ * content. Stripping them leaves the tokens a fabric event can actually
+ * match: measured live (issue #164), whole-question probes return zero
+ * because the relay's full-text engine ANDs every token and the wrapper
+ * language ("which card is fastest for…") is in no event's word index.
+ * Interrogatives live here rather than in GENERIC: they match nothing at
+ * all ("fastest which" measured 1 hit), so they poison an AND exactly
+ * like a stopword. A fixed literal table, never a model call. */
+const STOPWORD: Record<string, true> = {
+  a: true, an: true, and: true, are: true, as: true, at: true,
+  be: true, but: true, by: true, can: true, do: true, does: true,
+  for: true, from: true, has: true, have: true, how: true, i: true,
+  in: true, is: true, it: true, its: true, me: true, my: true,
+  of: true, on: true, or: true, show: true, that: true, the: true,
+  their: true, them: true, there: true, these: true, this: true,
+  to: true, was: true, were: true, what: true, which: true, who: true,
+  why: true, with: true, you: true, your: true,
+};
+
+/** Domain wrapper words appearing in thousands of record texts ("card",
+ * "cards", "dossier", "affected"…) — kept out of MULTI-token probes where
+ * they AND away the rare term's hits (measured live 2026-11-07 on
+ * relay.scrutiny.cloud: "roca affected cards" 2 batch-valid vs "roca" 9),
+ * but kept as SOLO probes — a generic term alone still hits ("card" 419
+ * batch-valid) where an empty ladder would return nothing at all. */
+const GENERIC: Record<string, true> = {
+  affected: true, card: true, cards: true, certificate: true,
+  certified: true, chip: true, chips: true, details: true,
+  dossier: true, fastest: true, list: true, module: true,
+  platform: true, product: true, smartcard: true, vulnerability: true,
+};
+
+type FallbackProbe = { kind: "text"; value: string; source: "fallback" };
+
+/** Short rare-term text probes, longest tokens first (issue #164): the
+ * longest surviving token is the rarest discriminator — "ecdsa" /
+ * "sle78" / "infineon" are corpus vocabulary where "card" is noise. The
+ * ladder narrows first (rarest pair), widening to single terms, so one
+ * matching leg is enough for non-zero results; a generic word only
+ * carries a probe when nothing rare survived. */
+function rareTermProbes(prose: string, max = 3): FallbackProbe[] {
+  const tokens = (prose.toLowerCase().match(/[a-z0-9][a-z0-9-]*/g) ?? []).filter(
+    (token) => STOPWORD[token] !== true,
+  );
+  // Longest first; ties keep first-seen order so the ladder is deterministic.
+  const ranked = [...new Set(tokens)].sort((a, b) => b.length - a.length);
+  const rare = ranked.filter((token) => GENERIC[token] !== true);
+  // Ladder: rare pair → rarest single → widening prefixes of the full
+  // ranking (generic words may appear only here, alone or in pairs).
+  const ladder: string[][] = [];
+  if (rare.length >= 2) ladder.push(rare.slice(0, 2));
+  else if (rare.length === 1) ladder.push(rare);
+  for (let n = 1; n <= ranked.length; n += 1) ladder.push(ranked.slice(0, n));
+
+  const probes: FallbackProbe[] = [];
+  for (const terms of ladder) {
+    // A rare pair can repeat as a widening prefix, and prefixes longer than
+    // the clip share a head — one probe per distinct query text.
+    const value = clip(terms.join(" "), 120);
+    if (probes.some((probe) => probe.value === value)) continue;
+    probes.push({ kind: "text", value, source: "fallback" });
+    if (probes.length >= max) break;
+  }
+  return probes;
+}
+
+/* ------------------------------------------------------------------ *
  * translateQuestion (identifiers → AI → fallback)
  * ------------------------------------------------------------------ */
 
@@ -256,20 +327,16 @@ export async function translateQuestion(
     ...aiSearches.slice(0, 3),
   ];
 
-  if (fallbackUsed && capped.length === 0) {
-    return {
-      ok: true,
-      result: {
-        searches: [
-          { kind: "text", value: clip(question, 300), source: "fallback" },
-        ],
-        ...(degradation ? { degradation } : {}),
-      },
-    };
-  }
-
   return {
     ok: true,
-    result: { searches: capped, ...(degradation ? { degradation } : {}) },
+    result: {
+      // Issue #164 fallback: identifiers keep their direct tag legs; the
+      // prose becomes locally derived rare-term probes, never the question
+      // verbatim — the relay's text engine ANDs every token and question
+      // grammar is in no event's word index, so a whole-question probe
+      // returns zero real hits on the live corpus (see rareTermProbes).
+      searches: fallbackUsed ? [...capped, ...rareTermProbes(proseRemaining)] : capped,
+      ...(degradation ? { degradation } : {}),
+    },
   };
 }

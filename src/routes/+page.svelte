@@ -288,6 +288,14 @@
 	}
 	const fetched = $derived(investigation.slices.reduce((sum, s) => sum + s.received, 0));
 	const truncated = $derived(investigation.notices.some((n) => n.kind === 'truncated'));
+	// #164: the run's own search count, named in the breadcrumb ("N found via
+	// K searches") so a fallback-probe run reads as such — mono and
+	// machine-computed (spec §2 rule 6). Zero only on a share cold-open,
+	// where the bar never mounts (no results surface).
+	const searchTally = $derived.by(() => {
+		const count = investigation.searches.length;
+		return `${count} ${count === 1 ? 'search' : 'searches'}`;
+	});
 	// Owner ruling 2026-09-09: the 'N invalid skipped' ledger is removed from
 	// the results surface (§4 line to follow via the docs ritual); the
 	// pipeline still emits the notice — it surfaces only inside the trace's
@@ -573,7 +581,7 @@
 							<span class="min-w-0 truncate leading-none text-[13px] font-semibold text-ink">{shell.session?.title ?? ''}</span>
 							<span class="flex-1"></span>
 							<span class="shrink-0 font-mono leading-none text-[11px] text-ink-2">
-								fetched {fetched}{truncated ? ' · relays may hold more' : ''}
+								fetched {fetched} via {searchTally}{truncated ? ' · relays may hold more' : ''}
 							</span>
 						</div>
 					</div>

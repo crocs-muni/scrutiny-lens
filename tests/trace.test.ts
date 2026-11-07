@@ -34,6 +34,8 @@ describe('derivePhaseRows — phase transitions', () => {
 		const running = derivePhaseRows({ ...base, phase: 'translate' });
 		expect(running[0].status).toBe('running');
 		expect(running[0].label).toBe('Translating query');
+		// Nothing ran yet — no probe receipts while translating.
+		expect(running[0].ticks).toEqual([]);
 
 		const translated = derivePhaseRows({
 			...base,
@@ -45,6 +47,32 @@ describe('derivePhaseRows — phase transitions', () => {
 		});
 		expect(translated[0].status).toBe('completed');
 		expect(translated[0].counter).toBe('cve:CVE-2017-15361 · vendor infineon');
+	});
+
+	it('interpret row receipts each search that ran; fallback probes tick amber (issue #164)', () => {
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'fetch',
+			searches: [
+				{ kind: 'text', value: 'infineon sle78', source: 'fallback' },
+				{ kind: 'text', value: 'infineon', source: 'fallback' },
+				{ kind: 'tag', value: 'cve:CVE-2017-15361', source: 'identifier' }
+			],
+			slices: [
+				{ url: 'wss://a', received: 30, route: 'text:infineon sle78:nip50', rejected: 0, status: 'ok' },
+				{ url: 'wss://b', received: 12, route: 'text:infineon sle78:nip50', rejected: 0, status: 'ok' },
+				{ url: 'wss://a', received: 7, route: 'tag:cve:CVE-2017-15361', rejected: 0, status: 'ok' }
+			]
+		});
+		// Count-free receipts (see searchTicks): the per-probe N lives in
+		// the breadcrumb counter — a cache-assisted run's merged slice
+		// cannot attribute hits per probe, and a fabricated "0 records"
+		// would lie (spec §2).
+		expect(rows[0].ticks).toEqual([
+			{ text: 'infineon sle78 (fallback probe)', warn: true },
+			{ text: 'infineon (fallback probe)', warn: true },
+			{ text: '#cve:CVE-2017-15361', warn: false }
+		]);
 	});
 });
 
