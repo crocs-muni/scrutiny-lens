@@ -160,6 +160,7 @@
 						{/each}
 					</ul>
 				</div>
+				<p class="font-sans text-[12px] text-ink-2">Edit the relay list in Settings on the overview.</p>
 			{/if}
 
 			<div class="mt-1 flex flex-wrap items-center gap-2">
@@ -176,14 +177,6 @@
 					onclick={goHome}
 				>
 					Go to overview
-				</button>
-				<button
-					type="button"
-					class="rounded-full px-3 py-1.5 text-[12px] font-medium text-ink-2 hover:bg-inset"
-					title="Settings lives on the overview — edit your relay list there"
-					onclick={goHome}
-				>
-					Edit relay list in Settings
 				</button>
 			</div>
 		</div>

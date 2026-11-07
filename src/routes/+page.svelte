@@ -5,7 +5,6 @@
 	 * with the DetailDrawer below the canvas · chat column resident only
 	 * while a session is open. */
 
-	import { Tooltip } from 'bits-ui';
 	import { handleShellKeydown, shell } from '$lib/shell.svelte';
 	import { fillNote, investigation } from '$lib/investigation.svelte';
 	import { deriveDossier } from '$lib/dossier';
@@ -271,10 +270,13 @@
 		investigation.clearSelection();
 	}
 	/** Esc deselect runs before the shell's Ctrl-map (ruling 7); the settings
-	 * modal's own dismissal is untouched (guarded). */
+	 * modal's own dismissal is untouched (guarded). An Escape a floating layer
+	 * already consumed (open tooltip or popover preventDefaults it) only
+	 * dismisses that layer — the selection survives the first press. */
 	function onShellKeydown(event: KeyboardEvent): void {
 		if (
 			event.key === 'Escape' &&
+			!event.defaultPrevented &&
 			shell.view === 'session' &&
 			!shell.settingsOpen &&
 			investigation.selectedEventId !== null
@@ -484,327 +486,325 @@
 
 <svelte:window onkeydown={onShellKeydown} />
 
-<Tooltip.Provider delayDuration={350}>
-	<!-- inert while settings is open: keyboard focus stays inside the modal. -->
-	<div class="flex h-dvh w-full gap-3 p-3" inert={shell.settingsOpen ? true : undefined}>
-		<!-- #93 W1 (WCAG 2.4.1): the shell's tab order walks the recents rail
-			first, so this bypass is the shell's first focusable and jumps
-			straight to <main id="main">. Hidden until keyboard-focused. -->
-		<a href="#main" class="skip-link">Skip to content</a>
-		<!-- #93 W1: the recents rail is a nav landmark; display:contents keeps
-			the box tree identical so the flexible rail layout is untouched. -->
-		<nav aria-label="Recent sessions" class="contents">
-		<SidebarRecents
-			collapsed={!shell.railOpen}
-			sessions={shell.sessions}
-			activeId={shell.session?.id ?? null}
-			onToggle={() => shell.toggleRail()}
-			onHome={() => shell.home()}
-			onPick={(id) => {
-				shell.openSession(id);
-				// The current run IS its session's results — reopening it from the rail
-				// returns to the results surface instead of stranding on the placeholder.
-				if (id === investigation.sessionId && (investigation.running || investigation.result !== null)) {
-					shell.view = 'results';
-					return;
-				}
-				// #83: a session evicted from memory by a reload rebuilds from local
-				// storage and lands on the same results surface. Restores that decline
-				// (no run row / fully evicted frontier) leave the honest placeholder.
-				void investigation.restore(id).then((ok) => {
-					// Identity guard (review H2): a start()/openShared() since the
-					// click already own the rail — a late restore resolve must
-					// never yank the view back.
-					if (ok && shell.session?.id === id) shell.view = 'results';
-				});
-			}}
-			onClose={(id) => {
-			// spec §8: closing the active session aborts its run — the
-			// orphan result must not land with no row to display it in.
-			if (id === shell.session?.id) investigation.stop();
-			shell.closeSession(id);
+<!-- inert while settings is open: keyboard focus stays inside the modal. -->
+<div class="flex h-dvh w-full gap-3 p-3" inert={shell.settingsOpen ? true : undefined}>
+	<!-- #93 W1 (WCAG 2.4.1): the shell's tab order walks the recents rail
+		first, so this bypass is the shell's first focusable and jumps
+		straight to <main id="main">. Hidden until keyboard-focused. -->
+	<a href="#main" class="skip-link">Skip to content</a>
+	<!-- #93 W1: the recents rail is a nav landmark; display:contents keeps
+		the box tree identical so the flexible rail layout is untouched. -->
+	<nav aria-label="Recent sessions" class="contents">
+	<SidebarRecents
+		collapsed={!shell.railOpen}
+		sessions={shell.sessions}
+		activeId={shell.session?.id ?? null}
+		onToggle={() => shell.toggleRail()}
+		onHome={() => shell.home()}
+		onPick={(id) => {
+			shell.openSession(id);
+			// The current run IS its session's results — reopening it from the rail
+			// returns to the results surface instead of stranding on the placeholder.
+			if (id === investigation.sessionId && (investigation.running || investigation.result !== null)) {
+				shell.view = 'results';
+				return;
+			}
+			// #83: a session evicted from memory by a reload rebuilds from local
+			// storage and lands on the same results surface. Restores that decline
+			// (no run row / fully evicted frontier) leave the honest placeholder.
+			void investigation.restore(id).then((ok) => {
+				// Identity guard (review H2): a start()/openShared() since the
+				// click already own the rail — a late restore resolve must
+				// never yank the view back.
+				if (ok && shell.session?.id === id) shell.view = 'results';
+			});
 		}}
-			onSettings={() => shell.toggleSettings()}
-		/>
-		</nav>
+		onClose={(id) => {
+		// spec §8: closing the active session aborts its run — the
+		// orphan result must not land with no row to display it in.
+		if (id === shell.session?.id) investigation.stop();
+		shell.closeSession(id);
+	}}
+		onSettings={() => shell.toggleSettings()}
+	/>
+	</nav>
 
-		<!-- #93 W1: the center column is the page's main landmark; the skip
-			link targets this id. tabindex=-1 lets fragment navigation move
-			focus here (browsers skip non-focusable targets), without adding
-			main to the Tab order. -->
-		<main
-			id="main"
-			tabindex="-1"
-			bind:clientHeight={centerHeight}
-			class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-window bg-surface shadow-card"
-		>
-			<div class="flex min-h-0 flex-1 flex-col {shell.view === 'results' ? '' : 'p-6'}">
-				{#if shell.view === 'search'}
-					<!-- J1 hero (issue #37) — the trace (#36) and results (#38)
-					surfaces take over the center stage after submit. -->
-					<div class="h-full w-full overflow-y-auto p-1">
-						<SearchHero
-							hasKey={settings.apiKey !== ''}
-							onSearch={(q, title) => void investigation.start(q, title)}
-							onSettings={() => shell.toggleSettings()}
-						/>
-					</div>
-					{:else if shell.view === 'results'}
-					<!-- The results surface (#38): BIBLE J2 anatomy — 44px breadcrumb
-						bar spans the whole window; rail + cards below; §4 edge
-						states replace the body. -->
-					<!-- #108: the fill's one audible surface — visually hidden,
-						polite, chunk-granular (logic above). Kept OUTSIDE the
-						{#key} remount so announcements stay pure text diffs in a
-						persistent region. -->
-					<div aria-live="polite" class="sr-only">{fillLive}</div>
-					{#key shell.session?.id}
-						<!-- BIBLE J2 header bar: full window width, 44px hairline -->
-						<div class="flex h-11 shrink-0 items-center border-b border-line px-4">
-							<!-- baseline-aligned cluster (owner report, PR #42 polish):
-								items-center misaligned the mixed 12.5/13/11px rows; one true
-								baseline per item + svg on the same line, group centered by
-								the bar. leading-none so the line-box extents match the
-								glyph extents. -->
-							<div class="flex min-w-0 flex-1 items-baseline gap-2">
-								<span class="leading-none text-[12.5px] text-ink-2">Results</span>
-								<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="shrink-0 text-ink-2"><path d="M9 6l6 6-6 6"/></svg>
-								<span class="min-w-0 truncate leading-none text-[13px] font-semibold text-ink">{shell.session?.title ?? ''}</span>
-								<span class="flex-1"></span>
-								<span class="shrink-0 font-mono leading-none text-[11px] text-ink-2">
-									fetched {fetched}{truncated ? ' · relays may hold more' : ''}
-								</span>
-							</div>
+	<!-- #93 W1: the center column is the page's main landmark; the skip
+		link targets this id. tabindex=-1 lets fragment navigation move
+		focus here (browsers skip non-focusable targets), without adding
+		main to the Tab order. -->
+	<main
+		id="main"
+		tabindex="-1"
+		bind:clientHeight={centerHeight}
+		class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-window bg-surface shadow-card"
+	>
+		<div class="flex min-h-0 flex-1 flex-col {shell.view === 'results' ? '' : 'p-6'}">
+			{#if shell.view === 'search'}
+				<!-- J1 hero (issue #37) — the trace (#36) and results (#38)
+				surfaces take over the center stage after submit. -->
+				<div class="h-full w-full overflow-y-auto p-1">
+					<SearchHero
+						hasKey={settings.apiKey !== ''}
+						onSearch={(q, title) => void investigation.start(q, title)}
+						onSettings={() => shell.toggleSettings()}
+					/>
+				</div>
+				{:else if shell.view === 'results'}
+				<!-- The results surface (#38): BIBLE J2 anatomy — 44px breadcrumb
+					bar spans the whole window; rail + cards below; §4 edge
+					states replace the body. -->
+				<!-- #108: the fill's one audible surface — visually hidden,
+					polite, chunk-granular (logic above). Kept OUTSIDE the
+					{#key} remount so announcements stay pure text diffs in a
+					persistent region. -->
+				<div aria-live="polite" class="sr-only">{fillLive}</div>
+				{#key shell.session?.id}
+					<!-- BIBLE J2 header bar: full window width, 44px hairline -->
+					<div class="flex h-11 shrink-0 items-center border-b border-line px-4">
+						<!-- baseline-aligned cluster (owner report, PR #42 polish):
+							items-center misaligned the mixed 12.5/13/11px rows; one true
+							baseline per item + svg on the same line, group centered by
+							the bar. leading-none so the line-box extents match the
+							glyph extents. -->
+						<div class="flex min-w-0 flex-1 items-baseline gap-2">
+							<span class="leading-none text-[12.5px] text-ink-2">Results</span>
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="shrink-0 text-ink-2"><path d="M9 6l6 6-6 6"/></svg>
+							<span class="min-w-0 truncate leading-none text-[13px] font-semibold text-ink">{shell.session?.title ?? ''}</span>
+							<span class="flex-1"></span>
+							<span class="shrink-0 font-mono leading-none text-[11px] text-ink-2">
+								fetched {fetched}{truncated ? ' · relays may hold more' : ''}
+							</span>
 						</div>
-						{#if relayDead}
-							<!-- Receipts folded per relay (issue #132): ResultsError keys its
-								list by url, so a per-leg list gave one dead host two entries
-								with the same key (Svelte throws each_key_duplicate) and
-								printed it twice. No cache row: a cache slice is always
-								status 'ok', which is exactly what keeps relayDead false —
-								this screen cannot mount on a cache-served run. -->
-							<div class="flex min-h-0 w-full flex-1 flex-col items-center justify-center p-4">
-								<ResultsError
-									message={investigation.error ?? 'no relay answered the fetch'}
-									relays={relayReceipts}
-									onRetry={() => void investigation.start(investigation.lastQuestion)}
-									onEditRelays={() => shell.toggleSettings()}
-								/>
-							</div>
-						{:else}
-							<div class="flex min-h-0 w-full flex-1">
-								{#if railGroups.length > 0}
-									<!-- facet rail: deterministic counts (spec §3, never AI);
-										always on (owner decision, PR #42 — collapse pill removed) -->
-									<div class="flex w-[216px] shrink-0 flex-col overflow-hidden border-r border-line">
-										<FacetRail
-											groups={railGroups}
-											selections={investigation.selections}
-											onToggle={(p, v) => investigation.toggleFacet(p, v)}
-											onClearGroup={(p) => investigation.clearFacet(p)}
-											onClearAll={() => investigation.clearFacets()}
-										/>
-									</div>
-								{/if}
-								<!-- the scroller must span the full area so its scrollbar sits
-									at the outer edge (owner report 2026-09-11: scroll track
-									overlaid the card column's border); banner/cohort lanes
-									center themselves on the 760 rail individually -->
-								<div class="flex min-h-0 min-w-0 flex-1 flex-col">
-									<!-- §4 honesty lane: every banner one dismissal-keyed note; the
-										no-key hint stays textual (Ctrl+, works) — these are notices,
-										not buttons. Per-class roll-up (review finding): per-leg
-										verbatim facts live in trace ticks; this lane states counts. -->
-									{@render note(capabilityNote !== '', 'capability', capabilityNote)}
-									{@render note(noKey, 'no-key', 'no key set — cards stay raw · set one in Settings (Ctrl+,)')}
-									{@render note(aiNote !== '', 'ai-note', aiNote)}
-									{@render note(degradedNote !== '', 'degraded', degradedNote)}
-									{@render note(traversalNote !== '', 'traversal', traversalNote)}
-									{@render note(shareNote !== '', 'share-hints', shareNote)}
-									{#if investigation.result !== null}
-										<!-- header: cohort only (spec §3); centers on the same 760
-											rail as cards (scroller spans wider so its scrollbar
-											lives at the area edge); breadcrumb owns fetched/truncation -->
-										<div class="mx-auto flex w-full max-w-[760px] items-baseline gap-3 px-1 pb-1 pt-2">
-											<span class="font-mono text-[12.5px] font-semibold text-ink">{cohort}</span>
-											{#if selectionHidden}
-												<!-- the filtering surface owns its half of the
-													announcement (ruling 11): a filtered-out
-													selection is stated where it happened. -->
-												<span class="font-mono text-[11px] text-ink-2">
-													selected event hidden by filters ·
-													<button
-														type="button"
-														class="text-accent-ink underline underline-offset-2 hover:text-ink"
-														onclick={() => investigation.clearFacets()}
-													>
-														clear
-													</button>
-												</span>
-											{/if}
-											<span class="flex-1"></span>
-										</div>
-									{/if}
-									<!-- min-h-0/flex-1 + shrink-0 children: the scroller must own
-										scrolling itself; h-full self-sized children clip the top.
-										p-1: shadow-card's 1px ring is painted OUTSIDE the border
-										box — flush children lose that ring to the overflow clip
-										(owner report, issue #36). -->
-									<div
-										class="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto p-1 pb-3"
-										bind:this={resultsScroller}
-									>
-										<div class="w-full max-w-[760px] shrink-0">
-											<TaskTrace />
-										</div>
-										{#if emptyDone}
-											<!-- spec §4: relays confirmed searchable, zero matched -->
-											<ResultsEmpty
-												filtered={Object.keys(investigation.selections).length > 0}
-												relayCount={investigation.runRelays.length}
-												onClearFilters={() => investigation.clearFacets()}
-												onAskDifferently={() => shell.home()}
-											/>
-										{:else}
-											<!-- Card-gap (issue #118): while the settle traversal runs,
-												the pre-context cohort can be EMPTY (an orphan-metadata-only
-												text search assembles zero product cards) — keep the
-												skeleton rail up instead of unmounting into a blank
-												column. emptyDone gates the honest zero-verdict on
-												running === false, so an empty list here can only be
-												mid-settle. -->
-											{#each railLive ? viewCards : investigation.skeletons as card (card.id)}
-												<!-- data-card-id is the lazy-fill DOM contract
-													(issue #106): the observer sweeps and arms by it.
-													Cards only — skeletons carry no fill (no admitted
-													subject yet, ruling 6). -->
-												<div
-													class="w-full max-w-[760px] shrink-0"
-													data-card-id={railLive ? card.id : undefined}
-													use:observeCard
-												>
-													<!-- skeletons stay inert (ruling 6 — no admitted
-														subject behind them); settled cards open the
-														dossier, the selected one wears the ring. -->
-													<ResultCard
-														{card}
-														pending={investigation.pending.has(card.id)}
-														failed={investigation.failed.has(card.id)}
-														draft={railLive ? (investigation.drafts.get(card.id) ?? null) : null}
-														selected={card.id === investigation.selectedEventId}
-														onOpen={railLive ? () => openDossier(card.id) : undefined}
-													/>
-												</div>
-											{/each}
-										{/if}
-									</div>
-									{#if footerNotes.length > 0}
-										<!-- footer ledger (issue #38 S1): degraded legs +
-											invalid-skipped count — breadcrumb bar owns
-											fetched/truncation (BIBLE J2). Absent notes =
-											absent strip (no empty hairline reserve). -->
-										<div class="shrink-0 border-t border-line px-4 py-1.5">
-											<span class="font-mono text-[10.5px] text-ink-3">{footerNotes.join(' · ')}</span>
-										</div>
-									{/if}
-								</div>
-							</div>
-						{/if}
-					{/key}
-				{:else}
-					<!-- Session surface (#29b): the subject-graph canvas + drawer, gated on
-						session identity — a foreign live run's evidence never paints
-						under this session's title. -->
-					{#if sessionOwnsRun}
-						<div class="flex min-h-0 w-full flex-1 flex-col">
-							<!-- issue #31 (spec §4): the cold open lands on the SESSION
-								surface, so the failed-hint degradation lives here too —
-								same dismissible lane as the results surface. -->
-							{@render note(shareNote !== '', 'share-hints', shareNote)}
-							{#key investigation.graphSubjectId}
-								<GraphCanvas
-									events={investigation.result?.admitted ?? []}
-									cards={investigation.cards}
-									root={investigation.graphSubjectId}
-									selectedEventId={investigation.selectedEventId}
-									onSelect={selectNode}
-									onDeselect={clearSelection}
-								/>
-							{/key}
+					</div>
+					{#if relayDead}
+						<!-- Receipts folded per relay (issue #132): ResultsError keys its
+							list by url, so a per-leg list gave one dead host two entries
+							with the same key (Svelte throws each_key_duplicate) and
+							printed it twice. No cache row: a cache slice is always
+							status 'ok', which is exactly what keeps relayDead false —
+							this screen cannot mount on a cache-served run. -->
+						<div class="flex min-h-0 w-full flex-1 flex-col items-center justify-center p-4">
+							<ResultsError
+								message={investigation.error ?? 'no relay answered the fetch'}
+								relays={relayReceipts}
+								onRetry={() => void investigation.start(investigation.lastQuestion)}
+								onEditRelays={() => shell.toggleSettings()}
+							/>
 						</div>
 					{:else}
-						{#if investigation.restoreMissId === shell.session?.id}
-							<!-- #83 relic: the session's run record is missing or its whole
-								frontier was evicted — only a re-run brings the data back. -->
-							<div class="m-auto flex max-w-64 flex-col items-center gap-3 text-center">
-								<p class="text-[12.5px] leading-relaxed text-ink-3">
-									This session's evidence is gone from local storage. Re-run the search to bring it back.
-								</p>
-								{#if !shell.session?.title.startsWith('Shared ')}
-									<button
-										class="rounded-control border border-line px-3 py-1.5 text-[12.5px] text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
-										onclick={() => void investigation.start(shell.session?.title ?? '')}
-									>
-										Re-run this search
-									</button>
-								{:else}
-									<!-- Cold-open share sessions (shareTitle, 'Shared ' prefix) carry
-										no question — the title is a noun phrase; re-running it would
-										search literal nonsense. -->
-									<p class="text-[12.5px] leading-relaxed text-ink-3">
-										Reopen it via the shared link instead.
-									</p>
+						<div class="flex min-h-0 w-full flex-1">
+							{#if railGroups.length > 0}
+								<!-- facet rail: deterministic counts (spec §3, never AI);
+									always on (owner decision, PR #42 — collapse pill removed) -->
+								<div class="flex w-[216px] shrink-0 flex-col overflow-hidden border-r border-line">
+									<FacetRail
+										groups={railGroups}
+										selections={investigation.selections}
+										onToggle={(p, v) => investigation.toggleFacet(p, v)}
+										onClearGroup={(p) => investigation.clearFacet(p)}
+										onClearAll={() => investigation.clearFacets()}
+									/>
+								</div>
+							{/if}
+							<!-- the scroller must span the full area so its scrollbar sits
+								at the outer edge (owner report 2026-09-11: scroll track
+								overlaid the card column's border); banner/cohort lanes
+								center themselves on the 760 rail individually -->
+							<div class="flex min-h-0 min-w-0 flex-1 flex-col">
+								<!-- §4 honesty lane: every banner one dismissal-keyed note; the
+									no-key hint stays textual (Ctrl+, works) — these are notices,
+									not buttons. Per-class roll-up (review finding): per-leg
+									verbatim facts live in trace ticks; this lane states counts. -->
+								{@render note(capabilityNote !== '', 'capability', capabilityNote)}
+								{@render note(noKey, 'no-key', 'no key set — cards stay raw · set one in Settings (Ctrl+,)')}
+								{@render note(aiNote !== '', 'ai-note', aiNote)}
+								{@render note(degradedNote !== '', 'degraded', degradedNote)}
+								{@render note(traversalNote !== '', 'traversal', traversalNote)}
+								{@render note(shareNote !== '', 'share-hints', shareNote)}
+								{#if investigation.result !== null}
+									<!-- header: cohort only (spec §3); centers on the same 760
+										rail as cards (scroller spans wider so its scrollbar
+										lives at the area edge); breadcrumb owns fetched/truncation -->
+									<div class="mx-auto flex w-full max-w-[760px] items-baseline gap-3 px-1 pb-1 pt-2">
+										<span class="font-mono text-[12.5px] font-semibold text-ink">{cohort}</span>
+										{#if selectionHidden}
+											<!-- the filtering surface owns its half of the
+												announcement (ruling 11): a filtered-out
+												selection is stated where it happened. -->
+											<span class="font-mono text-[11px] text-ink-2">
+												selected event hidden by filters ·
+												<button
+													type="button"
+													class="text-accent-ink underline underline-offset-2 hover:text-ink"
+													onclick={() => investigation.clearFacets()}
+												>
+													clear
+												</button>
+											</span>
+										{/if}
+										<span class="flex-1"></span>
+									</div>
+								{/if}
+								<!-- min-h-0/flex-1 + shrink-0 children: the scroller must own
+									scrolling itself; h-full self-sized children clip the top.
+									p-1: shadow-card's 1px ring is painted OUTSIDE the border
+									box — flush children lose that ring to the overflow clip
+									(owner report, issue #36). -->
+								<div
+									class="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto p-1 pb-3"
+									bind:this={resultsScroller}
+								>
+									<div class="w-full max-w-[760px] shrink-0">
+										<TaskTrace />
+									</div>
+									{#if emptyDone}
+										<!-- spec §4: relays confirmed searchable, zero matched -->
+										<ResultsEmpty
+											filtered={Object.keys(investigation.selections).length > 0}
+											relayCount={investigation.runRelays.length}
+											onClearFilters={() => investigation.clearFacets()}
+											onAskDifferently={() => shell.home()}
+										/>
+									{:else}
+										<!-- Card-gap (issue #118): while the settle traversal runs,
+											the pre-context cohort can be EMPTY (an orphan-metadata-only
+											text search assembles zero product cards) — keep the
+											skeleton rail up instead of unmounting into a blank
+											column. emptyDone gates the honest zero-verdict on
+											running === false, so an empty list here can only be
+											mid-settle. -->
+										{#each railLive ? viewCards : investigation.skeletons as card (card.id)}
+											<!-- data-card-id is the lazy-fill DOM contract
+												(issue #106): the observer sweeps and arms by it.
+												Cards only — skeletons carry no fill (no admitted
+												subject yet, ruling 6). -->
+											<div
+												class="w-full max-w-[760px] shrink-0"
+												data-card-id={railLive ? card.id : undefined}
+												use:observeCard
+											>
+												<!-- skeletons stay inert (ruling 6 — no admitted
+													subject behind them); settled cards open the
+													dossier, the selected one wears the ring. -->
+												<ResultCard
+													{card}
+													pending={investigation.pending.has(card.id)}
+													failed={investigation.failed.has(card.id)}
+													draft={railLive ? (investigation.drafts.get(card.id) ?? null) : null}
+													selected={card.id === investigation.selectedEventId}
+													onOpen={railLive ? () => openDossier(card.id) : undefined}
+												/>
+											</div>
+										{/each}
+									{/if}
+								</div>
+								{#if footerNotes.length > 0}
+									<!-- footer ledger (issue #38 S1): degraded legs +
+										invalid-skipped count — breadcrumb bar owns
+										fetched/truncation (BIBLE J2). Absent notes =
+										absent strip (no empty hairline reserve). -->
+									<div class="shrink-0 border-t border-line px-4 py-1.5">
+										<span class="font-mono text-[10.5px] text-ink-3">{footerNotes.join(' · ')}</span>
+									</div>
 								{/if}
 							</div>
-						{:else}
-							<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
-								This session's evidence isn't in memory — older sessions aren't replayable
-								yet. Run a new search to bring it back.
+						</div>
+					{/if}
+				{/key}
+			{:else}
+				<!-- Session surface (#29b): the subject-graph canvas + drawer, gated on
+					session identity — a foreign live run's evidence never paints
+					under this session's title. -->
+				{#if sessionOwnsRun}
+					<div class="flex min-h-0 w-full flex-1 flex-col">
+						<!-- issue #31 (spec §4): the cold open lands on the SESSION
+							surface, so the failed-hint degradation lives here too —
+							same dismissible lane as the results surface. -->
+						{@render note(shareNote !== '', 'share-hints', shareNote)}
+						{#key investigation.graphSubjectId}
+							<GraphCanvas
+								events={investigation.result?.admitted ?? []}
+								cards={investigation.cards}
+								root={investigation.graphSubjectId}
+								selectedEventId={investigation.selectedEventId}
+								onSelect={selectNode}
+								onDeselect={clearSelection}
+							/>
+						{/key}
+					</div>
+				{:else}
+					{#if investigation.restoreMissId === shell.session?.id}
+						<!-- #83 relic: the session's run record is missing or its whole
+							frontier was evicted — only a re-run brings the data back. -->
+						<div class="m-auto flex max-w-64 flex-col items-center gap-3 text-center">
+							<p class="text-[12.5px] leading-relaxed text-ink-3">
+								This session's evidence is gone from local storage. Re-run the search to bring it back.
 							</p>
-						{/if}
+							{#if !shell.session?.title.startsWith('Shared ')}
+								<button
+									class="rounded-control border border-line px-3 py-1.5 text-[12.5px] text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+									onclick={() => void investigation.start(shell.session?.title ?? '')}
+								>
+									Re-run this search
+								</button>
+							{:else}
+								<!-- Cold-open share sessions (shareTitle, 'Shared ' prefix) carry
+									no question — the title is a noun phrase; re-running it would
+									search literal nonsense. -->
+								<p class="text-[12.5px] leading-relaxed text-ink-3">
+									Reopen it via the shared link instead.
+								</p>
+							{/if}
+						</div>
+					{:else}
+						<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
+							This session's evidence isn't in memory — older sessions aren't replayable
+							yet. Run a new search to bring it back.
+						</p>
 					{/if}
 				{/if}
-			</div>
-
-			{#if shell.view === 'session' && sessionOwnsRun}
-				<DetailDrawer
-					open={shell.drawerOpen}
-					height={Math.min(shell.drawerHeight, drawerMax)}
-					maxHeight={drawerMax}
-					{dossier}
-					hiddenByFilter={selectionHidden}
-					onSelect={openDossier}
-					onClearFilters={() => investigation.clearFacets()}
-					onToggle={() => shell.toggleDrawer()}
-					onResize={(next) => (shell.drawerHeight = next)}
-				/>
 			{/if}
-		</main>
+		</div>
 
-		{#if shell.view === 'session'}
-			<ChatColumn
-				collapsed={!shell.chatOpen}
-				onToggle={() => shell.toggleChat()}
-				unread={chat.unseen}
-				grounded={chatGrounded}
-				onSend={askChat}
-				onOpenDossier={openDossier}
+		{#if shell.view === 'session' && sessionOwnsRun}
+			<DetailDrawer
+				open={shell.drawerOpen}
+				height={Math.min(shell.drawerHeight, drawerMax)}
+				maxHeight={drawerMax}
+				{dossier}
+				hiddenByFilter={selectionHidden}
+				onSelect={openDossier}
+				onClearFilters={() => investigation.clearFacets()}
+				onToggle={() => shell.toggleDrawer()}
+				onResize={(next) => (shell.drawerHeight = next)}
 			/>
 		{/if}
-	</div>
+	</main>
 
-	{#if shell.settingsOpen}
-		<SettingsDialog
-			onClose={() => {
-				shell.toggleSettings();
-				// #84: key edits COMMIT at dialog close (the field writes per
-				// keystroke — firing there would spend a doomed fill on a partial
-				// key). Guards inside keyArrived own every non-fill case.
-				void investigation.keyArrived();
-			}}
+	{#if shell.view === 'session'}
+		<ChatColumn
+			collapsed={!shell.chatOpen}
+			onToggle={() => shell.toggleChat()}
+			unread={chat.unseen}
+			grounded={chatGrounded}
+			onSend={askChat}
+			onOpenDossier={openDossier}
 		/>
 	{/if}
-</Tooltip.Provider>
+</div>
+
+{#if shell.settingsOpen}
+	<SettingsDialog
+		onClose={() => {
+			shell.toggleSettings();
+			// #84: key edits COMMIT at dialog close (the field writes per
+			// keystroke — firing there would spend a doomed fill on a partial
+			// key). Guards inside keyArrived own every non-fill case.
+			void investigation.keyArrived();
+		}}
+	/>
+{/if}
 
 {#snippet note(show: boolean, key: string, message: string)}
 	{#if show && !dismissed.has(key)}

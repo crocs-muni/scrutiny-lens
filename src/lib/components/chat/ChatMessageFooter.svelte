@@ -14,6 +14,7 @@
 	import { IconCheck, IconChevronDown, IconChevronRight, IconCopy } from '@tabler/icons-svelte';
 	import { chat } from '$lib/chat.svelte';
 	import PublisherChip from '../ui/PublisherChip.svelte';
+	import KeyHint from '../shell/KeyHint.svelte';
 	import { spotlight } from './spotlight.svelte';
 	import type { PersistedChatCitation } from '$lib/db';
 
@@ -49,9 +50,9 @@
 <div class="mt-2">
 	<!-- action row -->
 	<div class="flex items-center gap-0.5">
-		<button
-			type="button"
-			aria-label="Copy answer"
+		<KeyHint
+			label="Copy answer"
+			side="top"
 			class="flex size-6 items-center justify-center rounded-chip text-ink-3 transition-colors duration-100 hover:bg-hover-2 hover:text-ink-2"
 			onclick={copyAnswer}
 		>
@@ -60,7 +61,7 @@
 			{:else}
 				<IconCopy size={14} stroke-width={1.8} />
 			{/if}
-		</button>
+		</KeyHint>
 		{#if unique.length > 0}
 			<button
 				type="button"
@@ -108,6 +109,8 @@
 					>
 						<span class="row-n">{citation.n}</span>
 						{#if pubkey !== undefined}
+							<!-- Hover-only: the chip sits inside this row's <button>, so a
+								tab stop would nest. The dossier header shows the full npub. -->
 							<PublisherChip {pubkey} />
 						{:else}
 							<!-- grounding event left memory: mono machine id, the honest cell -->

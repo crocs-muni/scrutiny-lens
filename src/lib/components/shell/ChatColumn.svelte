@@ -23,6 +23,7 @@
 	import LoadingState from '../chat/LoadingState.svelte';
 	import ChatComposer from '../chat/ChatComposer.svelte';
 	import { chat } from '$lib/chat.svelte';
+	import { chatAnnouncement } from './chat-live';
 	import { settings } from '$lib/settings.svelte';
 	import { parseChatStream } from '$lib/chat/streamParse';
 	import ChatRichText, { type RichPart } from '../chat/ChatRichText.svelte';
@@ -88,16 +89,26 @@
 	 * idiom as +page.svelte's fillLive (issue #108). */
 	let streamLive = $state('');
 	let wasStreaming = false;
+	/** Transcript size when the current turn started — the settle line only
+	 * speaks when the turn actually landed (#124): a session switch aborts the
+	 * turn and empties the transcript, and the old code announced the new
+	 * session's unhydrated count instead of staying quiet (ADR 0003). */
+	let messagesAtStart = 0;
 	$effect(() => {
 		const streaming = chat.live !== null;
 		if (streaming === wasStreaming) return;
 		wasStreaming = streaming;
 		if (streaming) {
-			streamLive = 'Answer streaming';
+			messagesAtStart = chat.messages.length;
+			streamLive = chatAnnouncement({ kind: 'started' });
 		} else if (chat.error !== null) {
-			streamLive = 'Answer failed';
+			streamLive = chatAnnouncement({ kind: 'failed' });
 		} else {
-			streamLive = `${chat.messages.length} messages`;
+			streamLive = chatAnnouncement({
+				kind: 'settled',
+				messagesAtStart,
+				messagesNow: chat.messages.length
+			});
 		}
 	});
 </script>
