@@ -92,9 +92,8 @@ export function visibleCards(
 			.filter((event) => tTags(event).includes('scrutiny-product'))
 			.map((event) => event.id)
 	);
-	// issue #160: the rail's keyed each keys on card.id, so the derivation
-	// can never hand it two cards for one event — one card per id, first
-	// arrival wins (the session invariant is "admitted is unique by id";
-	// this fold keeps the surface alive even if a writer breaks it).
+	// Issue #160: the rail keys its each on card.id and a duplicate is a page
+	// crash, so the derivation hands it one card per id even when a writer
+	// admitted the same event twice.
 	return foldById(cards.filter((card) => visibleProductIds.has(card.id)));
 }

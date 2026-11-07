@@ -314,10 +314,8 @@ class Investigation {
         this.searches = event.searches;
         break;
       case "skeleton":
-        // One entry per event id (issue #160): the rail keys its each on
-        // `id`, so a repeated admission must paint once — a second keyed
-        // block for the same id is a page crash (each_key_duplicate), not
-        // a warning.
+        // Issue #160: the rail keys on id, so a repeated admission must not
+        // land twice.
         this.skeletons = foldById([...this.skeletons, ...event.cards]);
         break;
       case "notice":
@@ -949,8 +947,7 @@ class Investigation {
     // the cache reconstruction in the pipeline's OWN vocabulary — the
     // rule-5 skeletons a live settle painted, and one cache slice exactly
     // as runSearch emits it. Eviction is NOT rejection, so rejected: 0.
-    // Folded by id (issue #160): a pinned frontier can carry the same id
-    // twice, and the rail must paint it once.
+    // Folded by id (issue #160): a pinned frontier can carry the same id twice.
     this.skeletons = foldById(events.map((e) => skeletonOf(e)));
     this.slices = [
       {
