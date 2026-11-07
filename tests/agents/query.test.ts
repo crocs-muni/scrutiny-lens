@@ -230,43 +230,95 @@ describe("translateQuestion — tolerant KV parsing of endpoint answers", () => 
   });
 });
 
-describe("translateQuestion — deterministic fallbacks (spec §2 rule 5 spirit)", () => {
-  it("schema failure retries once, then degrades to one free-text search", async () => {
-    const { call, calls } = fakeLLM("not json at all", "also not json");
-    const res = await translateQuestion({
-      question: "ROCA chips",
-      provider: PROVIDER,
-      callLLM: call,
-    });
-    expect(calls).toHaveLength(2);
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    expect(res.result.searches).toEqual([
-      { kind: "text", value: "ROCA chips", source: "fallback" },
-    ]);
-  });
+describe("translateQuestion — zero-AI fallback ladder (issue #164, spec §2 rule 5)", () => {
+  /** Reference questions from the issue — the live corpus must return
+   * non-zero verified results for each with the AI unavailable. */
+  const ECDSA_Q = "which card is fastest for ECDSA?";
+  const ROCA_Q = "which cards are affected by the ROCA vulnerability?";
+  const DOSSIER_Q = "show me the card dossier for the Infineon SLE78";
 
-  it("AI unreachable → one free-text search, not an error", async () => {
+  it("AI unreachable → identifier tag legs + short rare-term text probes, never the raw question", async () => {
     const res = await translateQuestion({
-      question: "ROCA chips",
+      question: ROCA_Q,
       provider: PROVIDER,
       callLLM: throwing("ECONNREFUSED"),
     });
-    expect(res.ok && res.result.searches).toEqual([
-      { kind: "text", value: "ROCA chips", source: "fallback" },
-    ]);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.searches.length).toBeGreaterThan(0);
+    expect(res.result.searches.some((s) => s.value === ROCA_Q)).toBe(false);
   });
 
-  it("no provider configured → question becomes one free-text search, no call", async () => {
+  it("no provider configured → deterministic ladder with zero model calls", async () => {
     const { call, calls } = fakeLLM("[]");
     const res = await translateQuestion({
-      question: "ROCA chips",
+      question: ECDSA_Q,
       provider: undefined,
       callLLM: call,
     });
     expect(calls).toHaveLength(0);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const searches = res.result.searches;
+    expect(searches.length).toBeGreaterThan(0);
+    // Tag legs where identifiers exist (here: none), then short probes.
+    expect(searches.some((s) => s.value === ECDSA_Q)).toBe(false);
+    // Ladder cap: at most 3 fallback text probes, never the raw question.
+    expect(searches.filter((s) => s.source === "fallback")).toHaveLength(3);
+    for (const s of searches) {
+      if (s.source === "fallback") {
+        expect(s.kind).toBe("text");
+        // short probes: stopword-stripped, longest tokens first
+        expect(s.value.split(/\s+/).length).toBeLessThanOrEqual(3);
+        expect(s.value.length).toBeLessThanOrEqual(120);
+      }
+    }
+  });
+
+  it("mixed identifier + failing AI → the identifier keeps its direct tag route alongside the fallback probes", async () => {
+    const res = await translateQuestion({
+      question: "CVE-2017-15361 in Infineon chips",
+      provider: PROVIDER,
+      callLLM: throwing("ECONNREFUSED"),
+    });
     expect(res.ok && res.result.searches).toEqual([
-      { kind: "text", value: "ROCA chips", source: "fallback" },
+      { kind: "tag", value: "cve:CVE-2017-15361", source: "identifier" },
+      { kind: "text", value: "infineon", source: "fallback" },
+      { kind: "text", value: "infineon chips", source: "fallback" },
+    ]);
+  });
+
+  it("rare pairs first, widening to single rare terms; generic words never AND into a rare probe", async () => {
+    const res = await translateQuestion({
+      question: DOSSIER_Q,
+      provider: undefined,
+      callLLM: throwing("unused"),
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const probes = res.result.searches.filter((s) => s.source === "fallback");
+    // "dossier"/"card" are generic (excluded from pairs), so the ladder is
+    // the rare pair, then the rarest single, then the widening prefixes of
+    // the full ranking — measured live (issue #164): infineon sle78 → 51
+    // batch-valid on relay.scrutiny.cloud.
+    expect(probes.map((p) => p.value)).toEqual([
+      "infineon sle78",
+      "infineon",
+      "infineon dossier",
+    ]);
+  });
+
+  it("a question of only generic words still gets three widening probes (never nothing)", async () => {
+    const res = await translateQuestion({
+      question: "which cards are affected?",
+      provider: undefined,
+      callLLM: throwing("unused"),
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.searches.map((s) => s.value)).toEqual([
+      "affected",
+      "affected cards",
     ]);
   });
 

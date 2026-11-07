@@ -247,8 +247,11 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 		const reason = d.message.length > 140 ? d.message.slice(0, 139) + '…' : d.message;
 		const notice: PipelineNotice = {
 			kind: 'capability',
+			// #164: the fallback is now the deterministic probe ladder —
+			// short rare-term searches derived locally, never the raw
+			// question (whole-question probes measured zero on the corpus).
 			message: hasFallbackSearch
-				? `AI translate degraded (${d.kind}: ${reason}) — falling back to a plain-text search of your words`
+				? `AI translate degraded (${d.kind}: ${reason}) — falling back to plain-text searches of your question's terms`
 				: `AI translate degraded (${d.kind}: ${reason}) — identifier-only searches`
 		};
 		notices.push(notice);

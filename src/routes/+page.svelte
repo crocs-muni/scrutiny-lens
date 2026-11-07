@@ -562,9 +562,14 @@
 							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="shrink-0 text-ink-2"><path d="M9 6l6 6-6 6"/></svg>
 							<span class="min-w-0 truncate leading-none text-[13px] font-semibold text-ink">{shell.session?.title ?? ''}</span>
 							<span class="flex-1"></span>
-							<span class="shrink-0 font-mono leading-none text-[11px] text-ink-2">
-								fetched {fetched}{truncated ? ' · relays may hold more' : ''}
-							</span>
+						<span class="shrink-0 font-mono leading-none text-[11px] text-ink-2">
+							<!-- #164: the counter names the run's own searches —
+								"N found via K searches" — so a fallback-probe run
+								reads as such (mono, machine-computed per spec §2
+								rule 6). K is 0 only on a share cold-open, where the
+								bar never mounts (no results surface). -->
+							fetched {fetched} via {investigation.searches.length} {investigation.searches.length === 1 ? 'search' : 'searches'}{truncated ? ' · relays may hold more' : ''}
+						</span>
 						</div>
 					</div>
 					{#if relayDead}

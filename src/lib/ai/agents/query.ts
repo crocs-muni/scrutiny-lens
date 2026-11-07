@@ -1,15 +1,15 @@
 /**
  * Query translation (issue #28, spec §1/§3): identifiers route DIRECTLY to
  * tag searches, never through AI; prose goes through one zod-gated AI call
- * (≤3 searches, prefixes open per IR-4); no key / AI-down → one free-text
- * search, never nothing.
+ * (≤3 searches, prefixes open per IR-4); no key / AI-down → the deterministic
+ * ladder of issue #164 — identifier tag legs plus ≤3 short rare-term text
+ * probes, never the raw question.
  */
 
 import { z } from "zod";
 import type { AIResult, CallLLM } from "$lib/ai/output";
 import { generateRecords } from "$lib/ai/records";
 import type { ProviderOverrideInput } from "$lib/ai/provider";
-
 export type SearchRequest = {
   kind: "tag" | "text";
   value: string;
@@ -189,6 +189,86 @@ async function translateViaAi(
 }
 
 /* ------------------------------------------------------------------ *
+ * Deterministic fallback ladder (issue #164, spec §2 rule 5 spirit)
+ * ------------------------------------------------------------------ */
+
+/** Words the corpus's record texts do not carry — question grammar, not
+ * content. Stripping them leaves the tokens a fabric event can actually
+ * match: measured live (issue #164), whole-question probes return zero
+ * because the relay's full-text engine ANDs every token and the wrapper
+ * language ("which card is fastest for…") is in no event's word index.
+ * The interrogatives are here, not in GENERIC: they match nothing in the
+ * corpus ("fastest which" measured 1 hit — the AND only ever loses), so
+ * they poison probes exactly like stopwords. A tiny fixed membership
+ * table (Record, per the static-literal convention), not a model call —
+ * deterministic by construction. */
+const STOPWORD: Record<string, true> = {
+  a: true, an: true, and: true, are: true, as: true, at: true,
+  be: true, but: true, by: true, can: true, do: true, does: true,
+  for: true, from: true, has: true, have: true, how: true, i: true,
+  in: true, is: true, it: true, its: true, me: true, my: true,
+  of: true, on: true, or: true, show: true, that: true, the: true,
+  their: true, them: true, there: true, these: true, this: true,
+  to: true, was: true, were: true, what: true, which: true, who: true,
+  why: true, with: true, you: true, your: true,
+};
+
+/** Domain wrapper words appearing in thousands of record texts ("card",
+ * "cards", "dossier", "affected"…) — kept out of MULTI-token probes where
+ * they AND away the rare term's hits (measured live 2026-11-07 on
+ * relay.scrutiny.cloud: "roca affected cards" 2 batch-valid vs "roca" 9),
+ * but kept as SOLO probes — a generic term alone still hits ("card" 419
+ * batch-valid) where an empty ladder would return nothing at all. */
+const GENERIC: Record<string, true> = {
+  affected: true, card: true, cards: true, certificate: true,
+  certified: true, chip: true, chips: true, details: true,
+  dossier: true, fastest: true, list: true, module: true,
+  platform: true, product: true, smartcard: true, vulnerability: true,
+};
+
+/** Short rare-term text probes, longest tokens first (issue #164): the
+ * longest surviving token is the rarest discriminator — "ecdsa" /
+ * "sle78" / "infineon" are corpus vocabulary where "card" is noise. The
+ * ladder narrows first (rarest pair), widening to the single rarest
+ * term, so one matching leg is enough for non-zero results; a generic
+ * word only carries a probe when nothing rare survived. */
+export function rareTermProbes(
+  prose: string,
+  max = 3,
+): { kind: "text"; value: string; source: "fallback" }[] {
+  const tokens = [
+    ...new Set(
+      (prose.toLowerCase().match(/[a-z0-9][a-z0-9-]*/g) ?? []).filter(
+        (t) => STOPWORD[t] !== true,
+      ),
+    ),
+  ];
+  // Longest first; ties keep first-seen order so the ladder is deterministic.
+  const ranked = [...tokens].sort((a, b) => b.length - a.length);
+  const rare = ranked.filter((t) => GENERIC[t] !== true);
+  // Ladder: rare pair → rarest single → then widening prefixes of the full
+  // ranking (generic words may appear only here, alone or in pairs). Ties
+  // keep the sort order, so the shape is deterministic per question.
+  const widen: string[][] = [];
+  for (let n = 1; n <= ranked.length; n += 1) widen.push(ranked.slice(0, n));
+  const probeSets = [
+    ...(rare.length >= 2
+      ? [rare.slice(0, 2)]
+      : rare.length === 1
+        ? [rare]
+        : []),
+    ...widen,
+  ];
+  const probes: { kind: "text"; value: string; source: "fallback" }[] = [];
+  for (const set of probeSets) {
+    const value = clip(set.join(" "), 120);
+    if (value === "" || probes.some((p) => p.value === value)) continue;
+    probes.push({ kind: "text", value, source: "fallback" });
+    if (probes.length >= max) return probes;
+  }
+  return probes;
+}
+/* ------------------------------------------------------------------ *
  * translateQuestion (identifiers → AI → fallback)
  * ------------------------------------------------------------------ */
 
@@ -256,13 +336,16 @@ export async function translateQuestion(
     ...aiSearches.slice(0, 3),
   ];
 
-  if (fallbackUsed && capped.length === 0) {
+  if (fallbackUsed) {
+    // Issue #164: the zero-AI ladder — identifiers keep their direct tag
+    // legs, the prose degrades to short rare-term probes derived locally
+    // (never the question verbatim: whole-question probes AND tokens no
+    // fabric event carries, so they return zero real hits on the live
+    // corpus). No model call in this path — deterministic by construction.
     return {
       ok: true,
       result: {
-        searches: [
-          { kind: "text", value: clip(question, 300), source: "fallback" },
-        ],
+        searches: [...capped, ...rareTermProbes(proseRemaining)],
         ...(degradation ? { degradation } : {}),
       },
     };
