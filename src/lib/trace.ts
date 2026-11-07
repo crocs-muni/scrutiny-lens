@@ -83,20 +83,21 @@ function searchCounter(searches: SearchRequest[]): string {
 	return searches.map((s) => s.value).join(' · ');
 }
 
-/** Interpret-row literal layer (issue #164): the probes that ran, one
- * receipt each — the record behind the footer's "N found via K searches".
- * Deliberately count-free: cache-assisted runs deliver one merged cache
- * slice for ALL searches (route 'cache' — unattributable per probe), so
- * a per-probe tally could read "0 records" over hits that did arrive;
- * the run-wide N stays in the breadcrumb's fetched counter, where it is
- * honest. */
+/** Interpret-row literal layer (issue #164): one tick per search that ran —
+ * the record behind the breadcrumb's "N found via K searches". Deliberately
+ * count-free: a cache-assisted run delivers one merged cache slice for ALL
+ * searches (route 'cache' — unattributable per probe), so a per-probe tally
+ * could read "0 records" over hits that did arrive (spec §2). */
 function searchTicks(searches: SearchRequest[]): TraceTick[] {
-	return searches.map((search) => ({
-		text: `${search.kind === 'tag' ? '#' : ''}${search.value}${search.source === 'fallback' ? ' (fallback probe)' : ''}`,
-		// Fallback probes are honesty cells: the AI leg degraded, these ran
-		// without it (spec §2 rule 5 spirit — amber like scan fallbacks).
-		warn: search.source === 'fallback'
-	}));
+	return searches.map(({ kind, value, source }) => {
+		const fallback = source === 'fallback';
+		return {
+			text: `${kind === 'tag' ? '#' : ''}${value}${fallback ? ' (fallback probe)' : ''}`,
+			// Fallback probes are honesty cells: the AI leg degraded, these
+			// ran without it — amber like scan fallbacks (spec §2 rule 5 spirit).
+			warn: fallback
+		};
+	});
 }
 
 export function derivePhaseRows(input: TraceInput): PhaseRow[] {
@@ -228,9 +229,8 @@ export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 							? 'running'
 							: 'pending',
 			counter: searchCounter(searches),
-			// Probe receipts (issue #164): which searches ran and what each
-			// returned — the record behind "N found via K searches". Empty
-			// while translating (nothing ran yet), populated from fetch on.
+			// Probe receipts (issue #164): the searches that ran, one tick
+			// each — empty while translating, populated from fetch on.
 			ticks: phase === 'translate' ? [] : searchTicks(searches),
 			progress: null
 		},

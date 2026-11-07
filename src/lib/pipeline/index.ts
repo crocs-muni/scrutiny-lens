@@ -233,10 +233,9 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	});
 	const searches = plan.ok ? plan.result.searches : [];
 	// §4: when the AI path degraded the surface names the failure class, not
-	// a bare "couldn't structure". The wording depends on what actually
-	// happened: a prose fallback search was issued, or the run carries on
-	// identifier-only because no prose remained (mixed branch — 'your words'
-	// would be a lie there).
+	// a bare "couldn't structure". The wording depends on what actually ran:
+	// the deterministic text probes (#164), or nothing but the identifier
+	// tag legs.
 	if (plan.ok && plan.result.degradation !== undefined) {
 		const d = plan.result.degradation;
 		const hasFallbackSearch = searches.some((s) => s.source === 'fallback');
@@ -247,9 +246,6 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 		const reason = d.message.length > 140 ? d.message.slice(0, 139) + '…' : d.message;
 		const notice: PipelineNotice = {
 			kind: 'capability',
-			// #164: the fallback is now the deterministic probe ladder —
-			// short rare-term searches derived locally, never the raw
-			// question (whole-question probes measured zero on the corpus).
 			message: hasFallbackSearch
 				? `AI translate degraded (${d.kind}: ${reason}) — falling back to plain-text searches of your question's terms`
 				: `AI translate degraded (${d.kind}: ${reason}) — identifier-only searches`
