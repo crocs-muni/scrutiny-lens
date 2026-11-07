@@ -167,6 +167,19 @@ describe('restore — rebuilds the settled surface (issue #83)', () => {
 		expect(card?.title).toBe('cve:CVE-2017-15361');
 	});
 
+	// Issue #160: a pinned frontier that carries one id twice (the duplicate
+	// admitted event the 548-card run hit) must paint one skeleton — the
+	// rail's keyed each keys on id and Svelte throws each_key_duplicate on
+	// the second block, which is a page-level crash, not a warning.
+	it('a frontier that pinned the same id twice restores one skeleton (#160)', async () => {
+		await cacheEvent(product('a1'));
+		await pinRun('dup', ['a1', 'a1']);
+
+		expect(await investigation.restore('dup')).toBe(true);
+
+		expect(investigation.skeletons.map((s) => s.id)).toEqual([hex('a1')]);
+	});
+
 	it('counts evicted ids instead of hiding them (partially evicted frontier)', async () => {
 		await cacheEvent(product('a1'));
 		await pinRun('s1', ['a1', 'e1']);

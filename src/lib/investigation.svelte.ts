@@ -60,6 +60,7 @@ import {
   cachedCardFills,
   computeFacets,
   fillCards,
+  foldById,
   type FacetGroup,
   type ProductCard,
 } from "$lib/pipeline/cards";
@@ -313,7 +314,9 @@ class Investigation {
         this.searches = event.searches;
         break;
       case "skeleton":
-        this.skeletons.push(...event.cards);
+        // Issue #160: the rail keys on id, so a repeated admission must not
+        // land twice.
+        this.skeletons = foldById([...this.skeletons, ...event.cards]);
         break;
       case "notice":
         this.notices.push(event.notice);
@@ -944,7 +947,8 @@ class Investigation {
     // the cache reconstruction in the pipeline's OWN vocabulary — the
     // rule-5 skeletons a live settle painted, and one cache slice exactly
     // as runSearch emits it. Eviction is NOT rejection, so rejected: 0.
-    this.skeletons = events.map((e) => skeletonOf(e));
+    // Folded by id (issue #160): a pinned frontier can carry the same id twice.
+    this.skeletons = foldById(events.map((e) => skeletonOf(e)));
     this.slices = [
       {
         url: "local-cache",
