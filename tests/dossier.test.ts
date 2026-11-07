@@ -13,10 +13,11 @@ import {
 	buildPatch,
 	buildProduct,
 	fencePatchPayload,
+	resolve,
 	type UnsignedEvent
 } from '@scrutiny-fabric/core';
-import { deriveDossier, incomingFrom } from '$lib/dossier';
-import type { NostrEvent } from '$lib/fabric';
+import { deriveDossier, historyRows, incomingFrom } from '$lib/dossier';
+import type { CoreNostrEvent, NostrEvent } from '$lib/fabric';
 import type { ProductCard } from '$lib/pipeline/cards';
 
 const AUTHOR = 'aa'.repeat(32);
@@ -140,6 +141,37 @@ describe('resolve() is the sole patch source', () => {
 		const branches = d.history.filter((r) => r.state === 'fork-branch');
 		expect(branches).toHaveLength(2);
 		expect(branches.every((r) => !r.canonical)).toBe(true);
+	});
+});
+
+describe('history rows state only what the admitted set holds (#165)', () => {
+	it('a chain reference outside the admitted set is unobserved — never a blank author or epoch time', () => {
+		const root = productRoot('v1\n', [], 'root');
+		const p1 = patchEvent('root', 'root', 'v1\n', 'v2\n', 2000, AUTHOR, 'p1');
+		const p2 = patchEvent('root', 'p1', 'v2\n', 'v3\n', 3000, AUTHOR, 'p2');
+		// resolve() names p2 (it read the wider batch), but the admitted set
+		// the drawer may show stops at p1 — the #166 join's shape, and today
+		// the only way a referenced id can be absent from `events`.
+		const resolution = resolve('root', [root, p1, p2] as unknown as CoreNostrEvent[]);
+		const admitted = [root, p1];
+		const rows = historyRows(root, resolution, admitted, admitted as unknown as CoreNostrEvent[]);
+
+		const missing = rows.find((r) => r.id === 'p2');
+		expect(missing).toBeDefined();
+		expect(missing).toMatchObject({
+			observed: false,
+			position: 2,
+			state: 'applied',
+			canonical: true
+		});
+		// §2 rule 5: with no event there is no author and no time to show —
+		// neither field exists on an unobserved row, so neither can be faked.
+		expect(missing).not.toHaveProperty('author');
+		expect(missing).not.toHaveProperty('createdAt');
+		expect(missing).not.toHaveProperty('event');
+		// §2 rule 2: the section count is the rows array's length, unobserved
+		// rows included.
+		expect(rows).toHaveLength(3);
 	});
 });
 
