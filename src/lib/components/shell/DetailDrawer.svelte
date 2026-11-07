@@ -164,14 +164,9 @@
 	/** History rows name authors as short npubs (mono) — kind-0 profiles
 	 * belong to the publisher chip, not per-row fetches. The tooltip carries
 	 * the same encoding in full, so the two can be matched. */
-	function npubShort(pubkey: string): string {
-		const npub = nip19.npubEncode(pubkey);
+	function shortNpub(npub: string): string {
 		return `${npub.slice(0, 14)}…`;
 	}
-
-	/** #165: an unobserved row says what it is instead of a chain word — the
-	 * reference is real, its event is not in the admitted set. */
-	const UNOBSERVED_WORD = 'referenced, not fetched';
 
 	/** State word per row (mono vocabulary, all computed). */
 	function rowState(row: HistoryRow): string {
@@ -431,7 +426,7 @@
 							<span
 								class="shrink-0 rounded-[6px] border border-dashed border-line bg-inset px-2 py-px font-mono text-[10.5px] text-ink-2"
 							>
-								{UNOBSERVED_WORD}
+								referenced, not fetched
 							</span>
 						{:else if row.state === 'retraction'}
 							<span
@@ -457,9 +452,8 @@
 						</span>
 						<!-- Row values are hover-only (no per-row tab stops on a long
 							history): the full npub rides as sr-only text and the time as
-							a time element with its datetime. Author and time come from
-							the row's own admitted event — an unobserved row renders
-							neither (issue #165). -->
+							a time element with its datetime. Both read the row's admitted
+							event, so an unobserved row renders neither (#165). -->
 						{#if row.observed}
 							{@const npub = nip19.npubEncode(row.event.pubkey)}
 							<KeyHint hoverOnly nameless side="top">
@@ -468,7 +462,7 @@
 								{/snippet}
 								{#snippet trigger({ props })}
 									<span {...props} class="shrink-0 font-mono text-[11px] text-ink-3">
-										<span aria-hidden="true">{npubShort(row.event.pubkey)}</span>
+										<span aria-hidden="true">{shortNpub(npub)}</span>
 										<span class="sr-only">{npub}</span>
 									</span>
 								{/snippet}

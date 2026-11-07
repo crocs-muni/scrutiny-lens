@@ -63,11 +63,10 @@ export type ChainPointState =
 	| 'overlay'
 	| 'retraction';
 
-/** One History row. A discriminated union (issue #165): an OBSERVED row
- * carries the admitted event itself, so the drawer reads author and signed
- * time from evidence and neither field can be invented; a reference the
- * admitted set does not hold is an explicit UNOBSERVED row naming only the
- * id — no author, no timestamp (spec §2 rule 5, never placeholder text). */
+/** One History row, discriminated on `observed` (issue #165): an observed
+ * row carries the admitted event, so author and signed time come from
+ * evidence and cannot be invented; a reference the admitted set does not
+ * hold names only its id — no author, no timestamp (spec §2 rule 5). */
 interface HistoryRowBase {
 	id: string;
 	position: number | null;
@@ -80,13 +79,13 @@ interface HistoryRowBase {
 	canonical: boolean;
 }
 
-export interface ObservedHistoryRow extends HistoryRowBase {
+interface ObservedHistoryRow extends HistoryRowBase {
 	observed: true;
 	/** The admitted event this row is about. */
 	event: NostrEvent;
 }
 
-export interface UnobservedHistoryRow extends HistoryRowBase {
+interface UnobservedHistoryRow extends HistoryRowBase {
 	observed: false;
 }
 
@@ -212,20 +211,6 @@ function retractionOf(
 	);
 }
 
-/** A referenced id → its row: the admitted event when the set holds it,
- * else the explicit unobserved row. This is the only construction point, so
- * a row with a synthesized author or timestamp has no shape to fit (#165). */
-function rowFor(
-	id: string,
-	byId: ReadonlyMap<string, NostrEvent>,
-	point: Omit<HistoryRowBase, 'id'>
-): HistoryRow {
-	const event = byId.get(id);
-	return event === undefined
-		? { id, ...point, observed: false }
-		: { id, ...point, observed: true, event };
-}
-
 /** History = canonical chain + retraction row + the non-canonical group
  * (issue #29 ruling 5). Exported for the #165 trust gate only — the four-input
  * join itself is the seam #166 moves into core's buildDossier(); do not grow
@@ -237,23 +222,31 @@ export function historyRows(
 	coreEvents: CoreNostrEvent[]
 ): HistoryRow[] {
 	const byId = new Map(events.map((e) => [e.id, e]));
-	// The root row is the subject verbatim: deriveDossier already returned
-	// null when the subject isn't in `events`, so the lookup is self-identity.
-	// Pushing it (rather than pushing a template) keeps the row's author/time
-	// read from the event like every other observed row.
+	/** The admitted event when the set holds this id, else the explicit
+	 * unobserved row — the only row constructor, so there is no shape for a
+	 * synthesized author or timestamp to fit (#165). */
+	function rowFor(id: string, point: Omit<HistoryRowBase, 'id'>): HistoryRow {
+		const event = byId.get(id);
+		return event === undefined
+			? { id, ...point, observed: false }
+			: { id, ...point, observed: true, event };
+	}
+
+	// deriveDossier already returned null when the subject is not in
+	// `events`, so the root row's lookup is self-identity: always observed.
 	const rows: HistoryRow[] = [
-		rowFor(subject.id, byId, { position: 0, state: 'root', canonical: true })
+		rowFor(subject.id, { position: 0, state: 'root', canonical: true })
 	];
 
 	const chain = resolution.chain;
 	if (chain.status === 'resolved' || chain.status === 'halted' || chain.status === 'aborted') {
 		chain.applied.forEach((id, i) => {
-			rows.push(rowFor(id, byId, { position: i + 1, state: 'applied', canonical: true }));
+			rows.push(rowFor(id, { position: i + 1, state: 'applied', canonical: true }));
 		});
 	}
 	if (chain.status === 'halted') {
 		rows.push(
-			rowFor(chain.haltedAt, byId, {
+			rowFor(chain.haltedAt, {
 				position: chain.applied.length + 1,
 				state: 'halted-here',
 				canonical: true
@@ -262,10 +255,10 @@ export function historyRows(
 	}
 	if (chain.status === 'forked') {
 		rows.push(
-			rowFor(chain.forkParentId, byId, { position: null, state: 'fork-parent', canonical: true })
+			rowFor(chain.forkParentId, { position: null, state: 'fork-parent', canonical: true })
 		);
 		for (const id of chain.branchIds) {
-			rows.push(rowFor(id, byId, { position: null, state: 'fork-branch', canonical: false }));
+			rows.push(rowFor(id, { position: null, state: 'fork-branch', canonical: false }));
 		}
 	}
 
@@ -276,18 +269,18 @@ export function historyRows(
 	const retraction = retractionOf(subject as unknown as CoreNostrEvent, coreEvents);
 	if (retraction !== undefined) {
 		rows.push(
-			rowFor(retraction.id, byId, { position: null, state: 'retraction', canonical: true })
+			rowFor(retraction.id, { position: null, state: 'retraction', canonical: true })
 		);
 	}
 
 	// Non-canonical group (issue #29 ruling 5): root-author pending patches,
 	// then foreign overlays carrying their §7.3 state word.
 	for (const id of resolution.pending) {
-		rows.push(rowFor(id, byId, { position: null, state: 'pending', canonical: false }));
+		rows.push(rowFor(id, { position: null, state: 'pending', canonical: false }));
 	}
 	for (const overlay of resolution.overlays) {
 		rows.push(
-			rowFor(overlay.id, byId, {
+			rowFor(overlay.id, {
 				position: null,
 				state: 'overlay',
 				overlayState: overlay.state,
