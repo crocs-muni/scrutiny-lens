@@ -40,6 +40,11 @@
 		 * a child of an interactive parent must not add a second tab stop
 		 * (spec §9 keyboard rule, #39). */
 		hoverOnly?: boolean;
+		/** Suppress the popup without disabling or unmounting the trigger
+		 * (clipped-label supplements toggle this instead of swapping the
+		 * DOM — a swapped trigger changes the measured width and can
+		 * oscillate). Distinct from `disabled`, which disables the trigger. */
+		tooltipDisabled?: boolean;
 		/** Wrap an existing element: spread `props` on it. `type` is removed
 		 * (bits adds type="button" even for non-buttons); real buttons set it themselves. */
 		trigger?: Snippet<[{ props: Record<string, unknown> }]>;
@@ -54,6 +59,7 @@
 		nameless = false,
 		silent = false,
 		hoverOnly = false,
+		tooltipDisabled = false,
 		trigger,
 		children,
 		...rest
@@ -63,7 +69,7 @@
 	const shortcut = $derived(keys?.replace(/^Ctrl\+/, 'Control+'));
 </script>
 
-<Tooltip.Root>
+<Tooltip.Root disabled={tooltipDisabled || rest.disabled === true}>
 	<Tooltip.Trigger
 		{...rest}
 		aria-label={nameless ? undefined : label}

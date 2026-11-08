@@ -5,9 +5,18 @@
 	 * with the DetailDrawer below the canvas · chat column resident only
 	 * while a session is open. */
 
-	import { handleShellKeydown, shell } from '$lib/shell.svelte';
+	import { handleShellKeydown, isTypingTarget, shell } from '$lib/shell.svelte';
 	import { fillNote, investigation } from '$lib/investigation.svelte';
 	import { deriveDossier } from '$lib/dossier';
+	import { deriveNavTrail, type AscendTarget, type NavAction } from '$lib/nav';
+	import { subjectTitleOf } from '$lib/graph/subject-graph';
+	import {
+		EMPTY_RESULTS_SCROLL,
+		captureResultsScroll as captureScrollMemory,
+		restoreResultsScroll,
+		type ResultsScrollMemory
+	} from '$lib/scroll-memory';
+	import { tick } from 'svelte';
 	import { settings } from '$lib/settings.svelte';
 	import SearchHero from '$lib/components/ui/SearchHero.svelte';
 	import TaskTrace from '$lib/components/ui/TaskTrace.svelte';
@@ -30,15 +39,16 @@
 	import GraphCanvas from '$lib/components/graph/GraphCanvas.svelte';
 	import ChatColumn from '$lib/components/shell/ChatColumn.svelte';
 	import SettingsDialog from '$lib/components/shell/SettingsDialog.svelte';
+	import BreadcrumbBar from '$lib/components/shell/BreadcrumbBar.svelte';
 	import { chat } from '$lib/chat.svelte';
 	import type { ProviderOverrideInput } from '$lib/ai/provider';
 	import { bestIdentifier } from '$lib/ai/projector';
 	import { subjectGrounding, type NostrEvent } from '$lib/fabric';
 
 	let centerHeight = $state(0);
-
-	// The drawer may grow until the canvas keeps a usable strip.
-	const drawerMax = $derived(Math.max(240, centerHeight - 120));
+	/** The bar persists across the results↔session hop; the focus target
+	 * after an ascend lives on it (issue #142). */
+	let breadcrumbBar = $state<{ focusAfterAscend: () => void } | null>(null);
 
 	// — Results surface derivations (#38) —
 	// i-tag filter first, then the semantic axes (type/status/interpretation,
@@ -53,6 +63,17 @@
 	});
 	const viewCards = $derived(semanticFiltered.cards);
 	const viewEvents = $derived(semanticFiltered.events);
+	/** Zero-product surfaces (a metadata-only search/share) still have a real
+	 * graph to open. The persisted/re-anchored subject wins; otherwise the
+	 * first admitted event becomes the entry anchor on demand. */
+	const graphEntry = $derived.by(() => {
+		if (investigation.graphSubjectId !== null) return investigation.graphSubjectId;
+		// The entry anchor exists for a session that settled NO product cards
+		// (a metadata-only share/search). A facet that hides every card is not
+		// that case: products exist, the user just filtered them away.
+		if (investigation.cards.length !== 0 || investigation.result === null) return null;
+		return investigation.result.admitted[0]?.id ?? null;
+	});
 	// Cards render while the fill lands (issue #59): the per-chunk paint
 	// needs the product surface live DURING fillInChunks, and a mid-fill
 	// card's sweep (driven by investigation.pending, issue #82) has no
@@ -85,6 +106,19 @@
 	// with no claimable work is a no-op in the store, so a settled run's
 	// scroll events cost nothing.
 	let resultsScroller = $state<HTMLDivElement | null>(null);
+	// In-app stack (issue #142): the results scroller unmounts on the session
+	// hop, so the DOM cannot hold its position. The memory is keyed by
+	// session and anchored to the first visible card ($lib/scroll-memory).
+	let resultsScroll: ResultsScrollMemory = EMPTY_RESULTS_SCROLL;
+	/** True while the restore is writing scrollTop: the browser fires scroll
+	 * events for those writes (and for its own scroll anchoring), and a
+	 * capture there would overwrite the target with a clamped intermediate. */
+	let restoringScroll = false;
+
+	function captureResultsScroll(): void {
+		if (resultsScroller === null || restoringScroll) return;
+		resultsScroll = captureScrollMemory(resultsScroller, shell.session?.id ?? null);
+	}
 	let cardObserver: IntersectionObserver | null = null;
 	$effect(() => {
 		// runLive tracks the run's presence, railLive the skeleton→card
@@ -126,6 +160,35 @@
 			if (cardObserver === observer) cardObserver = null;
 		};
 	});
+	// Restore the captured position when the results surface remounts
+	// (issue #142). Captures are muted until the last write, because the
+	// browser's own scroll events for these writes would otherwise feed a
+	// clamped intermediate back in as the target. The anchor card is
+	// re-aligned on the next two frames, after the list's heights settle.
+	$effect(() => {
+		const el = resultsScroller;
+		const sessionId = shell.session?.id ?? null;
+		if (el === null) return;
+		// Another session's position is not this surface's position (and
+		// muting captures for its frames would be pointless).
+		if (resultsScroll.sessionId !== sessionId) return;
+		restoringScroll = true;
+		const restore = () => {
+			restoreResultsScroll(el, resultsScroll, sessionId);
+		};
+		restore();
+		let frame = requestAnimationFrame(() => {
+			restore();
+			frame = requestAnimationFrame(() => {
+				restore();
+				restoringScroll = false;
+			});
+		});
+		return () => {
+			cancelAnimationFrame(frame);
+			restoringScroll = false;
+		};
+	});
 	// Ref action (same convention as GraphCanvas's registerWrapper): card
 	// wrappers register with the live observer across keyed-each rebuilds
 	// and facet-driven list swaps. A no-op while no fill owns an observer —
@@ -157,21 +220,25 @@
 		if (id === null || session === null) return null;
 		return deriveDossier(id, session.admitted, investigation.cards);
 	});
-	// ADR 0001's companion announcement: persistence is never silent. The
-	// flag compares against the surface the subject actually renders on:
-	// product subjects are visible iff their CARD survives the filters
-	// (the interpretation/semantic axes touch cards, not events — an
-	// events-only comparison would suppress the announcement exactly when
-	// it matters), metadata subjects iff their event survives.
-	const selectionHidden = $derived.by(() => {
-		if (dossier === null || investigation.selectedEventId === null) return false;
-		if (Object.keys(investigation.selections).length === 0) return false;
-		const id = investigation.selectedEventId;
+	/** The surface a subject renders on decides visibility: product subjects
+	 * are visible iff their CARD survives the filters (the
+	 * interpretation/semantic axes touch cards, not events), metadata
+	 * subjects iff their event survives. */
+	// ADR 0001's companion announcement: persistence is never silent.
+	function hiddenByFilters(id: string | null): boolean {
+		if (id === null || Object.keys(investigation.selections).length === 0) return false;
 		const isCardSubject = investigation.cards.some((c) => c.id === id);
 		return isCardSubject
 			? !viewCards.some((c) => c.id === id)
 			: !viewEvents.some((e) => e.id === id);
-	});
+	}
+	const selectionHidden = $derived(
+		dossier !== null && hiddenByFilters(investigation.selectedEventId)
+	);
+	/** The results ring follows the CARD (the graph anchor), not the drawer
+	 * selection. A filtered-out anchor gets its own announcement, separate
+	 * from the selected event's banner in the drawer. */
+	const anchorHidden = $derived(hiddenByFilters(investigation.graphSubjectId));
 
 	// Session-surface honesty gate (#29b): the canvas AND the drawer derive
 	// from the LIVE investigation store. Reopening an older session while a
@@ -180,6 +247,60 @@
 	// gate holds (ADR 0002); older sessions replay in a future slice.
 	const sessionOwnsRun = $derived(
 		investigation.sessionId === shell.session?.id && investigation.result !== null
+	);
+
+	// — In-app step stack (issue #142) —
+	// Results [section] › question [Results] › anchor card [current]. The
+	// card is the GRAPH ANCHOR, not the drawer selection: a canvas click
+	// moves the drawer/ring only (#159), while a product picked outside the
+	// map re-anchors. The label is the graph node's existing title (card,
+	// cached node tile, else the rule-5 fallback) so the bar and the card
+	// name it identically; the bar never calls AI.
+	// Gated on session ownership for the same reason the canvas is: a foreign
+	// run's title must never paint under this session's heading. A session
+	// surface without its own run is the honest placeholder (#83) — it has no
+	// Results of its own to promise, so neither the bar nor Esc may leave for
+	// results (that surface would paint whatever run is still in memory under
+	// this session's title).
+	function nodeTitleOf(id: string | null) {
+		const session = investigation.result;
+		if (id === null || session === null) return null;
+		const event = session.admitted.find((e) => e.id === id);
+		if (event === undefined) return null;
+		return subjectTitleOf(
+			event,
+			investigation.cards.find((c) => c.id === id),
+			investigation.nodeTiles.get(id)
+		);
+	}
+	const anchorTitle = $derived(sessionOwnsRun ? nodeTitleOf(investigation.graphSubjectId) : null);
+	const subjectTitle = $derived(anchorTitle?.text ?? null);
+	const subjectMono = $derived(anchorTitle !== null && !anchorTitle.interpreted);
+	// The chevron's previous-card label; null means the history is empty and
+	// the back target is Results.
+	const previousAnchorTitle = $derived.by(() => {
+		const frame = investigation.anchorHistory.at(-1);
+		return frame === undefined ? null : (nodeTitleOf(frame.anchorId)?.text ?? null);
+	});
+	const trail = $derived(
+		shell.view === 'session' && !sessionOwnsRun
+			? null
+			: deriveNavTrail({
+					view: shell.view,
+					sessionTitle: shell.session?.title ?? null,
+					subjectTitle,
+					subjectMono,
+					previousAnchorTitle
+				})
+	);
+	// The drawer may grow until the canvas keeps a usable strip. The 44px
+	// step bar sits above the canvas on the session surface too (#142), so
+	// the strip floor is measured below it.
+	const drawerMax = $derived(
+		Math.max(
+			240,
+			centerHeight - 120 - (shell.view === 'session' && trail !== null ? 44 : 0)
+		)
 	);
 
 	// — Chat lifecycle (issue #30) —
@@ -246,11 +367,14 @@
 	 * open, land on session. A PRODUCT subject re-anchors the graph on it
 	 * (#85, inside selectSubject); a metadata record moves ring + dossier
 	 * only; the FIRST subject anchors whatever its kind (#29b ruling 4).
-	 * Clicking the selected card again re-affirms (#29a ruling 10). */
-	function openDossier(id: string): void {
-		investigation.selectSubject(id);
-		shell.drawerOpen = true;
-		shell.view = 'session';
+	 * Clicking the selected card again re-affirms (#29a ruling 10).
+	 * `origin: 'results'` starts a fresh anchor history; drawer/chat opens
+	 * remember the previous card for the chevron. */
+	function openDossier(id: string, origin: 'results' | 'elsewhere' = 'elsewhere'): void {
+		captureResultsScroll();
+		if (origin === 'results') investigation.clearAnchorHistory();
+		investigation.selectSubject(id, origin);
+		enterSession();
 		// §8.2 dossier context (#68/#75): patches and deletions are unreachable
 		// by the search's discovery filters, so the dossier fetches them on open.
 		void investigation.ensureSubjectContext(id);
@@ -262,32 +386,140 @@
 	 * map, where the canvas shows an unrelated neighborhood. */
 	function selectNode(id: string): void {
 		investigation.selectSubject(id, 'map');
-		shell.drawerOpen = true;
+		enterSession();
 		void investigation.ensureSubjectContext(id);
 	}
-	/** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc. */
+	/** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc / the
+	 * drawer's visible Clear control. */
 	function clearSelection(): void {
 		investigation.clearSelection();
+		rememberCurrentView();
+		// The drawer's Clear control unmounts with the selection; the bar's
+		// next back control takes focus instead of dropping it on <body>
+		// (spec §9 keyboard rule; issue #142 Esc contract).
+		breadcrumbBar?.focusAfterAscend();
 	}
-	/** Esc deselect runs before the shell's Ctrl-map (ruling 7); the settings
-	 * modal's own dismissal is untouched (guarded). An Escape a floating layer
-	 * already consumed (open tooltip or popover preventDefaults it) only
-	 * dismisses that layer — the selection survives the first press. */
+
+	/** Persist the session's last center view/drawer state after every hop
+	 * or drawer toggle; the rail and reload paths read it back. */
+	function rememberCurrentView(): void {
+		if (shell.view === 'results' || shell.view === 'session') {
+			investigation.rememberView(shell.view, shell.drawerOpen);
+		}
+	}
+
+	/** Land on the session surface with the drawer open, and persist it. */
+	function enterSession(): void {
+		shell.view = 'session';
+		shell.drawerOpen = true;
+		rememberCurrentView();
+	}
+
+	/** One-step ascend (issue #142): the chevron/Esc pops one anchor frame
+	 * (previous card + its drawer selection) and otherwise returns to Results
+	 * at the preserved scroll. The pressed control disappears at the new
+	 * level, so focus lands on the bar's next back control, never <body>. */
+	async function ascend(target: AscendTarget): Promise<void> {
+		if (target === 'previous-anchor') {
+			const frame = investigation.popAnchor();
+			if (frame === null) {
+				returnToResults();
+			} else {
+				investigation.restoreAnchor(frame.anchorId, frame.selectionId);
+				enterSession();
+				void investigation.ensureSubjectContext(frame.selectionId ?? frame.anchorId);
+			}
+		} else {
+			returnToResults();
+		}
+		await tick();
+		breadcrumbBar?.focusAfterAscend();
+	}
+
+	/** The question crumb is the real Results destination; `Results` itself
+	 * is the section label outside the breadcrumb list. */
+	async function goToCrumb(action: NavAction): Promise<void> {
+		if (action === 'results') await ascend(action);
+	}
+
+	/** The zero-card results surface's graph hop (the `View graph` control):
+	 * a metadata-only share/search has no product cards to click, so the
+	 * graph opens on its entry anchor on demand — Results is the trail root,
+	 * and the hop is remembered for the rail's re-open. */
+	function openGraphFromResults(): void {
+		// graphEntry is the entry anchor the button rendered for; it is null
+		// again if the state changed between render and this click.
+		if (graphEntry === null) return;
+		if (investigation.graphSubjectId === null) {
+			captureResultsScroll();
+			investigation.clearAnchorHistory();
+			investigation.selectSubject(graphEntry, 'results');
+			shell.drawerOpen = true;
+			void investigation.ensureSubjectContext(graphEntry);
+		}
+		shell.view = 'session';
+		rememberCurrentView();
+	}
+
+	/** Session → results (issue #142). The card/selection survive as
+	 * investigation state; the anchor history starts fresh because Results is
+	 * the trail root. */
+	function returnToResults(): void {
+		investigation.clearAnchorHistory();
+		shell.view = 'results';
+		rememberCurrentView();
+	}
+
+	/** Rail re-open / reload restore: land on the view and drawer state the
+	 * run record remembers for this session. */
+	function landOnLastView(): void {
+		shell.view = investigation.lastView;
+		shell.drawerOpen = investigation.lastDrawerOpen;
+	}
+
+	/** Esc precedence (issue #142): the settings modal (inside
+	 * handleShellKeydown) and any floating layer that already consumed the
+	 * press stay first; then the drawer selection clears (the visible Clear
+	 * button's keyboard twin); then the step stack ascends exactly one step.
+	 * Typing targets keep Esc for their own dismissals. */
 	function onShellKeydown(event: KeyboardEvent): void {
 		if (
 			event.key === 'Escape' &&
 			!event.defaultPrevented &&
-			shell.view === 'session' &&
 			!shell.settingsOpen &&
-			investigation.selectedEventId !== null
+			!isTypingTarget(event.target) &&
+			trail !== null
 		) {
-			clearSelection();
-			return;
+			if (shell.view === 'session' && investigation.selectedEventId !== null) {
+				event.preventDefault();
+				clearSelection();
+				return;
+			}
+			if (trail.up !== null) {
+				event.preventDefault();
+				void ascend(trail.up);
+				return;
+			}
 		}
-		handleShellKeydown(event);
+		if (handleShellKeydown(event)) rememberCurrentView();
 	}
-	const fetched = $derived(investigation.slices.reduce((sum, s) => sum + s.received, 0));
+	// A cold-open share paints no relay leg of its own; its receipts live in
+	// recordedRelayReceipts (issue #131). The bar must not say "fetched 0"
+	// when the record carries a real count.
+	const fetched = $derived(
+		investigation.slices.length > 0
+			? investigation.slices.reduce((sum, s) => sum + s.received, 0)
+			: investigation.recordedRelayReceipts.reduce((sum, r) => sum + r.received, 0)
+	);
 	const truncated = $derived(investigation.notices.some((n) => n.kind === 'truncated'));
+	/** Results bar ledger (BIBLE J2). The session bar shows it only when the
+	 * run was relay-truncated: spec §9 requires the "relays may hold more"
+	 * line whenever a limit was hit, and the session surface has no other
+	 * place to say it. A complete run keeps the session bar wordless — the
+	 * canvas has no fetch of its own. */
+	const fetchedLine = $derived(
+		`fetched ${fetched}${truncated ? ' · relays may hold more' : ''}`
+	);
 	// Owner ruling 2026-09-09: the 'N invalid skipped' ledger is removed from
 	// the results surface (§4 line to follow via the docs ritual); the
 	// pipeline still emits the notice — it surfaces only inside the trace's
@@ -503,20 +735,21 @@
 		onHome={() => shell.home()}
 		onPick={(id) => {
 			shell.openSession(id);
-			// The current run IS its session's results — reopening it from the rail
-			// returns to the results surface instead of stranding on the placeholder.
+			// The current run is its session's LAST view (results or the
+			// graph/card the user left open), not always Results. The run
+			// record carries the same state across a reload.
 			if (id === investigation.sessionId && (investigation.running || investigation.result !== null)) {
-				shell.view = 'results';
+				landOnLastView();
 				return;
 			}
 			// #83: a session evicted from memory by a reload rebuilds from local
-			// storage and lands on the same results surface. Restores that decline
-			// (no run row / fully evicted frontier) leave the honest placeholder.
+			// storage and lands on its last view. Restores that decline (no run
+			// row / fully evicted frontier) leave the honest placeholder.
 			void investigation.restore(id).then((ok) => {
 				// Identity guard (review H2): a start()/openShared() since the
 				// click already own the rail — a late restore resolve must
 				// never yank the view back.
-				if (ok && shell.session?.id === id) shell.view = 'results';
+				if (ok && shell.session?.id === id) landOnLastView();
 			});
 		}}
 		onClose={(id) => {
@@ -539,6 +772,19 @@
 		bind:clientHeight={centerHeight}
 		class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-window bg-surface shadow-card"
 	>
+		<!-- In-app step stack (issue #142): one 44px bar for the results and
+			session surfaces, hoisted above the surface switch so it persists
+			across the hop (focus target stays mounted; no remount flicker).
+			`trail` is null on the honest no-run placeholder (see above). -->
+		{#if trail !== null}
+			<BreadcrumbBar
+				bind:this={breadcrumbBar}
+				{trail}
+				meta={shell.view === 'results' || truncated ? fetchedLine : ''}
+				onCrumb={goToCrumb}
+				onAscend={(target) => void ascend(target)}
+			/>
+		{/if}
 		<div class="flex min-h-0 flex-1 flex-col {shell.view === 'results' ? '' : 'p-6'}">
 			{#if shell.view === 'search'}
 				<!-- J1 hero (issue #37) — the trace (#36) and results (#38)
@@ -551,32 +797,14 @@
 					/>
 				</div>
 				{:else if shell.view === 'results'}
-				<!-- The results surface (#38): BIBLE J2 anatomy — 44px breadcrumb
-					bar spans the whole window; rail + cards below; §4 edge
-					states replace the body. -->
+				<!-- The results surface (#38): rail + cards below the shared bar;
+					§4 edge states replace the body. -->
 				<!-- #108: the fill's one audible surface — visually hidden,
 					polite, chunk-granular (logic above). Kept OUTSIDE the
 					{#key} remount so announcements stay pure text diffs in a
 					persistent region. -->
 				<div aria-live="polite" class="sr-only">{fillLive}</div>
 				{#key shell.session?.id}
-					<!-- BIBLE J2 header bar: full window width, 44px hairline -->
-					<div class="flex h-11 shrink-0 items-center border-b border-line px-4">
-						<!-- baseline-aligned cluster (owner report, PR #42 polish):
-							items-center misaligned the mixed 12.5/13/11px rows; one true
-							baseline per item + svg on the same line, group centered by
-							the bar. leading-none so the line-box extents match the
-							glyph extents. -->
-						<div class="flex min-w-0 flex-1 items-baseline gap-2">
-							<span class="leading-none text-[12.5px] text-ink-2">Results</span>
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="shrink-0 text-ink-2"><path d="M9 6l6 6-6 6"/></svg>
-							<span class="min-w-0 truncate leading-none text-[13px] font-semibold text-ink">{shell.session?.title ?? ''}</span>
-							<span class="flex-1"></span>
-							<span class="shrink-0 font-mono leading-none text-[11px] text-ink-2">
-								fetched {fetched}{truncated ? ' · relays may hold more' : ''}
-							</span>
-						</div>
-					</div>
 					{#if relayDead}
 						<!-- Receipts folded per relay (issue #132): ResultsError keys its
 							list by url, so a per-leg list gave one dead host two entries
@@ -628,6 +856,21 @@
 										lives at the area edge); breadcrumb owns fetched/truncation -->
 									<div class="mx-auto flex w-full max-w-[760px] items-baseline gap-3 px-1 pb-1 pt-2">
 										<span class="font-mono text-[12.5px] font-semibold text-ink">{cohort}</span>
+										{#if anchorHidden}
+											<!-- the results ring marks the CARD (graph anchor);
+												a filtered-out anchor says so here, separately from
+												the drawer's selected-event banner. -->
+											<span class="font-mono text-[11px] text-ink-2">
+												graph anchor hidden by filters ·
+												<button
+													type="button"
+													class="text-accent-ink underline underline-offset-2 hover:text-ink"
+													onclick={() => investigation.clearFacets()}
+												>
+													clear
+												</button>
+											</span>
+										{/if}
 										{#if selectionHidden}
 											<!-- the filtering surface owns its half of the
 												announcement (ruling 11): a filtered-out
@@ -644,6 +887,18 @@
 											</span>
 										{/if}
 										<span class="flex-1"></span>
+										{#if graphEntry !== null && investigation.cards.length === 0}
+											<!-- a metadata-only share/search has no product cards;
+												the graph is still a real destination. The first
+												admitted event becomes the anchor on demand. -->
+											<button
+												type="button"
+												class="shrink-0 text-[12.5px] text-accent-ink underline underline-offset-2 hover:text-ink"
+												onclick={openGraphFromResults}
+											>
+												View graph
+											</button>
+										{/if}
 									</div>
 								{/if}
 								<!-- min-h-0/flex-1 + shrink-0 children: the scroller must own
@@ -654,6 +909,7 @@
 								<div
 									class="flex min-h-0 w-full flex-1 flex-col items-center gap-3 overflow-y-auto p-1 pb-3"
 									bind:this={resultsScroller}
+									onscroll={captureResultsScroll}
 								>
 									<div class="w-full max-w-[760px] shrink-0">
 										<TaskTrace />
@@ -692,8 +948,8 @@
 													pending={investigation.pending.has(card.id)}
 													failed={investigation.failed.has(card.id)}
 													draft={railLive ? (investigation.drafts.get(card.id) ?? null) : null}
-													selected={card.id === investigation.selectedEventId}
-													onOpen={railLive ? () => openDossier(card.id) : undefined}
+													selected={card.id === investigation.graphSubjectId}
+													onOpen={railLive ? () => openDossier(card.id, 'results') : undefined}
 												/>
 											</div>
 										{/each}
@@ -756,12 +1012,28 @@
 									Reopen it via the shared link instead.
 								</p>
 							{/if}
+							<button
+								type="button"
+								class="text-[12.5px] text-accent-ink underline underline-offset-2 hover:text-ink"
+								onclick={() => (shell.railOpen = true)}
+							>
+								Open sessions
+							</button>
 						</div>
 					{:else}
-						<p class="m-auto max-w-64 text-center text-[12.5px] leading-relaxed text-ink-3">
-							This session's evidence isn't in memory — older sessions aren't replayable
-							yet. Run a new search to bring it back.
-						</p>
+						<div class="m-auto flex max-w-64 flex-col items-center gap-3 text-center">
+							<p class="text-[12.5px] leading-relaxed text-ink-3">
+								This session's evidence isn't in memory — older sessions aren't replayable
+								yet. Run a new search to bring it back.
+							</p>
+							<button
+								type="button"
+								class="text-[12.5px] text-accent-ink underline underline-offset-2 hover:text-ink"
+								onclick={() => (shell.railOpen = true)}
+							>
+								Open sessions
+							</button>
+						</div>
 					{/if}
 				{/if}
 			{/if}
@@ -776,7 +1048,11 @@
 				hiddenByFilter={selectionHidden}
 				onSelect={openDossier}
 				onClearFilters={() => investigation.clearFacets()}
-				onToggle={() => shell.toggleDrawer()}
+				onClearSelection={clearSelection}
+				onToggle={() => {
+					shell.toggleDrawer();
+					rememberCurrentView();
+				}}
 				onResize={(next) => (shell.drawerHeight = next)}
 			/>
 		{/if}
