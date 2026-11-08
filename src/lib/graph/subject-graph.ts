@@ -85,7 +85,11 @@ export interface SubjectGraphNode {
 	typeToken: string | undefined;
 	pubkey: string;
 	createdAt: number;
-	/** Subject one-liner: products only, interpreted only (BIBLE N1 ④). */
+	/** The card's one-line description, unified across kinds (§9 anatomy):
+	 * a product takes its card snippet; a linked record takes the persisted
+	 * node-tile `label` the node lane already wrote (runNodeFill / nodes.ts
+	 * metadata branch). Interpreted only — a rule-5 skeleton label must
+	 * never render as AI prose. Undefined when neither source exists. */
 	snippet: string | undefined;
 	/** Subject icon-counts: admitted bindings to metadata / with http(s)
 	 * content — counted over the FULL admitted set (dossier parity,
@@ -502,7 +506,11 @@ export function deriveSubjectGraph(
 			typeToken: tile?.typeToken,
 			pubkey: event.pubkey,
 			createdAt: event.created_at,
-			snippet: kind === 'product' && interpreted ? card?.snippet : undefined,
+			// §9 anatomy: the one description line. A product carries its card
+			// snippet, a record its node-tile label (products never get one), and
+			// an uninterpreted node carries neither — a rule-5 skeleton must not
+			// pose as AI prose, and its title already IS the first content line.
+			snippet: interpreted ? (card?.snippet ?? tile?.label) : undefined,
 			boundMetadata: bound.length,
 			files: fileCount,
 			editedN,
