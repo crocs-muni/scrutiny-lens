@@ -218,7 +218,7 @@
 		const id = investigation.selectedEventId;
 		const session = investigation.result;
 		if (id === null || session === null) return null;
-		return deriveDossier(id, session.admitted, investigation.cards);
+		return deriveDossier(id, session.admitted, investigation.cards, investigation.nodeTiles);
 	});
 	/** The surface a subject renders on decides visibility: product subjects
 	 * are visible iff their CARD survives the filters (the

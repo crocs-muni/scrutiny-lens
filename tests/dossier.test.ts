@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	DELETION_KIND,
 	buildBinding,
+	buildMetadata,
 	buildPatch,
 	buildProduct,
 	fencePatchPayload,
@@ -203,6 +204,30 @@ describe('cache-first title (never a drawer-private alternate)', () => {
 		const d = deriveDossier('root', [root], [])!;
 		expect(d.identifiers).toContain('zz9:opaque-namespace-value');
 		expect(d.counts.summary).toBe(d.identifiers.length);
+	});
+
+	it('a linked record takes its title and one-liner from the node tile (§9 anatomy)', () => {
+		const record = signed(
+			buildMetadata('Vendor security notice — CVE-2019-15809 (Minerva).\n', 1000, ['cve:CVE-2019-15809']).template,
+			AUTHOR,
+			'm1'
+		);
+		const d = deriveDossier('m1', [record], [], new Map([
+			['m1', { title: 'Minerva advisory from the vendor', typeToken: 'advisory', label: 'AT90SC ECDSA timing leak' }]
+		]))!;
+		expect(d.title).toEqual({ text: 'Minerva advisory from the vendor', interpreted: true });
+		expect(d.snippet).toBe('AT90SC ECDSA timing leak');
+	});
+
+	it('a record no lane interpreted keeps the rule-5 face and shows no line', () => {
+		const record = signed(
+			buildMetadata('Vendor security notice — CVE-2019-15809 (Minerva).\n', 1000).template,
+			AUTHOR,
+			'm2'
+		);
+		const d = deriveDossier('m2', [record], [])!;
+		expect(d.title.interpreted).toBe(false);
+		expect(d.snippet).toBeUndefined();
 	});
 });
 

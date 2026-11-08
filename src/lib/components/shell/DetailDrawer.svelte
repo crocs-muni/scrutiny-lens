@@ -383,8 +383,9 @@
 					{/snippet}
 				</KeyHint>
 			</div>
-			<!-- ④ description: products only, one line, cache-only — a miss
-				renders no line at all rather than fabricated prose. -->
+			<!-- ④ description: one line on both kinds — a product's card snippet or
+				a record's node-tile label; an uninterpreted subject renders no line
+				at all rather than fabricated prose. -->
 			{#if dossier.snippet !== undefined}
 				<p class="mt-1.5 text-[13.5px] leading-relaxed text-ink-2">{dossier.snippet}</p>
 			{/if}
