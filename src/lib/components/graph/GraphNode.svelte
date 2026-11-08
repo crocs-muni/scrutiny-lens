@@ -252,7 +252,7 @@
 					{data.kind === 'product'
 					? 'rounded-md border-[var(--accent)]/30 bg-accent-tint'
 					: 'rounded-full border-line bg-inset'}
-					{mapping.warn && data.kind === 'metadata' ? 'border-[var(--orange)]' : ''}
+					{mapping.warn && !data.retracted ? 'border-[var(--orange)]' : ''}
 					{bloom.active ? 'settle-flip' : ''}"
 				onanimationend={() => bloom.clear()}
 			>
@@ -288,7 +288,7 @@
 						? 'h-[30px] w-[30px] rounded-lg border-[var(--accent)]/30 bg-accent-tint'
 						: 'h-[26px] w-[26px] rounded-full border-line bg-inset'}
 						{data.retracted ? 'border-[var(--red)]' : ''}
-						{mapping.warn && data.kind === 'metadata' ? 'border-[var(--orange)]' : ''}
+						{mapping.warn && !data.retracted ? 'border-[var(--orange)]' : ''}
 						{bloom.active ? 'settle-flip' : ''}"
 					onanimationend={() => bloom.clear()}
 				>
