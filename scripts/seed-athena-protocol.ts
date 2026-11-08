@@ -3,9 +3,10 @@
  *
  * Builds the vendor + analyst events that sit on top of the existing CRoCS
  * mirror: the vendor security target, its post-Minerva patch + notice, the
- * analyst finding with two patches, the comparison note, and a withdrawn
- * ROCA false positive (kind-5 by the same author). The product, certificate,
- * and JCAlgTest runs are existing relay events; this script only references
+ * analyst finding with two patches, and the comparison note. The retraction
+ * beat uses the corpus's own duplicate ALGSUPPORT retraction (kind-5 by
+ * CRoCS), not a seeded false positive. The product, certificate, and
+ * JCAlgTest runs are existing relay events; this script only references
  * their ids.
  *
  * Output: .smoke/athena/athena-protocol.ndjson (signed events) + manifest.json.
@@ -42,6 +43,8 @@ const RELAY = 'wss://relay.scrutiny.cloud';
 
 /* Existing CRoCS mirror events (the corpus this demo builds on). */
 const PRODUCT = 'eb978dea1e00c0bffa5ecd8c83c4ec4e65e3f496a37a32d161f01ab2ec53e7a3';
+/** Duplicate ALGSUPPORT run the mirror retracted (the real retraction beat). */
+const RETRACTED_RUN = 'c786fcc5e58209feadd28733ae164a2c42e940ed4383556191f8edf1125e4ab5';
 const CROCS = 'c0df886f934aad0c1e62f08b04bd54b44bdd1b5cb0b2ab250cbed25cf64c8a27';
 
 const at = (iso: string): number => Math.floor(Date.parse(iso) / 1000);
@@ -217,13 +220,6 @@ const FINDING_V3 = `${FINDING_V2}
 Scope: the certificate/ST describes an RSA SSCD (Java Card 2.2.2, GP 2.1.1, RSA up to 2048, EAL4+); the measured card also supports ECDSA/AES/3DES/ECDH/SHA-2. The certification did not require side-channel testing of the fast ECDSA path.
 `;
 
-const WITHDRAWN = `DEMO RECORD — withdrawn claim (2019-10-02).
-
-Initial cross-reference flagged the Athena IDProtect family as ROCA-affected (CVE-2017-15361).
-
-Withdrawn after review: the AT90SC platform uses its own RSA/ECC library, not Infineon RSALib. The recorded Athena issue is Minerva (CVE-2019-15809).
-`;
-
 function table(headers: string[], rows: string[][]): string {
 	const widths = headers.map((header, column) =>
 		Math.max(header.length, ...rows.map((row) => (row[column] ?? '').length))
@@ -372,25 +368,6 @@ const comparison = add('analyst comparison note', meta(
 	analyst.sk
 ));
 
-const withdrawn = add('withdrawn ROCA advisory', meta(
-	'withdrawn ROCA advisory',
-	WITHDRAWN,
-	at('2019-10-02T00:00:00Z'),
-	['cve:CVE-2017-15361', 'cc:ANSSI-CC-2012/23'],
-	[['m', 'advisory']],
-	analyst.sk
-));
-
-const retraction = add('withdrawn ROCA advisory retraction', finalizeEvent(
-	{
-		kind: 5,
-		created_at: at('2019-10-06T00:00:01Z'),
-		tags: [['e', withdrawn.id]],
-		content: 'Withdrawn: corrected by the Minerva finding. AT90SC is not Infineon RSALib.'
-	},
-	analyst.sk
-));
-
 add('binding vendor ST', bind(
 	'binding vendor ST',
 	PRODUCT,
@@ -423,14 +400,6 @@ add('binding analyst comparison', bind(
 	at('2019-10-06T00:00:01Z'),
 	analyst.sk
 ));
-add('binding withdrawn advisory', bind(
-	'binding withdrawn advisory',
-	PRODUCT,
-	withdrawn.id,
-	'withdrawn claim about',
-	at('2019-10-02T00:00:01Z'),
-	analyst.sk
-));
 
 /* ------------------------------------------------------------------ *
  * Output
@@ -458,7 +427,7 @@ const manifest = {
 		vendorNotice: nevent(vendorNotice.id, vendorNotice.pubkey),
 		finding: nevent(finding.id, finding.pubkey),
 		comparison: nevent(comparison.id, comparison.pubkey),
-		withdrawn: nevent(withdrawn.id, withdrawn.pubkey)
+		retraction: nevent(RETRACTED_RUN, CROCS)
 	},
 	ndjson: NDJSON
 };
