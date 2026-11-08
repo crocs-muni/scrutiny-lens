@@ -230,7 +230,7 @@
 	{#snippet ringPlate(band: number, color: string)}
 		<span
 			class="node-ring"
-			class:node-ring--fold={data.kind === 'metadata'}
+			class:node-ring--fold={data.kind === 'metadata' && tier !== 'disc'}
 			style:inset={`-${band}px`}
 			style:--cut={`${14 + band}px`}
 			style:border-radius={tier === 'disc' ? '9999px' : `${(tier === 'line' ? 9 : 12) + band}px`}
