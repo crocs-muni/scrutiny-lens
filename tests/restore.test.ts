@@ -80,7 +80,10 @@ async function pinRun(
 	admittedIds: string[],
 	elapsedMs: number | null = 4_200,
 	relays?: PersistedSessionRun['relays'],
-	view?: Pick<PersistedSessionRun, 'centerView' | 'drawerOpen'>
+	persisted?: Pick<
+		PersistedSessionRun,
+		'centerView' | 'drawerOpen' | 'graphSubjectId' | 'selectedEventId'
+	>
 ): Promise<void> {
 	await putSessionRun({
 		sessionId,
@@ -91,7 +94,7 @@ async function pinRun(
 		settledAt: 1_700_000_001_000,
 		elapsedMs,
 		...(relays === undefined ? {} : { relays }),
-		...(view === undefined ? {} : view)
+		...(persisted === undefined ? {} : persisted)
 	});
 }
 
@@ -233,6 +236,29 @@ describe('restore — last center view (issue #142 follow-up)', () => {
 			expect(row?.centerView).toBe('session');
 			expect(row?.drawerOpen).toBe(false);
 		});
+	});
+});
+
+// The anchor field is optional: a row written before issue #142 has no
+// opinion and may be defaulted; a row from this version that recorded `null`
+// is saying the user never anchored, and ringing a card would be a lie.
+describe('restore — the graph anchor (issue #142)', () => {
+	it('an explicit null anchor stays null', async () => {
+		await cacheEvent(product('a1'));
+		await pinRun('s1', ['a1'], 4_200, undefined, { graphSubjectId: null });
+
+		expect(await investigation.restore('s1')).toBe(true);
+
+		expect(investigation.graphSubjectId).toBeNull();
+	});
+
+	it('a legacy row without the field still lands on the first product', async () => {
+		await cacheEvent(product('a1'));
+		await pinRun('s1', ['a1']);
+
+		expect(await investigation.restore('s1')).toBe(true);
+
+		expect(investigation.graphSubjectId).toBe(hex('a1'));
 	});
 });
 

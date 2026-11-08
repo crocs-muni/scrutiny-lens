@@ -957,13 +957,16 @@ class Investigation {
     // product, else the first admitted event (a metadata-only share), so a
     // zero-card session still has a graph to open.
     const admittedIds = new Set(events.map((e) => e.id));
+    // `undefined` is a row written before this field: default it so a legacy
+    // session still has a graph to open. An explicit `null` is this version
+    // saying "no anchor was ever chosen" — defaulting it would ring a card
+    // the user never opened.
     this.graphSubjectId =
-      (run.graphSubjectId != null && admittedIds.has(run.graphSubjectId)
-        ? run.graphSubjectId
-        : null) ??
-      assembled[0]?.id ??
-      events[0]?.id ??
-      null;
+      run.graphSubjectId === undefined
+        ? (assembled[0]?.id ?? events[0]?.id ?? null)
+        : run.graphSubjectId !== null && admittedIds.has(run.graphSubjectId)
+          ? run.graphSubjectId
+          : null;
     this.selectedEventId =
       run.selectedEventId != null && admittedIds.has(run.selectedEventId)
         ? run.selectedEventId

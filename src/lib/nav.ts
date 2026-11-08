@@ -17,8 +17,10 @@
  *
  * The chevron pops one anchor: the previous card and the drawer event that
  * was selected when it was re-anchored. When there is no anchor history it
- * returns to Results. The previous-anchor title is reused verbatim; the bar
- * generates no text (spec §2 rule 1).
+ * returns to Results. Labels reuse on-screen text; only the fixed chrome
+ * ("Results", "Back to …", "At …") is composed here, never model output
+ * (spec §2 rule 1 governs AI-written fields; spec §9's writing rule applies
+ * to the label voice).
  */
 import type { CenterView } from '$lib/shell.svelte';
 
@@ -33,7 +35,7 @@ export type NavAction = 'results';
 
 export interface NavCrumb {
 	level: 'session' | 'subject';
-	/** Visible text — never generated for the bar. */
+	/** Visible text: the session question or the node's existing title. */
 	label: string;
 	/** A real destination; null renders the current crumb as a span. */
 	action: NavAction | null;

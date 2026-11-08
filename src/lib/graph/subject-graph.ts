@@ -85,10 +85,13 @@ export function subjectTitleOf(
 	card: ProductCard | undefined,
 	tile: NodeTile | undefined
 ): SubjectTitle {
-	const interpreted = (card !== undefined && card.interpreted) || tile !== undefined;
+	const interpreted = card?.interpreted === true || tile !== undefined;
+	// The card surface wins only when it is INTERPRETED: a raw card's text is
+	// already the rule-5 fallback, so letting it shadow a cached node title
+	// would drop prose the app has and render machine text in sans.
 	return {
 		text:
-			interpreted && card !== undefined
+			card?.interpreted === true
 				? card.title
 				: (tile?.title ?? deriveFallbackTitle(event)),
 		interpreted

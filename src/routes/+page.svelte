@@ -68,7 +68,10 @@
 	 * first admitted event becomes the entry anchor on demand. */
 	const graphEntry = $derived.by(() => {
 		if (investigation.graphSubjectId !== null) return investigation.graphSubjectId;
-		if (viewCards.length !== 0 || investigation.result === null) return null;
+		// The entry anchor exists for a session that settled NO product cards
+		// (a metadata-only share/search). A facet that hides every card is not
+		// that case: products exist, the user just filtered them away.
+		if (investigation.cards.length !== 0 || investigation.result === null) return null;
 		return investigation.result.admitted[0]?.id ?? null;
 	});
 	// Cards render while the fill lands (issue #59): the per-chunk paint
@@ -391,6 +394,10 @@
 	function clearSelection(): void {
 		investigation.clearSelection();
 		rememberCurrentView();
+		// The drawer's Clear control unmounts with the selection; the bar's
+		// next back control takes focus instead of dropping it on <body>
+		// (spec §9 keyboard rule; issue #142 Esc contract).
+		breadcrumbBar?.focusAfterAscend();
 	}
 
 	/** Persist the session's last center view/drawer state after every hop
@@ -483,7 +490,7 @@
 			!isTypingTarget(event.target) &&
 			trail !== null
 		) {
-			if (investigation.selectedEventId !== null) {
+			if (shell.view === 'session' && investigation.selectedEventId !== null) {
 				event.preventDefault();
 				clearSelection();
 				return;
@@ -505,7 +512,10 @@
 			: investigation.recordedRelayReceipts.reduce((sum, r) => sum + r.received, 0)
 	);
 	const truncated = $derived(investigation.notices.some((n) => n.kind === 'truncated'));
-	/** Results bar ledger (BIBLE J2). The session bar shows no count: the
+	/** Results bar ledger (BIBLE J2). The session bar shows it only when the
+	 * run was relay-truncated: spec §9 requires the "relays may hold more"
+	 * line whenever a limit was hit, and the session surface has no other
+	 * place to say it. A complete run keeps the session bar wordless — the
 	 * canvas has no fetch of its own. */
 	const fetchedLine = $derived(
 		`fetched ${fetched}${truncated ? ' · relays may hold more' : ''}`
@@ -770,7 +780,7 @@
 			<BreadcrumbBar
 				bind:this={breadcrumbBar}
 				{trail}
-				meta={shell.view === 'results' ? fetchedLine : ''}
+				meta={shell.view === 'results' || truncated ? fetchedLine : ''}
 				onCrumb={goToCrumb}
 				onAscend={(target) => void ascend(target)}
 			/>
@@ -877,7 +887,7 @@
 											</span>
 										{/if}
 										<span class="flex-1"></span>
-										{#if graphEntry !== null && viewCards.length === 0}
+										{#if graphEntry !== null && investigation.cards.length === 0}
 											<!-- a metadata-only share/search has no product cards;
 												the graph is still a real destination. The first
 												admitted event becomes the anchor on demand. -->
@@ -1005,7 +1015,7 @@
 							<button
 								type="button"
 								class="text-[12.5px] text-accent-ink underline underline-offset-2 hover:text-ink"
-								onclick={() => shell.toggleRail()}
+								onclick={() => (shell.railOpen = true)}
 							>
 								Open sessions
 							</button>
@@ -1019,7 +1029,7 @@
 							<button
 								type="button"
 								class="text-[12.5px] text-accent-ink underline underline-offset-2 hover:text-ink"
-								onclick={() => shell.toggleRail()}
+								onclick={() => (shell.railOpen = true)}
 							>
 								Open sessions
 							</button>

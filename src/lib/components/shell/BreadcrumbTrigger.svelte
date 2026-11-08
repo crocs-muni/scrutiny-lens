@@ -39,12 +39,11 @@
 {:else}
 	<KeyHint label={crumb.label} nameless silent hoverOnly tooltipDisabled={!clipped} side="bottom">
 		{#snippet trigger({ props })}
-			<!-- tabindex=-1: not a tab stop, still a focus target for
-				focusAfterAscend() after an ascend. -->
+			<!-- The current crumb is text, not a control: aria-current carries
+				the level, and the bar itself is the ascend fallback focus. -->
 			<span
 				{...props}
 				use:truncation={(next) => (clipped = next)}
-				tabindex="-1"
 				aria-current={crumb.current ? 'page' : undefined}
 				class="min-w-[8ch] max-w-full truncate leading-none {className}"
 			>

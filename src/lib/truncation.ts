@@ -18,25 +18,34 @@ export function isTruncated(node: HTMLElement): boolean {
 export function truncation(
 	node: HTMLElement,
 	onChange: (truncated: boolean) => void
-): { update: () => void; destroy: () => void } {
+): { update: (next?: (truncated: boolean) => void) => void; destroy: () => void } {
+	let callback = onChange;
 	let clipped = false;
-	const update = (): void => {
-		const next = isTruncated(node);
-		if (next === clipped) return;
-		clipped = next;
-		onChange(next);
+	// A destroyed action must never call back: fonts settle late, and a
+	// swapped-out crumb would otherwise write `clipped` on a dead component.
+	let destroyed = false;
+	const update = (next?: (truncated: boolean) => void): void => {
+		if (next !== undefined) callback = next;
+		if (destroyed) return;
+		const now = isTruncated(node);
+		if (now === clipped) return;
+		clipped = now;
+		callback(now);
 	};
 	const observer =
-		typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+		typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => update());
 	observer?.observe(node);
 	const onResize = (): void => update();
-	window.addEventListener('resize', onResize);
+	// With an observer the node's own box change already fires; the window
+	// listener is the fallback, not a second source of the same event.
+	if (observer === null) window.addEventListener('resize', onResize);
 	// Fonts can settle after the first layout pass; re-measure once they do.
-	void document.fonts?.ready.then(update, () => {});
+	void document.fonts?.ready.then(() => update(), () => {});
 	update();
 	return {
 		update,
 		destroy() {
+			destroyed = true;
 			observer?.disconnect();
 			window.removeEventListener('resize', onResize);
 		}

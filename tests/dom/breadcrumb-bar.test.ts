@@ -62,8 +62,8 @@ describe('BreadcrumbBar', () => {
 		const current = document.querySelector('[aria-current="page"]')!;
 		expect(current.textContent?.trim()).toBe('Which ROCA keys still ship?');
 		expect(current.tagName).toBe('SPAN');
-		// A programmatic focus target, never a tab stop.
-		expect(current.getAttribute('tabindex')).toBe('-1');
+		// Text, not a control: no tab stop and no programmatic focus target.
+		expect(current.hasAttribute('tabindex')).toBe(false);
 	});
 
 	it('session root: the chevron returns to results; Results is not a dead button', async () => {
