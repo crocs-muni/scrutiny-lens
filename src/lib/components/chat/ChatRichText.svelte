@@ -64,13 +64,34 @@
 			class:spotlit={claim && spotlight.lit(marks)}
 			style="--cite: var(--cite-{first?.colorIndex ?? 0}); --cite-tint: var(--cite-{first?.colorIndex ?? 0}-tint);"
 		>
-			{#each blocks as block (block.kind)}
+			{#each blocks as block, blockIndex (blockIndex)}
 				{#if block.kind === 'paragraph'}
 					<p class="md-p">{@html inlineHtml(block.text)}</p>
 				{:else if block.kind === 'bullets'}
-					<ul class="md-ul">{#each block.items as item (item)}<li>{@html inlineHtml(item)}</li>{/each}</ul>
+					<ul class="md-ul">{#each block.items as item, itemIndex (itemIndex)}<li>{@html inlineHtml(item)}</li>{/each}</ul>
 				{:else if block.kind === 'numbered'}
-					<ol class="md-ol">{#each block.items as item (item)}<li>{@html inlineHtml(item)}</li>{/each}</ol>
+					<ol class="md-ol">{#each block.items as item, itemIndex (itemIndex)}<li>{@html inlineHtml(item)}</li>{/each}</ol>
+				{:else if block.kind === 'table'}
+					<div class="md-table-wrap">
+						<table class="md-table">
+							<thead>
+								<tr>
+									{#each block.header as cell, column (column)}
+										<th style="text-align: {block.align[column] ?? 'left'}">{@html inlineHtml(cell)}</th>
+									{/each}
+								</tr>
+							</thead>
+							<tbody>
+								{#each block.rows as row, rowIndex (rowIndex)}
+									<tr>
+										{#each row as cell, column (column)}
+											<td style="text-align: {block.align[column] ?? 'left'}">{@html inlineHtml(cell)}</td>
+										{/each}
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
 				{:else}
 					<pre class="md-pre"><code class={block.lang === '' ? undefined : `lang-${block.lang}`}
 							>{@html escapeHtml(block.text)}</code
@@ -138,6 +159,26 @@
 		font-size: 12px;
 		overflow-x: auto;
 		white-space: pre-wrap;
+	}
+	.md-table-wrap {
+		margin: 0.4em 0;
+		overflow-x: auto;
+	}
+	.md-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 12.5px;
+		line-height: 1.4;
+	}
+	.md-table th,
+	.md-table td {
+		border: 1px solid var(--line);
+		padding: 0.32em 0.55em;
+		vertical-align: top;
+	}
+	.md-table th {
+		background: var(--inset);
+		font-weight: 600;
 	}
 	/* The pending shimmer (pinned-at-stream citation): neutral on purpose —
 	 * nothing is verified yet, so nothing claims a trust color. */
