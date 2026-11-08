@@ -45,7 +45,9 @@
 	const PEND = '\u0002';
 	const INLINE = /([\u0001\u0002])([^\u0001\u0002]*)\1/g;
 
-	/** Recombine the run/marker split into ONE string for the block pass. */
+	/** Recombine the run/marker split into ONE string for the block pass.
+	 * Model text cannot carry the sentinels: they are control characters and
+	 * stripped, so a literal U+0001 in an answer can never forge a marker. */
 	const raw = $derived(
 		parts
 			.map((p) =>
@@ -53,7 +55,7 @@
 					? `${PILL}${p.n}${PILL}`
 					: p.kind === 'pending'
 						? `${PEND}${p.n ?? ''}${PEND}`
-						: p.text
+						: p.text.replace(/[\u0001\u0002]/g, '')
 			)
 			.join('')
 	);
