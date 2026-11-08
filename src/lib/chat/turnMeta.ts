@@ -36,9 +36,6 @@ export interface SourceRow {
 	quote: string;
 	colorIndex: number;
 	status: RecordStatus;
-	/** Record timestamp when the event is in memory; the row omits it
-	 * otherwise rather than inventing one. */
-	createdAt?: number;
 }
 
 export interface TurnMeta {
@@ -46,8 +43,13 @@ export interface TurnMeta {
 	sources: SourceRow[];
 	/** Status partition over `sources` — sums to `sources.length` exactly. */
 	counts: { current: number; retracted: number; unknown: number };
-	/** Claims whose quote the checker could not find in the cited record;
-	 * already removed from the rendered answer. */
+	/** Markers the verifier resolved that produced NO visible marker — i.e.
+	 * claims actually removed from the rendered answer. Derived from what
+	 * rendered, never from the model's own count: two claims can renumber to
+	 * the same citation number, and `scrubAnswer` keys its verified set by
+	 * number, so a merely-reported "extrapolatory" can survive on screen. A
+	 * number that says "dropped" while the claim is still visible would be
+	 * the exact lie this surface exists to avoid. */
 	dropped: number;
 	/** True when every source carries a known status, i.e. the partition can
 	 * be printed without an `unknown` bucket nobody wants to read. */
@@ -61,6 +63,10 @@ function deletionsOf(grounding: readonly NostrEvent[]): CoreNostrEvent[] {
 		.filter((e) => e.kind === DELETION_KIND)
 		.map((e) => e as unknown as CoreNostrEvent);
 }
+
+/** Canonical marker in settled content (`[3]`) — the same token grammar
+ * `layoutAnswer` renders. */
+const MARKER = /\[\d+\]/g;
 
 /** Distinct citations by number, first occurrence wins (two claims, one
  * source — the same dedupe the footer carried). */
@@ -76,7 +82,7 @@ function uniqueCitations(citations: readonly PersistedChatCitation[]): Persisted
 }
 
 export function buildTurnMeta(
-	message: Pick<PersistedChatMessage, 'citations' | 'claimsSummary'>,
+	message: Pick<PersistedChatMessage, 'content' | 'citations' | 'claimsSummary'>,
 	grounding: readonly NostrEvent[]
 ): TurnMeta {
 	const deletions = deletionsOf(grounding);
@@ -89,7 +95,7 @@ export function buildTurnMeta(
 				? 'retracted'
 				: 'current';
 		}
-		const row: SourceRow = {
+		return {
 			n: c.n,
 			eventId: c.eventId,
 			title: c.nodeTitle ?? 'Cited event',
@@ -97,17 +103,22 @@ export function buildTurnMeta(
 			colorIndex: c.colorIndex,
 			status
 		};
-		if (event !== undefined) row.createdAt = event.created_at;
-		return row;
 	});
 
 	const counts = { current: 0, retracted: 0, unknown: 0 };
 	for (const s of sources) counts[s.status] += 1;
 
+	// Resolved citations vs markers still in the rendered text. A marker that
+	// vanished was a removed claim; a claim the checker rejected but whose
+	// number survived (two claims, one source) is still on screen, so it must
+	// not be reported as dropped.
+	const resolved = message.claimsSummary?.total ?? 0;
+	const rendered = (message.content.match(MARKER) ?? []).length;
+
 	return {
 		sources,
 		counts,
-		dropped: message.claimsSummary?.extrapolatory ?? 0,
+		dropped: Math.max(0, resolved - rendered),
 		statusComplete: counts.unknown === 0
 	};
 }
@@ -116,8 +127,11 @@ export function buildTurnMeta(
  * retracted`. Without a known status for every source it degrades to the
  * count alone — a partial partition would read as a lie. */
 export function countsLine(meta: TurnMeta): string {
+	// An answer with no citations prints no counts at all: "0 sources" is
+	// chrome pretending to be information.
+	if (meta.sources.length === 0) return '';
 	const sources = `${meta.sources.length} source${meta.sources.length === 1 ? '' : 's'}`;
-	if (!meta.statusComplete || meta.sources.length === 0) return sources;
+	if (!meta.statusComplete) return sources;
 	const parts: string[] = [];
 	if (meta.counts.current > 0) parts.push(`${meta.counts.current} current`);
 	if (meta.counts.retracted > 0) parts.push(`${meta.counts.retracted} retracted`);

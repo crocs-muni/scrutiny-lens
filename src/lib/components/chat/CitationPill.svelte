@@ -19,9 +19,12 @@
 		/** The turn owns which citation's register row is open. */
 		open: boolean;
 		onToggle: (n: number) => void;
+		/** Id of the register row this mark expands — aria-expanded alone
+		 * leaves a screen-reader user with no idea which region changed. */
+		controls?: string;
 	}
 
-	let { citation, open, onToggle }: Props = $props();
+	let { citation, open, onToggle, controls }: Props = $props();
 </script>
 
 <button
@@ -30,6 +33,7 @@
 	class:lit={spotlight.lit([citation.n])}
 	style="--cite: var(--cite-{citation.colorIndex});"
 	aria-expanded={open}
+	aria-controls={controls}
 	aria-label="Citation {citation.n}: {citation.nodeTitle ?? 'cited event'}"
 	onmouseenter={() => spotlight.hover([citation.n])}
 	onmouseleave={() => spotlight.hover(null)}

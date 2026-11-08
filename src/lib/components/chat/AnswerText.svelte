@@ -17,11 +17,13 @@
 		citations: PersistedChatCitation[];
 		openN: number | null;
 		onToggle: (n: number) => void;
+		/** Turn id: prefixes the register row ids the marks point at. */
+		idPrefix: string;
 	}
 
-	let { content, citations, openN, onToggle }: Props = $props();
+	let { content, citations, openN, onToggle, idPrefix }: Props = $props();
 
 	const parts = $derived(layoutAnswer(content, citations) as RichPart[]);
 </script>
 
-<ChatRichText {parts} {citations} {openN} {onToggle} />
+<ChatRichText {parts} {citations} {openN} {onToggle} {idPrefix} />

@@ -49,7 +49,9 @@
 <div class="turn">
 	<div class="turn-meta">
 		<span class="kick">Answer</span>
-		<span class="counts">{counts}</span>
+		{#if counts}
+			<span class="counts">{counts}</span>
+		{/if}
 	</div>
 	{#if meta.dropped > 0}
 		<!-- The only incompleteness this surface can prove: the checker could
@@ -66,6 +68,7 @@
 		citations={message.citations ?? []}
 		{openN}
 		onToggle={toggle}
+		idPrefix={message.id}
 	/>
 	<ChatMessageFooter
 		content={message.content}
@@ -73,6 +76,7 @@
 		{openN}
 		onToggle={toggle}
 		{onOpenDossier}
+		idPrefix={message.id}
 	/>
 </div>
 

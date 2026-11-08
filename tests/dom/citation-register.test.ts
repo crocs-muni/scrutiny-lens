@@ -45,6 +45,7 @@ const footer = (
 		openN: null,
 		onToggle: noop,
 		onOpenDossier: noop,
+		idPrefix: 'm1',
 		...props
 	});
 

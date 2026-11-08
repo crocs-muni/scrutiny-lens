@@ -32,9 +32,12 @@
 		/** Which citation's register row is open (the turn owns it). */
 		openN?: number | null;
 		onToggle?: (n: number) => void;
+		/** Turn id — prefixes the register row ids so the mark can point at
+		 * the row it expands (aria-controls) without colliding across turns. */
+		idPrefix?: string;
 	}
 
-	let { parts, citations = [], openN = null, onToggle = () => {} }: Props = $props();
+	let { parts, citations = [], openN = null, onToggle = () => {}, idPrefix = 'turn' }: Props = $props();
 
 	const byN = $derived(new Map(citations.map((c) => [c.n, c])));
 
@@ -114,7 +117,12 @@
 		{:else if seg.kind === 'pill'}
 			{@const citation = byN.get(seg.n)}
 			{#if citation}
-				<CitationPill {citation} open={openN === seg.n} {onToggle} />
+				<CitationPill
+					{citation}
+					open={openN === seg.n}
+					{onToggle}
+					controls="{idPrefix}-src-{seg.n}"
+				/>
 			{/if}
 		{:else}
 			<span class="pending-pill" aria-label="Verifying citation {seg.n ?? ''}…">{seg.n ?? ''}</span>
@@ -132,7 +140,6 @@
 		{:else if block.kind === 'heading'}
 			<!-- Model headings render as headings (#185); level is semantics, the
 			 * display size is the column's single kicker size. -->
-			{@const marks = citesIn(block.text)}
 			{#if block.level <= 2}
 				<h2 class="md-h">{@render inlineFlow(block.text)}</h2>
 			{:else}

@@ -25,9 +25,12 @@
 		openN: number | null;
 		onToggle: (n: number) => void;
 		onOpenDossier: (eventId: string) => void;
+		/** Turn id — prefixes row/quote ids so marks can point at the row they
+		 * expand (aria-controls) and no two turns share an id. */
+		idPrefix: string;
 	}
 
-	let { content, sources, openN, onToggle, onOpenDossier }: Props = $props();
+	let { content, sources, openN, onToggle, onOpenDossier, idPrefix }: Props = $props();
 
 	let copied = $state(false);
 
@@ -50,8 +53,10 @@
 			>
 				<button
 					type="button"
+					id="{idPrefix}-src-{source.n}"
 					class="flex w-full items-center gap-2 rounded-chip px-1.5 py-1 text-left text-[12px] text-ink-2 transition-colors duration-150 hover:text-ink"
 					aria-expanded={openN === source.n}
+					aria-controls={openN === source.n ? `${idPrefix}-quote-${source.n}` : undefined}
 					onmouseenter={() => spotlight.hover([source.n])}
 					onmouseleave={() => spotlight.hover(null)}
 					onclick={() => onToggle(source.n)}
@@ -76,7 +81,7 @@
 					/>
 				</button>
 				{#if openN === source.n}
-					<blockquote class="row-quote">{source.quote}</blockquote>
+					<blockquote class="row-quote" id="{idPrefix}-quote-{source.n}">{source.quote}</blockquote>
 					<button type="button" class="row-dossier" onclick={() => onOpenDossier(source.eventId)}>
 						open dossier ↗
 					</button>
