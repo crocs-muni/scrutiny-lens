@@ -19,7 +19,8 @@
 		IconChevronUp,
 		IconClock,
 		IconCpu,
-		IconShield
+		IconShield,
+		IconX
 	} from '@tabler/icons-svelte';
 	import { nip19 } from 'nostr-tools';
 	import KeyHint from './KeyHint.svelte';
@@ -67,6 +68,9 @@
 		 * the dossier in place — the metadata-dossier path pre-canvas. */
 		onSelect?: (id: string) => void;
 		onClearFilters?: () => void;
+		/** Visible twin of the Esc first step: clear the drawer subject while
+		 * the graph anchor stays (#29b ruling 7, issue #142 review). */
+		onClearSelection?: () => void;
 		onToggle: () => void;
 		onResize: (next: number) => void;
 	}
@@ -79,6 +83,7 @@
 		hiddenByFilter = false,
 		onSelect,
 		onClearFilters,
+		onClearSelection,
 		onToggle,
 		onResize
 	}: Props = $props();
@@ -264,6 +269,14 @@
 		<!-- BIBLE L1090: share lives in the drawer header — copies the
 			record's share links (issue #31: URL + nostr: URI). -->
 		{#if dossier !== null}
+			<KeyHint
+				label="Clear selection"
+				side="top"
+				class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
+				onclick={() => onClearSelection?.()}
+			>
+				<IconX size={14} stroke-width={2} />
+			</KeyHint>
 			<SharePopover subject={dossier.subject} />
 		{/if}
 		<KeyHint

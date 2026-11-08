@@ -79,7 +79,11 @@ async function pinRun(
 	sessionId: string,
 	admittedIds: string[],
 	elapsedMs: number | null = 4_200,
-	relays?: PersistedSessionRun['relays']
+	relays?: PersistedSessionRun['relays'],
+	persisted?: Pick<
+		PersistedSessionRun,
+		'centerView' | 'drawerOpen' | 'graphSubjectId' | 'selectedEventId'
+	>
 ): Promise<void> {
 	await putSessionRun({
 		sessionId,
@@ -89,7 +93,8 @@ async function pinRun(
 		admittedIds: admittedIds.map((id) => hex(id)),
 		settledAt: 1_700_000_001_000,
 		elapsedMs,
-		...(relays === undefined ? {} : { relays })
+		...(relays === undefined ? {} : { relays }),
+		...(persisted === undefined ? {} : persisted)
 	});
 }
 
@@ -188,6 +193,72 @@ describe('restore — rebuilds the settled surface (issue #83)', () => {
 
 		expect(investigation.result?.admitted.map((e) => e.id)).toEqual([hex('a1')]);
 		expect(investigation.restoredEvicted).toBe(1);
+	});
+});
+
+// issue #142 follow-up: a reopened session lands where the user left it —
+// the run row carries the last center view and drawer state, so the rail and
+// reload do not throw the user back to Results. An older row has no fields
+// and keeps the historical default.
+describe('restore — last center view (issue #142 follow-up)', () => {
+	it('reopens on the card view and drawer state the user left', async () => {
+		await cacheEvent(product('a1'));
+		await pinRun('s1', ['a1'], 4_200, undefined, { centerView: 'session', drawerOpen: false });
+
+		expect(await investigation.restore('s1')).toBe(true);
+
+		expect(investigation.lastView).toBe('session');
+		expect(investigation.lastDrawerOpen).toBe(false);
+	});
+
+	it('a legacy row without the fields reopens on Results with the drawer open', async () => {
+		await cacheEvent(product('a1'));
+		await pinRun('s1', ['a1']);
+
+		expect(await investigation.restore('s1')).toBe(true);
+
+		expect(investigation.lastView).toBe('results');
+		expect(investigation.lastDrawerOpen).toBe(true);
+	});
+
+	it('rememberView writes the view onto the run row for the next reopen', async () => {
+		await cacheEvent(product('a1'));
+		await pinRun('s1', ['a1']);
+		expect(await investigation.restore('s1')).toBe(true);
+		// The run row must be one the rail still holds, or the orphan guard
+		// (review M5) skips the write.
+		shell.sessions = [{ id: 's1', title: 'Runtime check', createdAt: 0 }];
+
+		investigation.rememberView('session', false);
+
+		await vi.waitFor(async () => {
+			const row = await getSessionRun('s1');
+			expect(row?.centerView).toBe('session');
+			expect(row?.drawerOpen).toBe(false);
+		});
+	});
+});
+
+// The anchor field is optional: a row written before issue #142 has no
+// opinion and may be defaulted; a row from this version that recorded `null`
+// is saying the user never anchored, and ringing a card would be a lie.
+describe('restore — the graph anchor (issue #142)', () => {
+	it('an explicit null anchor stays null', async () => {
+		await cacheEvent(product('a1'));
+		await pinRun('s1', ['a1'], 4_200, undefined, { graphSubjectId: null });
+
+		expect(await investigation.restore('s1')).toBe(true);
+
+		expect(investigation.graphSubjectId).toBeNull();
+	});
+
+	it('a legacy row without the field still lands on the first product', async () => {
+		await cacheEvent(product('a1'));
+		await pinRun('s1', ['a1']);
+
+		expect(await investigation.restore('s1')).toBe(true);
+
+		expect(investigation.graphSubjectId).toBe(hex('a1'));
 	});
 });
 

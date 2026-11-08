@@ -123,6 +123,14 @@ export function resetShell() {
 	shell.showDeleted = false;
 }
 
+/** True when the event target is a text field — hotkeys (and Esc ascents)
+ * must not fire there. Shared by the shell map and the page's step stack so
+ * the selector cannot drift. */
+export function isTypingTarget(target: EventTarget | null): boolean {
+	const el = target as HTMLElement | null;
+	return Boolean(el?.closest?.('input, textarea, select, [contenteditable="true"]'));
+}
+
 /** Keyboard map (spec §9): Ctrl+\ rail · Ctrl+. chat · Ctrl+; drawer · Ctrl+, settings
  * (Ctrl+; replaces Ctrl+Shift+I — that combo opens devtools; owner ruling). Every binding is ignored while typing. Returns true when
  * the event was consumed. */
@@ -141,8 +149,7 @@ export function handleShellKeydown(event: KeyboardEvent): boolean {
 		return true;
 	}
 	if (!(event.ctrlKey || event.metaKey) || event.altKey) return false;
-	const target = event.target as HTMLElement | null;
-	if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return false;
+	if (isTypingTarget(event.target)) return false;
 	const key = event.key.toLowerCase();
 	if (key === '\\' && !event.shiftKey) {
 		shell.toggleRail();
