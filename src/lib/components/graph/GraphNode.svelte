@@ -37,7 +37,8 @@
 	 * footprints (edges terminate at the card border, never pierce to the
 	 * center). Widths are exact (w-[250px]/[230px]/[150px], h-7 w-7); heights
 	 * are close approximations of the painted anatomy — tuned on the owner's
-	 * feel pass, never geometry-correct. Only `full` varies by kind. */
+	 * feel pass, never geometry-correct. Only `full` varies by kind; the
+	 * record's 64px height carries its added description line (§9 anatomy). */
 	export const TIER_HALF: {
 		full: Readonly<Record<SubjectGraphNode['kind'], { hw: number; hh: number }>>;
 		line: { hw: number; hh: number };
@@ -45,7 +46,7 @@
 	} = {
 		full: {
 			product: { hw: 125, hh: 62 },
-			metadata: { hw: 115, hh: 46 }
+			metadata: { hw: 115, hh: 64 }
 		},
 		line: { hw: 75, hh: 16 },
 		disc: { hw: 14, hh: 14 }
@@ -62,7 +63,9 @@
 	 * BIBLE rules this component still carries:
 	 *  - N1: subject (product) = tinted 30px tile + title + publisher +
 	 *    one-line description + footer (time · edited ×N · icon-number
-	 *    counts); a linked record (metadata) omits description and counts.
+	 *    counts); a linked record (metadata) omits counts but now carries
+	 *    the same one-line description (§9 anatomy) from its node-tile
+	 *    label, and its card is a document — round tile, folded corner.
 	 *  - N3 states: retracted = dashed red border + hatch + struck title;
 	 *    uninterpreted = mono rule-5 title (§9 writing rule); related
 	 *    product = dimmed + +N badge (admitted-but-hidden neighbors).
@@ -100,6 +103,12 @@
 	// icons.ts); fallback → deterministic i-prefix → kind default (N2).
 	const mapping = $derived(iconForNode(data.kind, data.event, data.typeToken));
 	const IconComponent = $derived(mapping.icon);
+	/** §9 anatomy: the glyph hue names the kind — accent blue for a product,
+	 * orange for a record. Warn rides the tile stroke (below), so the orange
+	 * glyph is the only warn carrier on either kind. */
+	const glyphClass = $derived(
+		mapping.warn || data.kind !== 'product' ? 'text-[var(--orange)]' : 'text-accent-ink'
+	);
 
 	/* Tile-settle (issue #82): the node-trickle UPGRADES this node in place —
 	 * a false→true `interpreted` flip earns one ~200ms settle-fade on title +
@@ -107,19 +116,40 @@
 	 * stands by #29c ruling as of #82. */
 	const bloom = firstPaintBloom(() => data.interpreted);
 
-	/** Ring stack: box-shadow paints FIRST-listed TOPMOST — accent leads
-	 * (selection must survive citation-lit), the cite hue trails at 6px so it
-	 * shows only as the outer band; the tint halo is for the unselected lit
-	 * case (accent covers it otherwise). */
-	const ringStyle = $derived.by(() => {
-		const layers: string[] = [];
-		if (data.selected) layers.push('0 0 0 4px var(--accent-tint)');
-		if (data.citationLit && data.citationIndex !== null) {
-			if (!data.selected) layers.push(`0 0 0 4px var(--cite-${data.citationIndex}-tint)`);
-			layers.push(`0 0 0 6px var(--cite-${data.citationIndex})`);
-		}
-		layers.push('0 1px 2px rgba(15, 23, 42, 0.05)');
-		return layers.join(', ');
+	/** Rings are plates, not box-shadows (see the `ringPlate` snippet): a shadow
+	 * follows the wrapper's radius and cannot follow the record's fold, so the
+	 * halo used to paint a rounded corner the card does not have. Only the soft
+	 * drop shadow stays on the wrapper. */
+	const ringStyle = '0 1px 2px rgba(15, 23, 42, 0.05)';
+	/** Selection halo hue: the kind's own colour (§9 anatomy). */
+	const haloColor = $derived(
+		data.kind === 'metadata' ? 'var(--orange-tint)' : 'var(--accent-tint)'
+	);
+	/** Border by state, with selection taking the kind hue — a selected record
+	 * must not be outlined in the product accent. */
+	const stateBorder = $derived.by(() => {
+		if (data.retracted) return 'border-2 border-dashed border-[var(--red)]';
+		if (!data.selected) return 'border-line';
+		return data.kind === 'metadata' ? 'border-[var(--orange)]' : 'border-accent';
+	});
+
+	/* Card surface fill, composed as ONE background shorthand: the inline
+	 * shorthand wins over any class background, so the document-fold hairline
+	 * and the retracted stripes must be layered here together or the stripes
+	 * would wipe the hairline. Layer order is first-listed topmost: hairline
+	 * over stripes/surface. The hairline is a 45° gradient whose stop sits at
+	 * (14/√2 + 1)px so its colored half hugs the diagonal cut (§9 anatomy);
+	 * a retracted record's hairline is --red to match its dashed border. */
+	const cardBackground = $derived.by(() => {
+		const isDocument = data.kind === 'metadata' && tier !== 'disc';
+		// 14/√2 + 1 puts the colored half exactly on the diagonal cut.
+		const hairline = isDocument
+			? `linear-gradient(-135deg, var(${data.retracted ? '--red' : '--line'}) calc(0.707 * 14px + 1px), transparent 0)`
+			: undefined;
+		const fill = data.retracted
+			? 'repeating-linear-gradient(45deg, var(--red-tint) 0 6px, var(--surface) 6px 12px)'
+			: 'var(--surface)';
+		return [hairline, fill].filter(Boolean).join(', ');
 	});
 
 	/** Time footer pieces (mono, machine-made — §9 writing rule). Hues are
@@ -163,6 +193,12 @@
 	 * stop (spec §9 keyboard rule, #39). -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<!-- §9 anatomy: a linked record is a DOCUMENT — its card is clipped at the
+ * top-right corner with a 14px cut and a folded flap. The clip lives on an
+ * INNER surface plus the ring plates: clipping the wrapper would swallow the
+ * +N badge. The outer wrapper therefore carries only the plates, the ring
+ * geometry and the badge; the inner card carries the radius, the border, the
+ * surface/stripes, the fold clip, the diagonal hairline and the content. -->
 <div
 	role="button"
 	tabindex="0"
@@ -176,131 +212,192 @@
 		hovered = false;
 		data.onHoverChange?.(data.id, false);
 	}}
-	class="graph-node relative rounded-[12px] border bg-surface text-left transition-shadow duration-150
-		{tier === 'full' ? (data.kind === 'product' ? 'w-[250px] px-3 py-2.5' : 'w-[230px] px-2.5 py-2') : ''}
-		{tier === 'line' ? 'flex w-[150px] items-center gap-1.5 rounded-[9px] px-2 py-1.5' : ''}
-		{tier === 'disc' ? 'flex h-7 w-7 items-center justify-center rounded-full p-0' : ''}
-		{data.retracted ? 'border-2 border-dashed border-[var(--red)]' : data.selected ? 'border-accent' : 'border-line'}
+	class="graph-node relative text-left transition-shadow duration-150
+		{tier === 'full' ? (data.kind === 'product' ? 'w-[250px] rounded-[12px]' : 'w-[230px] rounded-[12px]') : ''}
+		{tier === 'line' ? 'w-[150px] rounded-[9px]' : ''}
+		{tier === 'disc' ? 'h-7 w-7 rounded-full' : ''}
 		{data.role === 'related' && !data.retracted ? 'opacity-70' : ''}
 		{hovered || data.selected ? 'shadow-raised' : ''}"
 	style:box-shadow={ringStyle}
-	style:background={data.retracted
-		? 'repeating-linear-gradient(45deg, var(--red-tint) 0 6px, var(--surface) 6px 12px)'
-		: undefined}
 >
-	{#if tier === 'disc'}
-		<!-- The disc has no text, so the root button's aria-label names it; this
-			wrapper is the tip trigger so the +N bubble is its sibling, not a child. -->
-		<KeyHint hoverOnly nameless side="right" content={fullTitle}>
-			{#snippet trigger({ props })}
-				<span {...props} class="flex h-full w-full items-center justify-center rounded-full">
-					<IconComponent size={14} stroke-width={1.8} class={mapping.warn ? 'text-[var(--orange)]' : 'text-ink-2'} />
-				</span>
-			{/snippet}
-		</KeyHint>
-	{:else if tier === 'line'}
+	<!-- Selection and citation rings are PLATES, not box-shadows: a shadow
+		follows the wrapper's radius and cannot follow the fold, so the halo used
+		to round over the corner the record card does not have. A plate is inset
+		by the band width and clipped by the same polygon, scaled by that width
+		so the diagonal stays parallel to the cut; it sits UNDER the card, so
+		only the band shows. Wide bands render first — later plates paint on top,
+		keeping selection above a citation ring. -->
+	{#snippet ringPlate(band: number, color: string)}
 		<span
-			class="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border
-				{data.kind === 'product' ? 'border-[var(--accent)]/30 bg-accent-tint' : 'border-line bg-inset'}
-				{bloom.active ? 'settle-flip' : ''}"
-			onanimationend={() => bloom.clear()}
+			class="node-ring"
+			class:node-ring--fold={data.kind === 'metadata' && tier !== 'disc'}
+			style:inset={`-${band}px`}
+			style:--cut={`${14 + band}px`}
+			style:border-radius={tier === 'disc' ? '9999px' : `${(tier === 'line' ? 9 : 12) + band}px`}
+			style:background={color}
+		></span>
+	{/snippet}
+	{#if data.citationLit && data.citationIndex !== null}
+		{@render ringPlate(6, `var(--cite-${data.citationIndex})`)}
+		{@render ringPlate(
+			4,
+			data.selected ? haloColor : `var(--cite-${data.citationIndex}-tint)`
+		)}
+	{:else if data.selected}
+		{@render ringPlate(4, haloColor)}
+	{/if}
+	{#if tier === 'disc'}
+		<!-- The disc stays a circle for both kinds — no fold (§9 anatomy: the
+			document cut only exists where there is a card to fold). The root
+			button's aria-label names it; this wrapper is the tip trigger so the
+			+N bubble is its sibling, not a child. -->
+		<div
+			class="relative flex h-full w-full items-center justify-center rounded-full border bg-surface
+				{stateBorder}"
+			style:background={cardBackground}
 		>
-			<IconComponent
-				size={10}
-				stroke-width={1.8}
-				class={mapping.warn ? 'text-[var(--orange)]' : data.kind === 'product' ? 'text-accent-ink' : 'text-ink-2'}
-			/>
-		</span>
-		<KeyHint hoverOnly nameless side="right" content={fullTitle}>
-			{#snippet trigger({ props })}
-				<span
-					{...props}
-					class="truncate font-mono text-[10px] {data.retracted ? 'text-ink-3 line-through' : 'text-ink-2'} {bloom.active ? 'settle-flip' : ''}"
-					>{data.title}</span
-				>
-			{/snippet}
-		</KeyHint>
-	{:else}
-		<!-- full tier (N1) -->
-		<div class="flex items-center {data.kind === 'product' ? 'gap-2.5' : 'gap-2'}">
+			<KeyHint hoverOnly nameless side="right" content={fullTitle}>
+				{#snippet trigger({ props })}
+					<span {...props} class="flex h-full w-full items-center justify-center rounded-full">
+						<IconComponent size={14} stroke-width={1.8} class={glyphClass} />
+					</span>
+				{/snippet}
+			</KeyHint>
+		</div>
+	{:else if tier === 'line'}
+		<!-- Line tier stays title-only (§9 anatomy): the description line is a
+			full-tier affordance. A record still folds here — the cut is the kind
+			mark, independent of how much text the tier carries. -->
+		<div
+			class="relative flex items-center gap-1.5 rounded-[9px] border px-2 py-1.5
+				{data.kind === 'metadata' ? 'doc-cut' : ''}
+				{stateBorder}"
+			style:background={cardBackground}
+		>
 			<span
-				class="relative flex shrink-0 items-center justify-center rounded-lg border
-					{data.kind === 'product' ? 'h-[30px] w-[30px] border-[var(--accent)]/30 bg-accent-tint' : 'h-[26px] w-[26px] border-line bg-inset'}
-					{data.retracted ? 'border-[var(--red)]' : ''}
+				class="flex h-[18px] w-[18px] shrink-0 items-center justify-center border
+					{data.kind === 'product'
+					? 'rounded-md border-[var(--accent)]/30 bg-accent-tint'
+					: 'rounded-full border-line bg-inset'}
+					{mapping.warn && !data.retracted ? 'border-[var(--orange)]' : ''}
 					{bloom.active ? 'settle-flip' : ''}"
 				onanimationend={() => bloom.clear()}
 			>
 				<IconComponent
-					size={data.kind === 'product' ? 16 : 14}
-					stroke-width={1.7}
-					class={mapping.warn ? 'text-[var(--orange)]' : data.kind === 'product' ? 'text-accent-ink' : 'text-ink-2'}
+					size={10}
+					stroke-width={1.8}
+					class={glyphClass}
 				/>
 			</span>
-			<div class="min-w-0">
-				<KeyHint hoverOnly nameless side="right" content={fullTitle}>
-					{#snippet trigger({ props })}
-						<div
-							{...props}
-							class="truncate font-semibold {data.kind === 'product' ? 'text-[13.5px]' : 'text-[13px]'}
-								{data.interpreted ? 'font-sans' : 'font-mono text-[11.5px]'}
-								{data.retracted ? 'text-ink-3 line-through' : 'text-ink'}
-								{bloom.active ? 'settle-flip' : ''}"
-						>
-							{data.title}
-						</div>
-					{/snippet}
-				</KeyHint>
-				<!-- N5: publisher name ALWAYS (npub fallback mono inside the chip);
-					the avatar badge lives in the chip itself. -->
-				<PublisherChip pubkey={data.pubkey} />
-			</div>
+			<KeyHint hoverOnly nameless side="right" content={fullTitle}>
+				{#snippet trigger({ props })}
+					<span
+						{...props}
+						class="truncate font-mono text-[10px] {data.retracted ? 'text-ink-3 line-through' : 'text-ink-2'} {bloom.active ? 'settle-flip' : ''}"
+						>{data.title}</span
+					>
+				{/snippet}
+			</KeyHint>
+			{#if data.kind === 'metadata'}<span aria-hidden="true" class="doc-flap"></span>{/if}
 		</div>
-
-		{#if data.kind === 'product' && data.snippet !== undefined}
-			<p class="mt-1.5 truncate text-[12px] leading-[1.5] text-ink-2">{data.snippet}</p>
-		{/if}
-
-		{#if data.role === 'related'}
-			<p class="mt-1 text-[10px] text-ink-3">related product · click +{data.badge ?? 'N'} to expand</p>
-		{/if}
-
+	{:else}
+		<!-- full tier (N1) -->
 		<div
-			class="mt-2 flex items-center gap-2.5 border-t border-line/60 pt-1.5 font-mono text-[10.5px] text-ink-2"
+			class="relative rounded-[12px] border
+				{data.kind === 'product' ? 'px-3 py-2.5' : 'doc-cut px-2.5 py-2'}
+				{stateBorder}"
+			style:background={cardBackground}
 		>
-			<!-- event created_at is SECONDS; formatRel speaks ms (drawer/card
-				convention, same conversion). -->
-			<span class="flex items-center gap-1"><IconClock size={11} stroke-width={2} />{formatRel(data.createdAt * 1000)}</span
-			>
-			{#each footerBits as bit (bit.text)}
+			<div class="flex items-center {data.kind === 'product' ? 'gap-2.5' : 'gap-2'}">
 				<span
-					class={bit.tone === 'amber'
-						? 'font-medium text-[var(--orange)]'
-						: bit.tone === 'red'
-							? 'font-medium text-[var(--red)]'
-							: ''}>{bit.text}</span
+					class="relative flex shrink-0 items-center justify-center border
+						{data.kind === 'product'
+						? 'h-[30px] w-[30px] rounded-lg border-[var(--accent)]/30 bg-accent-tint'
+						: 'h-[26px] w-[26px] rounded-full border-line bg-inset'}
+						{data.retracted ? 'border-[var(--red)]' : ''}
+						{mapping.warn && !data.retracted ? 'border-[var(--orange)]' : ''}
+						{bloom.active ? 'settle-flip' : ''}"
+					onanimationend={() => bloom.clear()}
 				>
-			{/each}
-			{#if data.kind === 'product'}
-				<!-- Icon pair pinned with ResultCard (§9): IconFile =
-					bound records, IconLink = artifacts named by the record or its
-						bound records (TERM_ARTIFACTS, issue #77). -->
-				<!-- Hover-only: the card is the focusable target, so the
-					sr-only words carry the meaning for assistive tech. -->
-				<KeyHint hoverOnly nameless label={TERM_BOUND_RECORDS}>
-					{#snippet trigger({ props })}
-						<span {...props} class="ml-auto flex items-center gap-1"
-							><IconFile size={11} stroke-width={2} aria-hidden="true" />{data.boundMetadata}<span class="sr-only"> bound records</span></span
-						>
-					{/snippet}
-				</KeyHint>
-				<KeyHint hoverOnly nameless label={TERM_ARTIFACTS}>
-					{#snippet trigger({ props })}
-						<span {...props} class="flex items-center gap-1"
-							><IconLink size={11} stroke-width={2} aria-hidden="true" />{data.files}<span class="sr-only"> artifacts</span></span
-						>
-					{/snippet}
-				</KeyHint>
+					<IconComponent
+						size={data.kind === 'product' ? 16 : 14}
+						stroke-width={1.7}
+						class={glyphClass}
+					/>
+				</span>
+				<div class="min-w-0">
+					<KeyHint hoverOnly nameless side="right" content={fullTitle}>
+						{#snippet trigger({ props })}
+							<div
+								{...props}
+								class="truncate font-semibold {data.kind === 'product' ? 'text-[13.5px]' : 'text-[13px]'}
+									{data.interpreted ? 'font-sans' : 'font-mono text-[11.5px]'}
+									{data.retracted ? 'text-ink-3 line-through' : 'text-ink'}
+									{bloom.active ? 'settle-flip' : ''}"
+							>
+								{data.title}
+							</div>
+						{/snippet}
+					</KeyHint>
+					<!-- N5: publisher name ALWAYS (npub fallback mono inside the chip);
+						the avatar badge lives in the chip itself. -->
+					<PublisherChip pubkey={data.pubkey} />
+				</div>
+			</div>
+
+			{#if data.snippet !== undefined}
+				<!-- §9 anatomy: one description line on both kinds (a product's card
+					snippet, a record's node-tile label). It only ever exists on an
+					interpreted node — an uninterpreted one has no description, because
+					its rule-5 title already IS the first content line. -->
+				<p class="mt-1.5 truncate text-[12px] leading-[1.5] text-ink-2">
+					{data.snippet}
+				</p>
 			{/if}
+
+			{#if data.role === 'related'}
+				<p class="mt-1 text-[10px] text-ink-3">related product · click +{data.badge ?? 'N'} to expand</p>
+			{/if}
+
+			<div
+				class="mt-2 flex items-center gap-2.5 border-t border-line/60 pt-1.5 font-mono text-[10.5px] text-ink-2"
+			>
+				<!-- event created_at is SECONDS; formatRel speaks ms (drawer/card
+					convention, same conversion). -->
+				<span class="flex items-center gap-1"><IconClock size={11} stroke-width={2} />{formatRel(data.createdAt * 1000)}</span
+				>
+				{#each footerBits as bit (bit.text)}
+					<span
+						class={bit.tone === 'amber'
+							? 'font-medium text-[var(--orange)]'
+							: bit.tone === 'red'
+								? 'font-medium text-[var(--red)]'
+								: ''}>{bit.text}</span
+					>
+				{/each}
+				{#if data.kind === 'product'}
+					<!-- Icon pair pinned with ResultCard (§9): IconFile =
+						bound records, IconLink = artifacts named by the record or its
+							bound records (TERM_ARTIFACTS, issue #77). -->
+					<!-- Hover-only: the card is the focusable target, so the
+						sr-only words carry the meaning for assistive tech. -->
+					<KeyHint hoverOnly nameless label={TERM_BOUND_RECORDS}>
+						{#snippet trigger({ props })}
+							<span {...props} class="ml-auto flex items-center gap-1"
+								><IconFile size={11} stroke-width={2} aria-hidden="true" />{data.boundMetadata}<span class="sr-only"> bound records</span></span
+							>
+						{/snippet}
+					</KeyHint>
+					<KeyHint hoverOnly nameless label={TERM_ARTIFACTS}>
+						{#snippet trigger({ props })}
+							<span {...props} class="flex items-center gap-1"
+								><IconLink size={11} stroke-width={2} aria-hidden="true" />{data.files}<span class="sr-only"> artifacts</span></span
+							>
+						{/snippet}
+					</KeyHint>
+				{/if}
+			</div>
+			{#if data.kind === 'metadata'}<span aria-hidden="true" class="doc-flap"></span>{/if}
 		</div>
 	{/if}
 
@@ -337,5 +434,49 @@
 	.graph-node:focus-visible {
 		outline: 2px solid var(--accent);
 		outline-offset: 3px;
+	}
+
+	/* Document fold (§9 anatomy): a linked record is a document, so its card is
+	 * clipped at the top-right corner with a 14px diagonal cut. The 12px
+	 * border-radius survives because the rounded corners sit INSIDE this
+	 * polygon. The cut lives on the inner card and on the ring plate — never on
+	 * the wrapper, where it would swallow the +N badge. The plate's cut is the
+	 * card's plus the band width, so the halo stays parallel to the fold. The
+	 * disc tier keeps its circle and gets no fold. */
+	.doc-cut,
+	.node-ring--fold {
+		--cut: 14px;
+		clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%);
+	}
+
+	/* A ring plate rides under the card; the cards are all `relative` so they
+	 * stack above it by DOM order. */
+	.node-ring {
+		position: absolute;
+		pointer-events: none;
+	}
+
+	/* The border cannot follow the diagonal, so the hairline is painted as a
+	 * background layer — composed in `cardBackground` alongside the retracted
+	 * stripes, because the inline background shorthand would otherwise wipe
+	 * any class-level background-image. */
+
+	/* The folded flap: the little triangle of paper left just under the cut.
+	 * It must sit on the KEPT side of the diagonal — the lower-left half of
+	 * the 14px corner box — because the clip polygon already removed the
+	 * upper-right half; a flap painted there would be invisible. So the fill
+	 * is a +45deg gradient (fills toward the bottom-left), with a --line
+	 * hypotenuse running along the same diagonal as the cut. Decorative only;
+	 * this is what reads as a paper fold rather than a chamfer. */
+	.doc-flap {
+		position: absolute;
+		top: 0;
+		right: 0;
+		width: 14px;
+		height: 14px;
+		background:
+			linear-gradient(45deg, transparent calc(50% - 0.75px), var(--line) calc(50% - 0.75px), var(--line) calc(50% + 0.75px), transparent calc(50% + 0.75px)),
+			linear-gradient(45deg, var(--inset) 50%, transparent 50%);
+		pointer-events: none;
 	}
 </style>

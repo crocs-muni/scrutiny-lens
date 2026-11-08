@@ -408,12 +408,13 @@ describe('deriveSubjectGraph — node voice', () => {
 			cards: [cardFor(f.root)],
 			tiles
 		});
-		// Record: tile paints sans with the token — never the rule-5 mono id.
+		// Record: tile paints sans with the token — never the rule-5 mono id —
+		// and its tile label is the description line (§9 anatomy).
 		expect(view.nodes.find((n) => n.id === 'm1')).toMatchObject({
 			title: 'ROCA advisory for the TPM module',
 			interpreted: true,
 			typeToken: 'vulnerability',
-			snippet: undefined
+			snippet: 'ROCA advisory'
 		});
 		// Product: the card surface outranks the node tile even on a hit.
 		expect(view.nodes.find((n) => n.id === 'root')).toMatchObject({
@@ -428,6 +429,43 @@ describe('deriveSubjectGraph — node voice', () => {
 			cards: []
 		});
 		expect(noTiles.nodes.find((n) => n.id === 'm1')).toMatchObject({ interpreted: false, typeToken: undefined });
+	});
+
+	it('an interpreted linked record carries its node-tile label as the description line (§9 anatomy)', () => {
+		const f = baseFixture();
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', {
+			showDeleted: false,
+			expanded: NO_EXPAND, expandedBridges: NO_BRIDGES,
+			cards: [],
+			tiles: new Map([
+				['m1', { title: 'ROCA advisory for the TPM module', typeToken: 'vulnerability', metaType: 'advisory', label: 'ROCA advisory' }]
+			])
+		});
+		expect(view.nodes.find((n) => n.id === 'm1')).toMatchObject({ interpreted: true, snippet: 'ROCA advisory' });
+	});
+
+	it('an uninterpreted record has no description line (rule-5 skeleton is never AI prose)', () => {
+		const f = baseFixture();
+		// No tile, no card: the record falls back to its rule-5 mono title and
+		// `interpreted` is false, so no snippet may surface even though the
+		// deterministic fallback title exists — an uninterpreted card must
+		// never dress a skeleton up as AI prose (§9 writing rule).
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', {
+			showDeleted: false,
+			expanded: NO_EXPAND, expandedBridges: NO_BRIDGES,
+			cards: []
+		});
+		expect(view.nodes.find((n) => n.id === 'm1')).toMatchObject({ interpreted: false, snippet: undefined });
+	});
+
+	it('a product still takes its card snippet as the description line', () => {
+		const f = baseFixture();
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', {
+			showDeleted: false,
+			expanded: NO_EXPAND, expandedBridges: NO_BRIDGES,
+			cards: [cardFor(f.root, { snippet: 'ROCA-affected Athena smartcard' })]
+		});
+		expect(view.nodes.find((n) => n.id === 'root')).toMatchObject({ interpreted: true, snippet: 'ROCA-affected Athena smartcard' });
 	});
 
 	it('subject counts scan the admitted store, not the placed subset', () => {
