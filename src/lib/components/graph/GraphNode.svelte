@@ -125,6 +125,13 @@
 	const haloColor = $derived(
 		data.kind === 'metadata' ? 'var(--orange-tint)' : 'var(--accent-tint)'
 	);
+	/** Border by state, with selection taking the kind hue — a selected record
+	 * must not be outlined in the product accent. */
+	const stateBorder = $derived.by(() => {
+		if (data.retracted) return 'border-2 border-dashed border-[var(--red)]';
+		if (!data.selected) return 'border-line';
+		return data.kind === 'metadata' ? 'border-[var(--orange)]' : 'border-accent';
+	});
 
 	/* Card surface fill, composed as ONE background shorthand: the inline
 	 * shorthand wins over any class background, so the document-fold hairline
@@ -245,8 +252,8 @@
 			button's aria-label names it; this wrapper is the tip trigger so the
 			+N bubble is its sibling, not a child. -->
 		<div
-			class="flex h-full w-full items-center justify-center rounded-full border bg-surface
-				{data.retracted ? 'border-2 border-dashed border-[var(--red)]' : data.selected ? 'border-accent' : 'border-line'}"
+			class="relative flex h-full w-full items-center justify-center rounded-full border bg-surface
+				{stateBorder}"
 			style:background={cardBackground}
 		>
 			<KeyHint hoverOnly nameless side="right" content={fullTitle}>
@@ -262,9 +269,9 @@
 			full-tier affordance. A record still folds here — the cut is the kind
 			mark, independent of how much text the tier carries. -->
 		<div
-			class="flex items-center gap-1.5 rounded-[9px] border px-2 py-1.5
+			class="relative flex items-center gap-1.5 rounded-[9px] border px-2 py-1.5
 				{data.kind === 'metadata' ? 'doc-cut' : ''}
-				{data.retracted ? 'border-2 border-dashed border-[var(--red)]' : data.selected ? 'border-accent' : 'border-line'}"
+				{stateBorder}"
 			style:background={cardBackground}
 		>
 			<span
@@ -296,9 +303,9 @@
 	{:else}
 		<!-- full tier (N1) -->
 		<div
-			class="rounded-[12px] border
+			class="relative rounded-[12px] border
 				{data.kind === 'product' ? 'px-3 py-2.5' : 'doc-cut px-2.5 py-2'}
-				{data.retracted ? 'border-2 border-dashed border-[var(--red)]' : data.selected ? 'border-accent' : 'border-line'}"
+				{stateBorder}"
 			style:background={cardBackground}
 		>
 			<div class="flex items-center {data.kind === 'product' ? 'gap-2.5' : 'gap-2'}">
