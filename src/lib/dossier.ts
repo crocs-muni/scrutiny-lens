@@ -3,12 +3,12 @@
  *
  * Everything here is deterministic: the drawer's four sections render this
  * shape verbatim, so the drawer's landing PR can assert "AI writes nothing in
- * the drawer" structurally (spec §2 rule 1). The ONE cache read is the card
- * title/description on a cache hit — the interpretations cache keyed
- * (eventId, model) that the results cards already read (spec §6); a miss
- * never spawns an AI call, it falls back to the exact rule-5 vocabulary the
- * card shows (deriveFallbackTitle, exported from cards.ts so the fallback
- * cannot drift between surfaces).
+ * the drawer" structurally (spec §2 rule 1). The cache reads are the
+ * interpretations the trust lanes already wrote and persisted (spec §6): a
+ * product's card title/description, or a linked record's node-tile title and
+ * label. A subject neither lane touched never spawns an AI call — it falls back
+ * to the exact rule-5 vocabulary the card shows (deriveFallbackTitle, exported
+ * from cards.ts so the fallback cannot drift between surfaces).
  *
  * Protocol seam rulings baked in:
  * - core.resolve() is the sole patch source (AGENTS.md hard rule). History
@@ -41,6 +41,7 @@ import {
 	type Resolution
 } from '$lib/fabric';
 import { deriveFallbackTitle, type ProductCard } from '$lib/pipeline/cards';
+import type { NodeTile } from '$lib/graph/subject-graph';
 import { artifactsOf, type ArtifactRef } from '$lib/artifacts';
 
 export interface DossierTitle {
@@ -370,7 +371,8 @@ function fileRows(
 export function deriveDossier(
 	subjectId: string,
 	events: NostrEvent[],
-	cards: ProductCard[]
+	cards: ProductCard[],
+	tiles: ReadonlyMap<string, NodeTile> = new Map()
 ): Dossier | null {
 	const subject = events.find((e) => e.id === subjectId);
 	if (subject === undefined) return null;
@@ -382,7 +384,16 @@ export function deriveDossier(
 	if (type !== 'product' && type !== 'metadata') return null;
 
 	const card = cards.find((c) => c.id === subjectId);
-	const interpreted = card !== undefined && card.interpreted;
+	// One interpretation per subject, from whichever lane touched it: the card
+	// lane paints products during a search fill, the node lane paints whatever
+	// the canvas placed (§9 anatomy). A linked record has no card, so its title
+	// and one-liner live in the tile — without this the drawer showed a record's
+	// rule-5 title beside a canvas card carrying its AI text.
+	const tile = tiles.get(subjectId);
+	const cardTitle = card !== undefined && card.interpreted ? card.title : undefined;
+	const interpreted = cardTitle !== undefined || tile !== undefined;
+	const title = cardTitle ?? tile?.title ?? deriveFallbackTitle(subject);
+	const snippet = (card !== undefined && card.interpreted ? card.snippet : undefined) ?? tile?.label;
 	const resolution = resolve(subjectId, coreEvents);
 	const retraction = retractionOf(coreSubject, coreEvents);
 	const content = contentOf(resolution);
@@ -394,12 +405,11 @@ export function deriveDossier(
 		subject,
 		subjectType: type,
 		retracted: retraction !== undefined,
-		title: {
-			text: interpreted && card !== undefined ? card.title : deriveFallbackTitle(subject),
-			interpreted
-		},
-		// Descriptions are products-only (BIBLE N1 ④) and cache-only.
-		snippet: type === 'product' && interpreted ? card?.snippet : undefined,
+		title: { text: title, interpreted },
+		// §9 anatomy: the description line exists on both kinds now — a product's
+		// card snippet, a record's node-tile label; an uninterpreted subject shows
+		// no line at all rather than fabricated prose.
+		snippet: interpreted ? snippet : undefined,
 		identifiers,
 		publisher: subject.pubkey,
 		createdAt: subject.created_at,
