@@ -116,20 +116,15 @@
 	 * stands by #29c ruling as of #82. */
 	const bloom = firstPaintBloom(() => data.interpreted);
 
-	/** Ring stack: box-shadow paints FIRST-listed TOPMOST — accent leads
-	 * (selection must survive citation-lit), the cite hue trails at 6px so it
-	 * shows only as the outer band; the tint halo is for the unselected lit
-	 * case (accent covers it otherwise). */
-	const ringStyle = $derived.by(() => {
-		const layers: string[] = [];
-		if (data.selected) layers.push('0 0 0 4px var(--accent-tint)');
-		if (data.citationLit && data.citationIndex !== null) {
-			if (!data.selected) layers.push(`0 0 0 4px var(--cite-${data.citationIndex}-tint)`);
-			layers.push(`0 0 0 6px var(--cite-${data.citationIndex})`);
-		}
-		layers.push('0 1px 2px rgba(15, 23, 42, 0.05)');
-		return layers.join(', ');
-	});
+	/** Rings are plates, not box-shadows (see the `ringPlate` snippet): a shadow
+	 * follows the wrapper's radius and cannot follow the record's fold, so the
+	 * halo used to paint a rounded corner the card does not have. Only the soft
+	 * drop shadow stays on the wrapper. */
+	const ringStyle = '0 1px 2px rgba(15, 23, 42, 0.05)';
+	/** Selection halo hue: the kind's own colour (§9 anatomy). */
+	const haloColor = $derived(
+		data.kind === 'metadata' ? 'var(--orange-tint)' : 'var(--accent-tint)'
+	);
 
 	/* Card surface fill, composed as ONE background shorthand: the inline
 	 * shorthand wins over any class background, so the document-fold hairline
@@ -192,12 +187,11 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <!-- §9 anatomy: a linked record is a DOCUMENT — its card is clipped at the
- * top-right corner with a 14px diagonal cut and a folded flap. The clip must
- * live on an INNER surface: clip-path on the ring element would notch the
- * selection/citation box-shadows, and it would swallow the +N badge. The
- * outer wrapper therefore carries ONLY the ring and the badge; the inner
- * card carries the radius, the border, the surface/stripes, the fold clip,
- * the diagonal hairline and the content. -->
+ * top-right corner with a 14px cut and a folded flap. The clip lives on an
+ * INNER surface plus the ring plates: clipping the wrapper would swallow the
+ * +N badge. The outer wrapper therefore carries only the plates, the ring
+ * geometry and the badge; the inner card carries the radius, the border, the
+ * surface/stripes, the fold clip, the diagonal hairline and the content. -->
 <div
 	role="button"
 	tabindex="0"
@@ -219,6 +213,32 @@
 		{hovered || data.selected ? 'shadow-raised' : ''}"
 	style:box-shadow={ringStyle}
 >
+	<!-- Selection and citation rings are PLATES, not box-shadows: a shadow
+		follows the wrapper's radius and cannot follow the fold, so the halo used
+		to round over the corner the record card does not have. A plate is inset
+		by the band width and clipped by the same polygon, scaled by that width
+		so the diagonal stays parallel to the cut; it sits UNDER the card, so
+		only the band shows. Wide bands render first — later plates paint on top,
+		keeping selection above a citation ring. -->
+	{#snippet ringPlate(band: number, color: string)}
+		<span
+			class="node-ring"
+			class:node-ring--fold={data.kind === 'metadata'}
+			style:inset={`-${band}px`}
+			style:--cut={`${14 + band}px`}
+			style:border-radius={tier === 'disc' ? '9999px' : `${(tier === 'line' ? 9 : 12) + band}px`}
+			style:background={color}
+		></span>
+	{/snippet}
+	{#if data.citationLit && data.citationIndex !== null}
+		{@render ringPlate(6, `var(--cite-${data.citationIndex})`)}
+		{@render ringPlate(
+			4,
+			data.selected ? haloColor : `var(--cite-${data.citationIndex}-tint)`
+		)}
+	{:else if data.selected}
+		{@render ringPlate(4, haloColor)}
+	{/if}
 	{#if tier === 'disc'}
 		<!-- The disc stays a circle for both kinds — no fold (§9 anatomy: the
 			document cut only exists where there is a card to fold). The root
@@ -409,15 +429,28 @@
 		outline-offset: 3px;
 	}
 
-	/* Document fold (§9 anatomy): a linked record is a document, so its card
-	 * is clipped at the top-right corner with a 14px diagonal cut. The 12px
+	/* Document fold (§9 anatomy): a linked record is a document, so its card is
+	 * clipped at the top-right corner with a 14px diagonal cut. The 12px
 	 * border-radius survives because the rounded corners sit INSIDE this
-	 * polygon. The cut lives on the inner card, never on the ring wrapper —
-	 * clip-path there would notch the selection/citation box-shadows and
-	 * swallow the +N badge. The disc tier keeps its circle and gets no fold. */
+	 * polygon. The cut lives on the inner card and on the ring plate — never on
+	 * the wrapper, where it would swallow the +N badge. The plate's cut is the
+	 * card's plus the band width, so the halo stays parallel to the fold. The
+	 * disc tier keeps its circle and gets no fold. */
+	.doc-cut,
+	.node-ring--fold {
+		--cut: 14px;
+		clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%);
+	}
+
 	.doc-cut {
 		position: relative;
-		clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+	}
+
+	/* A ring plate rides under the card. Declared after `.doc-cut` so its
+	 * absolute placement wins on the plate element. */
+	.node-ring {
+		position: absolute;
+		pointer-events: none;
 	}
 
 	/* The border cannot follow the diagonal, so the hairline is painted as a
