@@ -266,8 +266,8 @@
 			</span>
 		{/if}
 		<span class="min-w-0 flex-1"></span>
-	<!-- BIBLE L1090: share lives in the drawer header — copies the
-		record's share links (issue #31: URL + nostr: URI). -->
+		<!-- BIBLE L1090: share lives in the drawer header — copies the
+			record's share links (issue #31: URL + nostr: URI). -->
 		{#if dossier !== null}
 			<KeyHint
 				label="Clear selection"

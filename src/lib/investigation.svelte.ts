@@ -816,9 +816,9 @@ class Investigation {
     // Store-level selection: the drawer opens on the shared subject — the
     // card-inspection screen the share URL promises (spec §8).
     this.selectSubject(root.id);
-    this.lastView = 'session';
-    this.lastDrawerOpen = true;
-    this.persistRunRecord();
+    // The share promises the card-inspection screen, so the cold open IS the
+    // session's last view (issue #142 follow-up).
+    this.rememberView('session', true);
     // §8.2 dossier context — patches and deletions are unreachable by the
     // search's discovery filters; open them the way a card click would
     // (fire-and-forget like openDossier, spec §8.2 lens #68). Same $state
@@ -957,17 +957,15 @@ class Investigation {
     // product, else the first admitted event (a metadata-only share), so a
     // zero-card session still has a graph to open.
     const admittedIds = new Set(events.map((e) => e.id));
-    const persistedAnchor =
-      run.graphSubjectId !== undefined &&
-      run.graphSubjectId !== null &&
-      admittedIds.has(run.graphSubjectId)
+    this.graphSubjectId =
+      (run.graphSubjectId != null && admittedIds.has(run.graphSubjectId)
         ? run.graphSubjectId
-        : null;
-    this.graphSubjectId = persistedAnchor ?? assembled[0]?.id ?? events[0]?.id ?? null;
+        : null) ??
+      assembled[0]?.id ??
+      events[0]?.id ??
+      null;
     this.selectedEventId =
-      run.selectedEventId !== undefined &&
-      run.selectedEventId !== null &&
-      admittedIds.has(run.selectedEventId)
+      run.selectedEventId != null && admittedIds.has(run.selectedEventId)
         ? run.selectedEventId
         : null;
     this.lastView = run.centerView ?? 'results';
@@ -1250,9 +1248,7 @@ class Investigation {
 
   /** Pop the most recent anchor step. The page owns focus + context fill. */
   popAnchor(): AnchorFrame | null {
-    const frame = this.anchorHistory.at(-1) ?? null;
-    if (frame !== null) this.anchorHistory.pop();
-    return frame;
+    return this.anchorHistory.pop() ?? null;
   }
 
   /** Results is a trail root: a detour there starts a fresh anchor history. */
@@ -1260,8 +1256,8 @@ class Investigation {
     this.anchorHistory = [];
   }
 
-  /** Persist the session's last center view/drawer state. The page calls
-   * this after a view hop or drawer toggle; the run record carries it to the
+  /** Persist the session's last center view/drawer state — called after a
+   * view hop, drawer toggle, or cold open; the run record carries it to the
    * rail re-open and reload paths. */
   rememberView(view: 'results' | 'session', drawerOpen: boolean): void {
     if (this.lastView === view && this.lastDrawerOpen === drawerOpen) return;

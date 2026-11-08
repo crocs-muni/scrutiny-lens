@@ -12,6 +12,8 @@
 	interface Props {
 		crumb: NavCrumb;
 		class: string;
+		/** The button branch (a crumb with a real destination) always gets
+		 * one; the current-card span has no activation to pass. */
 		onActivate?: () => void;
 	}
 

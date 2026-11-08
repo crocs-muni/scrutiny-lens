@@ -115,15 +115,15 @@ export function deriveNavTrail(input: {
 		: hasSubject && previousAnchorTitle !== null
 			? 'previous-anchor'
 			: 'results';
-	const upLabel = onResults
-		? ''
-		: up === 'previous-anchor'
+	const upLabel =
+		up === 'previous-anchor'
 			? `Back to ${previousAnchorTitle}`
-			: 'Back to results';
+			: up === 'results'
+				? 'Back to results'
+				: '';
 	const current = crumbs[crumbs.length - 1];
-	const live = onResults
-		? `At ${current.label}`
-		: `At ${current.label}; ${upLabel}`;
+	const live =
+		up === null ? `At ${current.label}` : `At ${current.label}; ${upLabel}`;
 
 	return { rootLabel: 'Results', crumbs, up, upLabel, live };
 }

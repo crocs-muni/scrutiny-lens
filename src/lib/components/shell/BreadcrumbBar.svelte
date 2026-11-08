@@ -59,10 +59,6 @@
 			: base;
 	}
 
-	function openCrumb(crumb: NavCrumb): void {
-		if (crumb.action === null) return;
-		onCrumb(crumb.action);
-	}
 </script>
 
 <nav
@@ -116,6 +112,7 @@
 		</span>
 		<ol class="flex min-w-0 flex-1 items-baseline gap-2">
 			{#each trail.crumbs as crumb, i (crumb.level)}
+				{@const action = crumb.action}
 				{#if i > 0}
 					<li aria-hidden="true" class="flex shrink-0 items-center">
 						<svg
@@ -134,7 +131,7 @@
 					<BreadcrumbTrigger
 						{crumb}
 						class={crumbClass(crumb)}
-						onActivate={() => openCrumb(crumb)}
+						onActivate={action === null ? undefined : () => onCrumb(action)}
 					/>
 				</li>
 			{/each}

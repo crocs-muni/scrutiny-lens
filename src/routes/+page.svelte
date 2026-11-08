@@ -217,32 +217,25 @@
 		if (id === null || session === null) return null;
 		return deriveDossier(id, session.admitted, investigation.cards);
 	});
-	// ADR 0001's companion announcement: persistence is never silent. The
-	// flag compares against the surface the subject actually renders on:
-	// product subjects are visible iff their CARD survives the filters
-	// (the interpretation/semantic axes touch cards, not events — an
-	// events-only comparison would suppress the announcement exactly when
-	// it matters), metadata subjects iff their event survives.
-	const selectionHidden = $derived.by(() => {
-		if (dossier === null || investigation.selectedEventId === null) return false;
-		if (Object.keys(investigation.selections).length === 0) return false;
-		const id = investigation.selectedEventId;
-		const isCardSubject = investigation.cards.some((c) => c.id === id);
-		return isCardSubject
-			? !viewCards.some((c) => c.id === id)
-			: !viewEvents.some((e) => e.id === id);
-	});
-	/** The results ring follows the CARD (the graph anchor), not the drawer
-	 * selection. A filtered-out anchor gets its own announcement, separate
-	 * from the selected event's banner in the drawer. */
-	const anchorHidden = $derived.by(() => {
-		const id = investigation.graphSubjectId;
+	/** The surface a subject renders on decides visibility: product subjects
+	 * are visible iff their CARD survives the filters (the
+	 * interpretation/semantic axes touch cards, not events), metadata
+	 * subjects iff their event survives. */
+	// ADR 0001's companion announcement: persistence is never silent.
+	function hiddenByFilters(id: string | null): boolean {
 		if (id === null || Object.keys(investigation.selections).length === 0) return false;
 		const isCardSubject = investigation.cards.some((c) => c.id === id);
 		return isCardSubject
 			? !viewCards.some((c) => c.id === id)
 			: !viewEvents.some((e) => e.id === id);
-	});
+	}
+	const selectionHidden = $derived(
+		dossier !== null && hiddenByFilters(investigation.selectedEventId)
+	);
+	/** The results ring follows the CARD (the graph anchor), not the drawer
+	 * selection. A filtered-out anchor gets its own announcement, separate
+	 * from the selected event's banner in the drawer. */
+	const anchorHidden = $derived(hiddenByFilters(investigation.graphSubjectId));
 
 	// Session-surface honesty gate (#29b): the canvas AND the drawer derive
 	// from the LIVE investigation store. Reopening an older session while a
@@ -378,9 +371,7 @@
 		captureResultsScroll();
 		if (origin === 'results') investigation.clearAnchorHistory();
 		investigation.selectSubject(id, origin);
-		shell.drawerOpen = true;
-		shell.view = 'session';
-		rememberCurrentView();
+		enterSession();
 		// §8.2 dossier context (#68/#75): patches and deletions are unreachable
 		// by the search's discovery filters, so the dossier fetches them on open.
 		void investigation.ensureSubjectContext(id);
@@ -392,8 +383,7 @@
 	 * map, where the canvas shows an unrelated neighborhood. */
 	function selectNode(id: string): void {
 		investigation.selectSubject(id, 'map');
-		shell.drawerOpen = true;
-		rememberCurrentView();
+		enterSession();
 		void investigation.ensureSubjectContext(id);
 	}
 	/** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc / the
@@ -411,10 +401,17 @@
 		}
 	}
 
+	/** Land on the session surface with the drawer open, and persist it. */
+	function enterSession(): void {
+		shell.view = 'session';
+		shell.drawerOpen = true;
+		rememberCurrentView();
+	}
+
 	/** One-step ascend (issue #142): the chevron/Esc pops one anchor frame
 	 * (previous card + its drawer selection) and otherwise returns to Results
-	 * at the preserved scroll. Focus lands where the user now is, never
-	 * <body>. */
+	 * at the preserved scroll. The pressed control disappears at the new
+	 * level, so focus lands on the bar's next back control, never <body>. */
 	async function ascend(target: AscendTarget): Promise<void> {
 		if (target === 'previous-anchor') {
 			const frame = investigation.popAnchor();
@@ -422,9 +419,7 @@
 				returnToResults();
 			} else {
 				investigation.restoreAnchor(frame.anchorId, frame.selectionId);
-				shell.view = 'session';
-				shell.drawerOpen = true;
-				rememberCurrentView();
+				enterSession();
 				void investigation.ensureSubjectContext(frame.selectionId ?? frame.anchorId);
 			}
 		} else {
@@ -434,14 +429,29 @@
 		breadcrumbBar?.focusAfterAscend();
 	}
 
+	/** The question crumb is the real Results destination; `Results` itself
+	 * is the section label outside the breadcrumb list. */
 	async function goToCrumb(action: NavAction): Promise<void> {
-		// The question crumb is the real Results destination; `Results` itself
-		// is the section label outside the breadcrumb list. The pressed button
-		// disappears at the new level, so focus moves to the bar.
-		if (action !== 'results') return;
-		returnToResults();
-		await tick();
-		breadcrumbBar?.focusAfterAscend();
+		if (action === 'results') await ascend(action);
+	}
+
+	/** The zero-card results surface's graph hop (the `View graph` control):
+	 * a metadata-only share/search has no product cards to click, so the
+	 * graph opens on its entry anchor on demand — Results is the trail root,
+	 * and the hop is remembered for the rail's re-open. */
+	function openGraphFromResults(): void {
+		// graphEntry is the entry anchor the button rendered for; it is null
+		// again if the state changed between render and this click.
+		if (graphEntry === null) return;
+		if (investigation.graphSubjectId === null) {
+			captureResultsScroll();
+			investigation.clearAnchorHistory();
+			investigation.selectSubject(graphEntry, 'results');
+			shell.drawerOpen = true;
+			void investigation.ensureSubjectContext(graphEntry);
+		}
+		shell.view = 'session';
+		rememberCurrentView();
 	}
 
 	/** Session → results (issue #142). The card/selection survive as
@@ -451,6 +461,13 @@
 		investigation.clearAnchorHistory();
 		shell.view = 'results';
 		rememberCurrentView();
+	}
+
+	/** Rail re-open / reload restore: land on the view and drawer state the
+	 * run record remembers for this session. */
+	function landOnLastView(): void {
+		shell.view = investigation.lastView;
+		shell.drawerOpen = investigation.lastDrawerOpen;
 	}
 
 	/** Esc precedence (issue #142): the settings modal (inside
@@ -712,8 +729,7 @@
 			// graph/card the user left open), not always Results. The run
 			// record carries the same state across a reload.
 			if (id === investigation.sessionId && (investigation.running || investigation.result !== null)) {
-				shell.view = investigation.lastView;
-				shell.drawerOpen = investigation.lastDrawerOpen;
+				landOnLastView();
 				return;
 			}
 			// #83: a session evicted from memory by a reload rebuilds from local
@@ -723,10 +739,7 @@
 				// Identity guard (review H2): a start()/openShared() since the
 				// click already own the rail — a late restore resolve must
 				// never yank the view back.
-				if (ok && shell.session?.id === id) {
-					shell.view = investigation.lastView;
-					shell.drawerOpen = investigation.lastDrawerOpen;
-				}
+				if (ok && shell.session?.id === id) landOnLastView();
 			});
 		}}
 		onClose={(id) => {
@@ -871,15 +884,7 @@
 											<button
 												type="button"
 												class="shrink-0 text-[12.5px] text-accent-ink underline underline-offset-2 hover:text-ink"
-												onclick={() => {
-													if (investigation.graphSubjectId === null) {
-														investigation.clearAnchorHistory();
-														investigation.selectSubject(graphEntry, 'results');
-														shell.drawerOpen = true;
-														void investigation.ensureSubjectContext(graphEntry);
-													}
-													shell.view = 'session';
-												}}
+												onclick={openGraphFromResults}
 											>
 												View graph
 											</button>
