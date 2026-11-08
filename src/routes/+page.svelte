@@ -380,6 +380,7 @@
 		investigation.selectSubject(id, origin);
 		shell.drawerOpen = true;
 		shell.view = 'session';
+		rememberCurrentView();
 		// §8.2 dossier context (#68/#75): patches and deletions are unreachable
 		// by the search's discovery filters, so the dossier fetches them on open.
 		void investigation.ensureSubjectContext(id);
@@ -392,12 +393,22 @@
 	function selectNode(id: string): void {
 		investigation.selectSubject(id, 'map');
 		shell.drawerOpen = true;
+		rememberCurrentView();
 		void investigation.ensureSubjectContext(id);
 	}
 	/** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc / the
 	 * drawer's visible Clear control. */
 	function clearSelection(): void {
 		investigation.clearSelection();
+		rememberCurrentView();
+	}
+
+	/** Persist the session's last center view/drawer state after every hop
+	 * or drawer toggle; the rail and reload paths read it back. */
+	function rememberCurrentView(): void {
+		if (shell.view === 'results' || shell.view === 'session') {
+			investigation.rememberView(shell.view, shell.drawerOpen);
+		}
 	}
 
 	/** One-step ascend (issue #142): the chevron/Esc pops one anchor frame
@@ -413,6 +424,7 @@
 				investigation.restoreAnchor(frame.anchorId, frame.selectionId);
 				shell.view = 'session';
 				shell.drawerOpen = true;
+				rememberCurrentView();
 				void investigation.ensureSubjectContext(frame.selectionId ?? frame.anchorId);
 			}
 		} else {
@@ -438,6 +450,7 @@
 	function returnToResults(): void {
 		investigation.clearAnchorHistory();
 		shell.view = 'results';
+		rememberCurrentView();
 	}
 
 	/** Esc precedence (issue #142): the settings modal (inside
@@ -464,7 +477,7 @@
 				return;
 			}
 		}
-		handleShellKeydown(event);
+		if (handleShellKeydown(event)) rememberCurrentView();
 	}
 	// A cold-open share paints no relay leg of its own; its receipts live in
 	// recordedRelayReceipts (issue #131). The bar must not say "fetched 0"
@@ -695,20 +708,25 @@
 		onHome={() => shell.home()}
 		onPick={(id) => {
 			shell.openSession(id);
-			// The current run IS its session's results — reopening it from the rail
-			// returns to the results surface instead of stranding on the placeholder.
+			// The current run is its session's LAST view (results or the
+			// graph/card the user left open), not always Results. The run
+			// record carries the same state across a reload.
 			if (id === investigation.sessionId && (investigation.running || investigation.result !== null)) {
-				shell.view = 'results';
+				shell.view = investigation.lastView;
+				shell.drawerOpen = investigation.lastDrawerOpen;
 				return;
 			}
 			// #83: a session evicted from memory by a reload rebuilds from local
-			// storage and lands on the same results surface. Restores that decline
-			// (no run row / fully evicted frontier) leave the honest placeholder.
+			// storage and lands on its last view. Restores that decline (no run
+			// row / fully evicted frontier) leave the honest placeholder.
 			void investigation.restore(id).then((ok) => {
 				// Identity guard (review H2): a start()/openShared() since the
 				// click already own the rail — a late restore resolve must
 				// never yank the view back.
-				if (ok && shell.session?.id === id) shell.view = 'results';
+				if (ok && shell.session?.id === id) {
+					shell.view = investigation.lastView;
+					shell.drawerOpen = investigation.lastDrawerOpen;
+				}
 			});
 		}}
 		onClose={(id) => {
@@ -1016,7 +1034,10 @@
 				onSelect={openDossier}
 				onClearFilters={() => investigation.clearFacets()}
 				onClearSelection={clearSelection}
-				onToggle={() => shell.toggleDrawer()}
+				onToggle={() => {
+					shell.toggleDrawer();
+					rememberCurrentView();
+				}}
 				onResize={(next) => (shell.drawerHeight = next)}
 			/>
 		{/if}

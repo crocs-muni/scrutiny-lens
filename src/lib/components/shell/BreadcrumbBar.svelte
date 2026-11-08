@@ -11,7 +11,7 @@
 	 * crumb is the real Results destination and the card crumb is the current
 	 * graph anchor. Every label is existing app text — the session question,
 	 * the graph node's title — never generated here. */
-	import KeyHint from './KeyHint.svelte';
+	import BreadcrumbTrigger from './BreadcrumbTrigger.svelte';
 	import type { AscendTarget, NavAction, NavCrumb, NavTrail } from '$lib/nav';
 
 	interface Props {
@@ -131,37 +131,11 @@
 					</li>
 				{/if}
 				<li class="flex min-w-0 items-baseline" class:flex-1={crumb.current}>
-					{#if crumb.action !== null}
-						<!-- Clipped text is complete in the DOM, so the tip is a
-							hover/focus supplement only (silent). -->
-						<KeyHint label={crumb.label} nameless silent side="bottom">
-							{#snippet trigger({ props })}
-								<button
-									{...props}
-									type="button"
-									class="min-w-[6ch] max-w-full truncate py-3 text-left leading-none {crumbClass(crumb)}"
-									onclick={() => openCrumb(crumb)}
-								>
-									{crumb.label}
-								</button>
-							{/snippet}
-						</KeyHint>
-					{:else}
-						<KeyHint label={crumb.label} nameless silent hoverOnly side="bottom">
-							{#snippet trigger({ props })}
-								<!-- tabindex=-1: not a tab stop, still a focus target
-									for focusCurrent() after an ascend. -->
-								<span
-									{...props}
-									tabindex="-1"
-									aria-current={crumb.current ? 'page' : undefined}
-									class="min-w-[8ch] max-w-full truncate leading-none {crumbClass(crumb)}"
-								>
-									{crumb.label}
-								</span>
-							{/snippet}
-						</KeyHint>
-					{/if}
+					<BreadcrumbTrigger
+						{crumb}
+						class={crumbClass(crumb)}
+						onActivate={() => openCrumb(crumb)}
+					/>
 				</li>
 			{/each}
 		</ol>

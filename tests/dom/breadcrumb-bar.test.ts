@@ -25,6 +25,29 @@ const SUBJECT = [
 	crumb({ level: 'subject', label: 'Athena IDProtect', current: true })
 ];
 
+/** jsdom has no layout; make the long labels report as clipped so the
+ * truncation action can exercise the tooltip branch. */
+function stubClipped(long: string): () => void {
+	const scroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+	const client = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+	Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+		configurable: true,
+		get(this: HTMLElement) {
+			return this.textContent?.includes(long) ? 500 : 0;
+		}
+	});
+	Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+		configurable: true,
+		get(this: HTMLElement) {
+			return this.textContent?.includes(long) ? 120 : 0;
+		}
+	});
+	return () => {
+		if (scroll) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scroll);
+		if (client) Object.defineProperty(HTMLElement.prototype, 'clientWidth', client);
+	};
+}
+
 describe('BreadcrumbBar', () => {
 	it('results root: Results is a section label; the question is current, not a button', () => {
 		render(BreadcrumbHarness, { crumbs: RESULTS, up: null });
@@ -78,27 +101,39 @@ describe('BreadcrumbBar', () => {
 		expect(screen.getByTestId('events').textContent).toBe('ascend:previous-anchor');
 	});
 
-	it('long titles keep the complete label, a minimum width and a tooltip', async () => {
-		const long = 'A'.repeat(140);
-		const crumbs = [
-			crumb({ level: 'session', label: long, action: 'results' }),
-			crumb({ level: 'subject', label: long + ' subject', current: true })
-		];
-		render(BreadcrumbHarness, { crumbs, up: 'previous-anchor' });
-
-		const trigger = screen.getByRole('button', { name: long });
-		expect(trigger.className).toContain('truncate');
-		expect(trigger.className).toContain('min-w-[6ch]');
-		const current = document.querySelector('[aria-current="page"]')!;
-		expect(current.className).toContain('truncate');
-		expect(current.className).toContain('min-w-[8ch]');
-		// Clipped text is complete in the DOM: the tip is a supplement, not
-		// a second announcement.
-		expect(trigger.hasAttribute('aria-describedby')).toBe(false);
-
+	it('a full label keeps its text in the DOM without an always-on tooltip', () => {
+		render(BreadcrumbHarness, { crumbs: SUBJECT, up: 'results' });
+		const trigger = screen.getByRole('button', { name: 'Which ROCA keys still ship?' });
 		trigger.focus();
-		const tip = await screen.findByRole('tooltip');
-		expect(tip.textContent).toContain(long);
+		expect(screen.queryByRole('tooltip')).toBeNull();
+	});
+
+	it('clipped labels keep the complete text and expose it as a tooltip', async () => {
+		const long = 'A'.repeat(140);
+		const restore = stubClipped(long);
+		try {
+			const crumbs = [
+				crumb({ level: 'session', label: long, action: 'results' }),
+				crumb({ level: 'subject', label: long + ' subject', current: true })
+			];
+			render(BreadcrumbHarness, { crumbs, up: 'previous-anchor' });
+
+			const trigger = screen.getByRole('button', { name: long });
+			expect(trigger.className).toContain('truncate');
+			expect(trigger.className).toContain('min-w-[6ch]');
+			const current = document.querySelector('[aria-current="page"]')!;
+			expect(current.className).toContain('truncate');
+			expect(current.className).toContain('min-w-[8ch]');
+			// Clipped text is complete in the DOM: the tip is a supplement, not
+			// a second announcement.
+			expect(trigger.hasAttribute('aria-describedby')).toBe(false);
+
+			trigger.focus();
+			const tip = await screen.findByRole('tooltip');
+			expect(tip.textContent).toContain(long);
+		} finally {
+			restore();
+		}
 	});
 
 	it('the bar stays inert: no transition or animation classes', () => {
@@ -167,13 +202,23 @@ describe('BreadcrumbBar', () => {
 	});
 
 	it('tooltip closes on Escape without moving focus (SC 1.4.13)', async () => {
-		render(BreadcrumbHarness, { crumbs: SUBJECT, up: 'results' });
-		const trigger = screen.getByRole('button', { name: 'Which ROCA keys still ship?' });
-		trigger.focus();
-		await screen.findByRole('tooltip');
+		const long = 'A'.repeat(140);
+		const restore = stubClipped(long);
+		try {
+			const crumbs = [
+				crumb({ level: 'session', label: long, action: 'results' }),
+				crumb({ level: 'subject', label: long + ' subject', current: true })
+			];
+			render(BreadcrumbHarness, { crumbs, up: 'results' });
+			const trigger = screen.getByRole('button', { name: long });
+			trigger.focus();
+			await screen.findByRole('tooltip');
 
-		await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-		await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
-		expect(document.activeElement).toBe(trigger);
+			await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+			await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+			expect(document.activeElement).toBe(trigger);
+		} finally {
+			restore();
+		}
 	});
 });

@@ -286,6 +286,13 @@ class Investigation {
    * Per run — resetRun clears it, and a Results detour starts a fresh trail. */
   anchorHistory = $state<AnchorFrame[]>([]);
 
+  /** The last center view and drawer state for THIS session (issue #142
+   * follow-up): reopening from the rail or reloading lands where the user
+   * left instead of always on Results. Persisted with the run record; an
+   * older row defaults to Results. */
+  lastView = $state<'results' | 'session'>('results');
+  lastDrawerOpen = $state(true);
+
   /** Expansion stack (issue #29b ruling 8): related products the user
    * expanded, in order — the toolbar's undo chip pops it LIFO.
    * Admitted-only: entries never imply a fetch. */
@@ -373,6 +380,8 @@ class Investigation {
     this.selectedEventId = null;
     this.graphSubjectId = null;
     this.anchorHistory = [];
+    this.lastView = "results";
+    this.lastDrawerOpen = true;
     this._resetExpansions();
     this.contextFetched = new Set();
     this.shareHints = [];
@@ -457,6 +466,8 @@ class Investigation {
       admittedIds: settled.admitted.map((e) => e.id),
       graphSubjectId: this.graphSubjectId,
       selectedEventId: this.selectedEventId,
+      centerView: this.lastView,
+      drawerOpen: this.lastDrawerOpen,
       settledAt: Date.now(),
       elapsedMs: this.elapsedMs,
       ...(runRelays.length === 0
@@ -805,6 +816,9 @@ class Investigation {
     // Store-level selection: the drawer opens on the shared subject — the
     // card-inspection screen the share URL promises (spec §8).
     this.selectSubject(root.id);
+    this.lastView = 'session';
+    this.lastDrawerOpen = true;
+    this.persistRunRecord();
     // §8.2 dossier context — patches and deletions are unreachable by the
     // search's discovery filters; open them the way a card click would
     // (fire-and-forget like openDossier, spec §8.2 lens #68). Same $state
@@ -956,6 +970,8 @@ class Investigation {
       admittedIds.has(run.selectedEventId)
         ? run.selectedEventId
         : null;
+    this.lastView = run.centerView ?? 'results';
+    this.lastDrawerOpen = run.drawerOpen ?? true;
     // Relay snapshot (issue #131): painted from the RECORD, never from live
     // Settings — a restored session must name the relays its run actually
     // asked. A legacy row without the field restores as "not recorded"
@@ -1242,6 +1258,16 @@ class Investigation {
   /** Results is a trail root: a detour there starts a fresh anchor history. */
   clearAnchorHistory(): void {
     this.anchorHistory = [];
+  }
+
+  /** Persist the session's last center view/drawer state. The page calls
+   * this after a view hop or drawer toggle; the run record carries it to the
+   * rail re-open and reload paths. */
+  rememberView(view: 'results' | 'session', drawerOpen: boolean): void {
+    if (this.lastView === view && this.lastDrawerOpen === drawerOpen) return;
+    this.lastView = view;
+    this.lastDrawerOpen = drawerOpen;
+    this.persistRunRecord();
   }
 
   /** Reveal a related product's admitted neighbors (#29b ruling 8). */
@@ -2009,6 +2035,8 @@ export function resetInvestigation(): void {
   investigation.selectedEventId = null;
   investigation.graphSubjectId = null;
   investigation.anchorHistory = [];
+  investigation.lastView = 'results';
+  investigation.lastDrawerOpen = true;
   investigation._resetExpansions();
   investigation.hasShareHints = false;
   investigation.contextFetched = new Set();

@@ -443,6 +443,10 @@ export interface PersistedSessionRun {
 	 * product card (never a fabricated anchor). */
 	graphSubjectId?: string | null;
 	selectedEventId?: string | null;
+	/** The last center view and drawer state (issue #142 follow-up).
+	 * Optional: older rows reopen on Results with the drawer open. */
+	centerView?: 'results' | 'session';
+	drawerOpen?: boolean;
 	settledAt: number;
 	/** Wall-clock run time as the done row showed it; null while the run
 	 * was still settling when pinned (post-assembly, pre-settle row). */
