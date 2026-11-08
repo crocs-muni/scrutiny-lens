@@ -1,9 +1,10 @@
 // Settings flow (issue #11, spec §5/§6): runes state is the in-memory truth;
 // the persisted half (endpoint, model, relays, appearance) saves through the
 // #12 store with a real outcome (SaveOutcome → persistState, spec §2 never-lie)
-// and hydrates once at boot behind the ready() barrier. The API key is
-// memory-only by type — PersistedSettings cannot represent it — and every
-// entry arms the redaction strip via registerSecret().
+// and hydrates once at boot behind the ready() barrier. The API key is not a
+// PersistedSettings field (IndexedDB must never hold it): it rides this tab's
+// session storage instead, and every entry — typed or restored at boot —
+// arms the redaction strip via registerSecret().
 
 import {
 	initPersistence,
@@ -57,12 +58,65 @@ const dirtyFields = new Set<keyof PersistedSettings>();
 /** The memoized ready() promise — see Settings.ready(). */
 let bootBarrier: Promise<void> | null = null;
 
+/** Spec §6: the key lives in this tab's session storage — a reload keeps it,
+ * closing the tab forgets it, and nothing here ever reaches IndexedDB. The
+ * seam is module scope so node tests can inject a storage they do not have;
+ * production reads the real sessionStorage per call because a private window
+ * throws on ACCESS, not on lookup. */
+const SESSION_KEY = 'scrutiny.apiKey';
+
+type KeyStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+
+let keyStorageForTests: KeyStorage | null | undefined;
+
+function keyStorage(): KeyStorage | null {
+	if (keyStorageForTests !== undefined) return keyStorageForTests;
+	try {
+		return globalThis.sessionStorage ?? null;
+	} catch {
+		return null; // a private window can refuse the object outright
+	}
+}
+
+function readSessionKey(): string {
+	try {
+		return keyStorage()?.getItem(SESSION_KEY) ?? '';
+	} catch {
+		return '';
+	}
+}
+
+/** '' removes the entry. Every failure stays silent: an unavailable storage
+ * degrades to the memory-only behavior this store had before (spec §6). */
+function writeSessionKey(key: string): void {
+	try {
+		const store = keyStorage();
+		if (store === null) return;
+		if (key === '') store.removeItem(SESSION_KEY);
+		else store.setItem(SESSION_KEY, key);
+	} catch {
+		// memory-only for this tab; no user-facing error to tell
+	}
+}
+
+/** "Clear all local data" cannot reach session storage, so the Settings
+ * button calls this too — the button means "remove everything I kept". */
+export function clearSessionKey(): void {
+	writeSessionKey('');
+}
+
+/** Test seam: node has no sessionStorage, so specs inject a Map-backed one. */
+export function _setKeyStorageForTests(storage: KeyStorage | null | undefined): void {
+	keyStorageForTests = storage;
+}
+
 class Settings {
 	endpoint = $state(defaultSettings.endpoint);
 	model = $state(defaultSettings.model);
 	relays = $state<string[]>([...defaultSettings.relays]);
 	appearance = $state<Appearance>(defaultSettings.appearance);
-	/** Memory-only by spec §6; registerSecret strips it from every write path. */
+	/** This tab's session only (spec §6); registerSecret strips it from every
+	 * write path. */
 	apiKey = $state('');
 
 	/** Boot truth for awaiting surfaces: true once the one hydrate ran. */
@@ -102,6 +156,16 @@ class Settings {
 		}
 		if (persisted?.appearance !== undefined && !dirtyFields.has('appearance'))
 			this.appearance = persisted.appearance;
+		// Spec §6: the key survives a reload in session storage. A restored key
+		// arms the redaction strip exactly like a typed one, or the db layer
+		// would happily serialize a key it was never told about.
+		if (this.apiKey === '') {
+			const restored = readSessionKey();
+			if (restored !== '') {
+				registerSecret(restored);
+				this.apiKey = restored;
+			}
+		}
 		this.hydrated = true;
 	}
 
@@ -160,12 +224,14 @@ class Settings {
 		return outcome;
 	}
 
-	/** Memory-only (spec §6). registerSecret is called on every non-empty
-	 * entry so the db layer strips the key from anything later serialized —
-	 * clearing the field deliberately leaves the strip armed. */
+	/** Spec §6: this tab's session storage, never IndexedDB. registerSecret is
+	 * called on every non-empty entry so the db layer strips the key from
+	 * anything later serialized — clearing the field deliberately leaves the
+	 * strip armed. */
 	setApiKey(key: string): void {
 		const trimmed = key.trim();
 		if (trimmed !== '') registerSecret(trimmed);
+		writeSessionKey(trimmed);
 		this.apiKey = trimmed;
 	}
 
@@ -177,6 +243,7 @@ class Settings {
 		this.relays = [...defaultSettings.relays];
 		this.appearance = defaultSettings.appearance;
 		this.apiKey = '';
+		clearSessionKey();
 		dirtyFields.clear();
 		bootBarrier = null;
 		this.hydrated = false;

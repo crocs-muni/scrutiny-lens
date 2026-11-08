@@ -5,8 +5,9 @@
 	 * while open (+page.svelte gates on shell.settingsOpen), so drafts copy
 	 * from the hydrated settings singleton at mount.
 	 *
-	 * The key is memory-only (spec §6): setApiKey keeps it in runes state and
-	 * arms the registerSecret strip; nothing here serializes it. */
+	 * The key is this tab's session only (spec §6): setApiKey keeps it in runes
+	 * state and session storage and arms the registerSecret strip; nothing
+	 * here serializes it into the database. */
 
 	import { Combobox } from 'bits-ui';
 	import {
@@ -24,7 +25,7 @@
 	import KeyField from '$lib/components/ui/KeyField.svelte';
 	import KeyHint from './KeyHint.svelte';
 	import { clearAllLocalData } from '$lib/db';
-	import { nextAutoModel, settings } from '$lib/settings.svelte';
+	import { clearSessionKey, nextAutoModel, settings } from '$lib/settings.svelte';
 	import { RELAY_MAX, RELAY_MIN, type Appearance } from '$lib/config';
 
 	interface Props {
@@ -228,6 +229,8 @@
 	// ── Data (spec §6: one Clear-all action) ─────────────────────────────────
 
 	async function clearAll(): Promise<void> {
+		// The key is not in IndexedDB, so the store wipe cannot reach it (§6).
+		clearSessionKey();
 		await clearAllLocalData();
 		location.reload();
 	}
@@ -289,10 +292,10 @@
 				value={settings.apiKey}
 				oninput={(value) => settings.setApiKey(value)}
 			/>
-			<!-- spec §5: in-product disclosure at the key field -->
+			<!-- spec §5 disclosure + the §6 storage truth, both at the field -->
 			<p class="mt-1.5 text-[11.5px] leading-relaxed text-ink-3">
 				Everything you send — event contents, your questions, chat — goes to this endpoint
-				provider. The key lives in memory for this tab only.
+				provider. Kept in this tab only: a reload keeps it, closing the tab clears it.
 			</p>
 
 			<span class="mt-3 mb-1 block text-[12.5px] text-ink-2">Model</span>
