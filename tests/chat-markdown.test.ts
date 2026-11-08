@@ -36,6 +36,39 @@ describe('parseBlocks — GFM tables', () => {
 		]);
 	});
 
+	it('accepts one-hyphen GFM delimiters', () => {
+		const blocks = parseBlocks('| a | b |\n|:-|-:|\n| 1 | 2 |');
+		expect(blocks[0]).toMatchObject({
+			kind: 'table',
+			align: ['left', 'right'],
+			rows: [['1', '2']]
+		});
+	});
+
+	it('keeps a double-backtick code span with a pipe in one cell', () => {
+		const blocks = parseBlocks('| A | B |\n|---|---|\n| ``x|y`` | z |');
+		expect(blocks[0]).toMatchObject({ kind: 'table', rows: [['``x|y``', 'z']] });
+	});
+
+	it('ends the body at a following block start even when it contains a pipe', () => {
+		const blocks = parseBlocks('| A | B |\n|---|---|\n| 1 | 2 |\n- note | pipe\n');
+		expect(blocks).toEqual([
+			{
+				kind: 'table',
+				header: ['A', 'B'],
+				align: [null, null],
+				rows: [['1', '2']]
+			},
+			{ kind: 'bullets', items: ['note | pipe'] }
+		]);
+	});
+
+	it('does not table a mismatched header/delimiter column count', () => {
+		expect(parseBlocks('| a |\n|---|---|\n| 1 | 2 |')).toEqual([
+			{ kind: 'paragraph', text: '| a |\n|---|---|\n| 1 | 2 |' }
+		]);
+	});
+
 	it('supports a one-column table only when the delimiter row is piped', () => {
 		expect(parseBlocks('| A |\n|---|\n| 1 |')).toEqual([
 			{
