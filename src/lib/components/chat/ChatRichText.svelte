@@ -1,14 +1,18 @@
 <script lang="ts">
-	/* The chat's ONE rich-text renderer (chat-output rework T2, 2026-09-17).
-	 * Live stream and settled messages both land here: text runs blockify
-	 * through $lib/chat/markdown (paragraphs/ul/ol/fences, inline markdown
-	 * inside), verified markers become CitationPill instances, and complete-
-	 * but-unresolved stream markers show the neutral pending shimmer — whose
-	 * class lives HERE, not in the column shell.
+	/* The chat's ONE rich-text renderer (chat-output rework T2; #185 rewrite).
 	 *
-	 * The layout decisions (which run carries which claim marks; marker
-	 * positions) arrive pre-computed from layoutAnswer / parseChatStream —
-	 * this component renders, it never re-decides. */
+	 * The runs arrive split at every citation marker (layoutAnswer owns the
+	 * verification gate), but BLOCKS are parsed once over the whole answer:
+	 * text and marks are recombined into one string with sentinels before
+	 * `parseBlocks` runs. Parsing each text run separately made a marker that
+	 * ends a list item render as a sibling of the `<ul>` — a number floating
+	 * on its own line under the bullet it belongs to — because the list had
+	 * already been closed by the time the pill was emitted.
+	 *
+	 * Everything visual follows the #185 board: no permanent claim underline
+	 * (the tint answers "which sentence" only while the mark or its source
+	 * row is under the cursor), restored list markers, real headings, and a
+	 * hairline table. */
 
 	import { inlineHtml, parseBlocks, escapeHtml } from '$lib/chat/markdown';
 	import { spotlight } from './spotlight.svelte';
@@ -25,130 +29,222 @@
 		parts: RichPart[];
 		/** Verified citations (settled path). Empty during streaming. */
 		citations?: PersistedChatCitation[];
-		onOpenDossier?: (eventId: string) => void;
+		/** Which citation's register row is open (the turn owns it). */
+		openN?: number | null;
+		onToggle?: (n: number) => void;
+		/** Turn id — prefixes the register row ids so the mark can point at
+		 * the row it expands (aria-controls) without colliding across turns. */
+		idPrefix?: string;
 	}
 
-	let { parts, citations = [], onOpenDossier = () => {} }: Props = $props();
+	let { parts, citations = [], openN = null, onToggle = () => {}, idPrefix = 'turn' }: Props = $props();
 
 	const byN = $derived(new Map(citations.map((c) => [c.n, c])));
-	/* Card ownership rule (issue #30): the first pill of each citation number
-	 * owns the hover-card; later markers of the same [N] still glow but never
-	 * double the card. */
-	const owners = $derived.by(() => {
-		const seen = new Set<number>();
-		const out = new Set<string>();
-		for (const p of parts) {
-			if (p.kind === 'pill' && !seen.has(p.n)) {
-				seen.add(p.n);
-				out.add(`${p.n}:${parts.indexOf(p)}`);
+
+	/** Private-use sentinels: they survive `parseBlocks` line splitting (they
+	 * are not whitespace, so block detection still sees the real line shape)
+	 * and carry which marker stood where. */
+	const PILL = '\u0001';
+	const PEND = '\u0002';
+	const INLINE = /([\u0001\u0002])([^\u0001\u0002]*)\1/g;
+
+	/** Recombine the run/marker split into ONE string for the block pass.
+	 * Model text cannot carry the sentinels: they are control characters and
+	 * stripped, so a literal U+0001 in an answer can never forge a marker. */
+	const raw = $derived(
+		parts
+			.map((p) =>
+				p.kind === 'pill'
+					? `${PILL}${p.n}${PILL}`
+					: p.kind === 'pending'
+						? `${PEND}${p.n ?? ''}${PEND}`
+						: p.text.replace(/[\u0001\u0002]/g, '')
+			)
+			.join('')
+	);
+	const blocks = $derived(parseBlocks(raw));
+
+	type Inline = { kind: 'html'; text: string } | { kind: 'pill'; n: number } | { kind: 'pending'; n: number | null };
+
+	/** Split one block's inline text into sanitized HTML runs and markers.
+	 * A marker that follows a space loses that space: the model writes
+	 * `word [1]`, and the space is a line-break opportunity that orphans the
+	 * mark onto the next line ("…not revoked ⏎ ¹."). */
+	function inlineOf(text: string): Inline[] {
+		const out: Inline[] = [];
+		let last = 0;
+		for (const m of text.matchAll(INLINE)) {
+			const at = m.index ?? 0;
+			if (at > last) out.push({ kind: 'html', text: text.slice(last, at) });
+			if (m[1] === PILL) {
+				const prev = out[out.length - 1];
+				if (prev?.kind === 'html') prev.text = prev.text.replace(/ $/, '');
+				out.push({ kind: 'pill', n: Number(m[2]) });
+			} else {
+				out.push({ kind: 'pending', n: m[2] === '' ? null : Number(m[2]) });
+			}
+			last = at + m[0].length;
+		}
+		if (last < text.length) out.push({ kind: 'html', text: text.slice(last) });
+		return out;
+	}
+
+	/** Citation numbers carried by one block, in reading order. */
+	function citesIn(text: string): number[] {
+		const nums: number[] = [];
+		for (const m of text.matchAll(INLINE)) {
+			if (m[1] === PILL) {
+				const n = Number(m[2]);
+				if (!nums.includes(n)) nums.push(n);
 			}
 		}
-		return out;
-	});
+		return nums;
+	}
+
+	/** Block-level claim pairing (#30): the block that carries a mark tints
+	 * when that mark is spotlit. */
+	function blockStyle(marks: number[]): string {
+		if (marks.length === 0) return '';
+		const c = byN.get(marks[0])?.colorIndex ?? 0;
+		return `--cite: var(--cite-${c}); --cite-tint: var(--cite-${c}-tint);`;
+	}
 </script>
 
-{#snippet textRun(text: string, marks: number[])}
-	{@const blocks = parseBlocks(text)}
-	{@const claim = marks.length > 0}
-	{@const first = claim ? byN.get(marks[0]) : undefined}
-	{#if blocks.length === 1 && blocks[0].kind === 'paragraph'}
-		<span
-			class:claim
-			class:spotlit={claim && spotlight.lit(marks)}
-			style="--cite: var(--cite-{first?.colorIndex ?? 0}); --cite-tint: var(--cite-{first?.colorIndex ?? 0}-tint);"
-		>{@html inlineHtml(blocks[0].text)}</span>
-	{:else}
-		<div
-			class="md"
-			class:claim
-			class:spotlit={claim && spotlight.lit(marks)}
-			style="--cite: var(--cite-{first?.colorIndex ?? 0}); --cite-tint: var(--cite-{first?.colorIndex ?? 0}-tint);"
-		>
-			{#each blocks as block, blockIndex (blockIndex)}
-				{#if block.kind === 'paragraph'}
-					<p class="md-p">{@html inlineHtml(block.text)}</p>
-				{:else if block.kind === 'bullets'}
-					<ul class="md-ul">{#each block.items as item, itemIndex (itemIndex)}<li>{@html inlineHtml(item)}</li>{/each}</ul>
-				{:else if block.kind === 'numbered'}
-					<ol class="md-ol">{#each block.items as item, itemIndex (itemIndex)}<li>{@html inlineHtml(item)}</li>{/each}</ol>
-				{:else if block.kind === 'table'}
-					<div class="md-table-wrap">
-						<table class="md-table">
-							<thead>
-								<tr>
-									{#each block.header as cell, column (column)}
-										<th style="text-align: {block.align[column] ?? 'left'}">{@html inlineHtml(cell)}</th>
-									{/each}
-								</tr>
-							</thead>
-							<tbody>
-								{#each block.rows as row, rowIndex (rowIndex)}
-									<tr>
-										{#each row as cell, column (column)}
-											<td style="text-align: {block.align[column] ?? 'left'}">{@html inlineHtml(cell)}</td>
-										{/each}
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				{:else}
-					<pre class="md-pre"><code class={block.lang === '' ? undefined : `lang-${block.lang}`}
-							>{@html escapeHtml(block.text)}</code
-						></pre>
-				{/if}
-			{/each}
-		</div>
-	{/if}
-{/snippet}
-
-<span class="answer">
-	{#each parts as part, i (i)}
-		{#if part.kind === 'pill'}
-			{@const citation = byN.get(part.n)}
+{#snippet inlineFlow(text: string)}
+	{#each inlineOf(text) as seg, index (index)}
+		{#if seg.kind === 'html'}
+			{@html inlineHtml(seg.text)}
+		{:else if seg.kind === 'pill'}
+			{@const citation = byN.get(seg.n)}
 			{#if citation}
 				<CitationPill
 					{citation}
-					ownsCard={owners.has(`${part.n}:${i}`)}
-					{onOpenDossier}
+					open={openN === seg.n}
+					{onToggle}
+					controls="{idPrefix}-src-{seg.n}"
 				/>
 			{/if}
-		{:else if part.kind === 'pending'}
-			<span class="pending-pill" aria-label="Verifying citation {part.n ?? ''}…">{part.n ?? ''}</span>
 		{:else}
-			{@render textRun(part.text, part.marks)}
+			<span class="pending-pill" aria-label="Verifying citation {seg.n ?? ''}…">{seg.n ?? ''}</span>
 		{/if}
 	{/each}
-</span>
+{/snippet}
+
+<div class="answer">
+	{#each blocks as block, blockIndex (blockIndex)}
+		{#if block.kind === 'paragraph'}
+			{@const marks = citesIn(block.text)}
+			<p class="md-p" class:claim={marks.length > 0} class:spotlit={spotlight.lit(marks)} style={blockStyle(marks)}>
+				{@render inlineFlow(block.text)}
+			</p>
+		{:else if block.kind === 'heading'}
+			<!-- Model headings render as headings (#185); level is semantics, the
+			 * display size is the column's single kicker size. -->
+			{#if block.level <= 2}
+				<h2 class="md-h">{@render inlineFlow(block.text)}</h2>
+			{:else}
+				<h3 class="md-h">{@render inlineFlow(block.text)}</h3>
+			{/if}
+		{:else if block.kind === 'bullets'}
+			<ul class="md-ul">
+				{#each block.items as item, itemIndex (itemIndex)}
+					{@const marks = citesIn(item)}
+					<li class:claim={marks.length > 0} class:spotlit={spotlight.lit(marks)} style={blockStyle(marks)}>
+						{@render inlineFlow(item)}
+					</li>
+				{/each}
+			</ul>
+		{:else if block.kind === 'numbered'}
+			<ol class="md-ol">
+				{#each block.items as item, itemIndex (itemIndex)}
+					{@const marks = citesIn(item)}
+					<li class:claim={marks.length > 0} class:spotlit={spotlight.lit(marks)} style={blockStyle(marks)}>
+						{@render inlineFlow(item)}
+					</li>
+				{/each}
+			</ol>
+		{:else if block.kind === 'table'}
+			<div class="md-table-wrap">
+				<table class="md-table">
+					<thead>
+						<tr>
+							{#each block.header as cell, column (column)}
+								<th style="text-align: {block.align[column] ?? 'left'}">{@render inlineFlow(cell)}</th>
+							{/each}
+						</tr>
+					</thead>
+					<tbody>
+						{#each block.rows as row, rowIndex (rowIndex)}
+							<tr>
+								{#each row as cell, column (column)}
+									<td style="text-align: {block.align[column] ?? 'left'}">{@render inlineFlow(cell)}</td>
+								{/each}
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{:else}
+			<pre class="md-pre"><code class={block.lang === '' ? undefined : `lang-${block.lang}`}
+					>{@html escapeHtml(block.text)}</code
+				></pre>
+		{/if}
+	{/each}
+</div>
 
 <style>
 	.answer {
 		font-size: 13.5px;
 		line-height: 1.55;
 		color: var(--ink);
+		overflow-wrap: anywhere;
 	}
-	/* Claim span: dotted paired-color underline (issue #30 registry pairing).
-	 * Block runs propagate the decoration onto paragraph/list-item surfaces —
-	 * a claim that spawns a list no longer loses its underline line. */
+	/* Claim span: the permanent dotted rule is gone (#185). A citation mark
+	 * says where the support is; the tint answers "which sentence?" only
+	 * while the mark or its register row is under the cursor (#30 pairing). */
 	.claim {
-		border-bottom: 1.5px dotted var(--cite);
 		transition: background-color 120ms ease-out;
-		cursor: default;
 	}
 	.claim.spotlit {
 		background: var(--cite-tint);
 	}
-	.md {
-		margin: 0.25em 0;
+	.md-p {
+		margin: 0.3em 0;
 	}
+	/* Markers are restored (#185): Tailwind's preflight strips list-style, so
+	 * the shipped renderer drew bullets as indented paragraphs. */
 	.md-ul,
 	.md-ol {
 		margin: 0.15em 0;
 		padding-left: 1.15em;
 	}
-	.md-ul li,
-	.md-ol li {
-		border-bottom: inherit;
+	.md-ul {
+		list-style: disc;
+	}
+	.md-ol {
+		list-style: decimal;
+	}
+	.md-ul li::marker {
+		color: var(--ink-3);
+	}
+	.md-ol li::marker {
+		color: var(--ink-3);
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 11px;
+	}
+	/* A model heading is a section label, not a display type: mono caps keep
+	 * the column's single reading size and the writing rule (§9). */
+	.md-h {
+		margin: 0.7em 0 0.2em;
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 9.5px;
+		font-weight: 600;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--ink-2);
+	}
+	.md-h:first-child {
+		margin-top: 0;
 	}
 	.md-pre {
 		margin: 0.35em 0;
@@ -170,15 +266,28 @@
 		font-size: 12.5px;
 		line-height: 1.4;
 	}
+	/* Hairline table (#185): vertical rules at a 288px measure turn a three
+	 * column table into a grid of cells to decode; the header rule and row
+	 * separators carry the structure instead. */
 	.md-table th,
 	.md-table td {
-		border: 1px solid var(--line);
-		padding: 0.32em 0.55em;
+		border: 0;
+		border-bottom: 1px solid var(--line);
+		padding: 0.32em 0.6em 0.32em 0;
 		vertical-align: top;
 	}
 	.md-table th {
-		background: var(--inset);
-		font-weight: 600;
+		background: none;
+		border-bottom: 1px solid var(--line-strong);
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 9.5px;
+		font-weight: 500;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--ink-3);
+	}
+	.md-table tr:last-child td {
+		border-bottom: 0;
 	}
 	/* The pending shimmer (pinned-at-stream citation): neutral on purpose —
 	 * nothing is verified yet, so nothing claims a trust color. */

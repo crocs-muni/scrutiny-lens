@@ -18,10 +18,9 @@
 	import { IconArrowBarToRight, IconMessage } from '@tabler/icons-svelte';
 	import KeyHint from './KeyHint.svelte';
 	import { COLLAPSE } from '../ui/motion';
-	import AnswerText from '../chat/AnswerText.svelte';
-	import ChatMessageFooter from '../chat/ChatMessageFooter.svelte';
-	import LoadingState from '../chat/LoadingState.svelte';
 	import ChatComposer from '../chat/ChatComposer.svelte';
+	import ChatTurn from '../chat/ChatTurn.svelte';
+	import LoadingState from '../chat/LoadingState.svelte';
 	import { chat } from '$lib/chat.svelte';
 	import { chatAnnouncement } from './chat-live';
 	import { settings } from '$lib/settings.svelte';
@@ -143,7 +142,10 @@
 		<div bind:this={scrollEl} class="chat-scroll flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-4">
 			{#each chat.messages as message (message.id)}
 				{#if message.role === 'user'}
-					<div class="user-bubble">{message.content}</div>
+					<!-- #185: the question is a quiet row, not a bubble. A right-aligned
+					 * grey bubble is the single strongest chatbot signal on the surface
+					 * and carries no information a labelled line does not. -->
+					<div class="qrow"><span class="qmark">›</span><span class="qtext">{message.content}</span></div>
 				{:else if message.kind === 'ungrounded'}
 					<div class="ungrounded">
 						Can’t answer that from this session — it contains: <span class="ungrounded-ctx"
@@ -151,23 +153,12 @@
 						>
 					</div>
 				{:else}
-					<div class="assistant">
-						<AnswerText
-							content={message.content}
-							citations={message.citations ?? []}
-							{onOpenDossier}
-						/>
-						<ChatMessageFooter
-							content={message.content}
-							citations={message.citations ?? []}
-							{onOpenDossier}
-						/>
-					</div>
+					<ChatTurn {message} grounding={chat.grounding} {onOpenDossier} />
 				{/if}
 			{/each}
 
 			{#if chat.live !== null}
-				<div class="user-bubble">{chat.live.question}</div>
+				<div class="qrow"><span class="qmark">›</span><span class="qtext">{chat.live.question}</span></div>
 				<div class="assistant">
 					{#if chat.live.raw === ''}
 						<!-- thinking lane: vendored LoadingState (beautiful-ui, MIT)
@@ -176,16 +167,17 @@
 						<LoadingState label="Thinking" />
 					{:else}
 						<!-- Same renderer as the settled path (chat-output T2): markdown
-							from the FIRST delta, pending shimmer for unverified markers. -->
-						<ChatRichText parts={liveParts} {onOpenDossier} />
+							from the FIRST delta, pending shimmer for unverified markers.
+							No citations exist yet, so no register row can be open. -->
+						<ChatRichText parts={liveParts} />
 					{/if}
 				</div>
 			{/if}
 
 			{#if chat.error !== null}
 				<!-- ruling 6: the failed turn's question and partial prose stay
-					on screen; only the error itself is a bubble. -->
-				<div class="user-bubble">{chat.error.question}</div>
+				 * on screen; only the error itself is a bubble. -->
+				<div class="qrow"><span class="qmark">›</span><span class="qtext">{chat.error.question}</span></div>
 				<div class="error-bubble">
 					{#if chat.error.partial !== undefined}
 						<!-- ruling 6: the stream's partial prose stays on screen —
@@ -270,14 +262,26 @@
 		line-height: 1.6;
 	}
 
-	.user-bubble {
-		align-self: flex-end;
-		max-width: 85%;
-		padding: 10px 12px;
-		border-radius: 12px 12px 4px 12px;
-		background: var(--field);
-		border: 1px solid var(--line);
+	/* #185: the question is a quiet row above a hairline — no bubble, no
+	 * right alignment, no 85% measure. */
+	.qrow {
+		display: flex;
+		gap: 7px;
+		align-items: baseline;
+		padding-bottom: 8px;
+		border-bottom: 1px solid var(--line);
+	}
+	.qmark {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 11px;
+		line-height: 1.6;
+		color: var(--ink-3);
+		flex: none;
+	}
+	.qtext {
 		font-size: 12.5px;
+		line-height: 1.55;
+		color: var(--ink-2);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}

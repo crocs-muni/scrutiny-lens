@@ -22,6 +22,7 @@
  *   ``` fenced blocks → code block (language class echoed, content escaped)
  *   `* `/`- `/`+ ` runs → <ul>, `${n}. ` runs → <ol>
  *   |a|b| + |---|---| rows → table (cells inline-parsed; alignment echoed)
+ *   `#`…`######` line → heading (level echoed; inline text left to the renderer)
  *   anything else → paragraph text, joined with '\n'
  * Unknown markdown features degrade to parseInline inside their paragraph —
  * never garbage, never stripped.
@@ -32,6 +33,8 @@ import DOMPurify from 'isomorphic-dompurify';
 
 export type ChatBlock =
 	| { kind: 'paragraph'; text: string }
+	/** ATX heading. Text stays raw inline markdown; the renderer owns inlineHtml. */
+	| { kind: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; text: string }
 	| { kind: 'bullets'; items: string[] }
 	| { kind: 'numbered'; items: string[] }
 	| { kind: 'code'; lang: string; text: string }
@@ -42,7 +45,7 @@ export type TableAlign = 'left' | 'center' | 'right';
 
 const BULLET = /^[*+-]\s+/;
 const ORDERED = /^\d+\.\s+/;
-const HEADING = /^#{1,6}\s/;
+const HEADING = /^(#{1,6})\s+/;
 const BLOCKQUOTE = /^>/;
 /** A GFM delimiter row: at least two columns, or one fully piped column. */
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/;
@@ -184,6 +187,17 @@ export function parseBlocks(text: string): ChatBlock[] {
 			}
 			blocks.push({ kind: 'table', header, rows, align });
 			i = next - 1;
+			continue;
+		}
+		const heading = HEADING.exec(line);
+		if (heading !== null) {
+			flushParagraph();
+			flushList();
+			blocks.push({
+				kind: 'heading',
+				level: heading[1].length as 1 | 2 | 3 | 4 | 5 | 6,
+				text: line.slice(heading[0].length)
+			});
 			continue;
 		}
 		if (BULLET.test(line)) {
