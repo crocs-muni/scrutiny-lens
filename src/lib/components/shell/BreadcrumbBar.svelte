@@ -7,19 +7,20 @@
 	 * app, so its hover affordance is a static underline/ink change rather
 	 * than a transition (owner ruling, #142).
 	 *
-	 * The chevron is the machine-readable "one level up"; crumbs carry the
-	 * trail. Every label is existing app text — the session question or the
-	 * subject's dossier title — never generated here. */
+	 * `Results` is a section heading outside the breadcrumb list; the question
+	 * crumb is the real Results destination and the card crumb is the current
+	 * graph anchor. Every label is existing app text — the session question,
+	 * the graph node's title — never generated here. */
 	import KeyHint from './KeyHint.svelte';
-	import type { AscendTarget, NavCrumb, NavTrail } from '$lib/nav';
+	import type { AscendTarget, NavAction, NavCrumb, NavTrail } from '$lib/nav';
 
 	interface Props {
 		trail: NavTrail;
 		/** Right-aligned mono ledger (results: fetched/truncation). */
 		meta?: string;
-		/** Crumb click: results → results surface, session → clear subject. */
-		onCrumb: (level: 'results' | 'session') => void;
-		/** Back chevron: exactly one level up. */
+		/** Crumb click: the question crumb opens Results. */
+		onCrumb: (action: NavAction) => void;
+		/** Back chevron: exactly one step up. */
 		onAscend: (target: AscendTarget) => void;
 	}
 
@@ -28,18 +29,15 @@
 	let navEl = $state<HTMLElement | null>(null);
 
 	/** After an ascend the pressed control may not exist at the new level
-	 * (the subject crumb disappears), so focus moves to the control that
+	 * (the card crumb disappears), so focus moves to the control that
 	 * continues the ascent — the back chevron — and otherwise to the bar
 	 * itself. Landing on the current crumb at the root would open that
 	 * crumb's focus tooltip, and the tooltip would eat the next Escape. */
 	export function focusAfterAscend(): void {
-		const target = navEl?.querySelector<HTMLElement>('button[aria-label]') ?? navEl;
+		const target =
+			navEl?.querySelector<HTMLElement>('[data-focus-back]') ?? navEl;
 		target?.focus();
 	}
-
-	const ascendLabel = $derived(
-		trail.up === 'results' ? 'Back to results' : trail.up === 'clear-subject' ? 'Back to session' : ''
-	);
 
 	function ascend(): void {
 		if (trail.up !== null) onAscend(trail.up);
@@ -47,17 +45,23 @@
 
 	function crumbClass(crumb: NavCrumb): string {
 		const base = crumb.current
-			? 'text-[13px] font-semibold text-ink'
-			: 'text-[12.5px] text-ink-2';
-		return crumb.interactive
-			? `${base} hover:text-ink hover:underline underline-offset-2`
+			? crumb.mono
+				? 'font-mono text-[11.5px] font-medium text-ink'
+				: 'text-[13px] font-semibold text-ink'
+			: crumb.mono
+				? 'font-mono text-[11.5px] text-ink-2'
+				: 'text-[12.5px] text-ink-2';
+		// A persistent affordance separates real destinations from the
+		// section heading and the current card before hover (issue #142
+		// review: hover-only underline hid which crumb was clickable).
+		return crumb.action !== null
+			? `${base} underline decoration-dotted decoration-ink-3 underline-offset-2 hover:text-ink hover:decoration-solid`
 			: base;
 	}
 
-	/** Only ancestors are buttons; the subject crumb can never be one. */
 	function openCrumb(crumb: NavCrumb): void {
-		if (crumb.level === 'subject') return;
-		onCrumb(crumb.level);
+		if (crumb.action === null) return;
+		onCrumb(crumb.action);
 	}
 </script>
 
@@ -69,10 +73,12 @@
 >
 	{#if trail.up !== null}
 		<!-- 28px hit target, pulled left so the glyph lines up with the bar's
-			16px text inset. -->
+			16px text inset. data-focus-back is the stable focus target after
+			an ascend; it stays correct if another crumb gains an aria-label. -->
 		<button
 			type="button"
-			aria-label={ascendLabel}
+			data-focus-back
+			aria-label={trail.upLabel}
 			class="primitive-icon-button -ml-2 mr-0.5 shrink-0 text-ink-2 hover:bg-hover hover:text-ink"
 			onclick={ascend}
 		>
@@ -93,6 +99,21 @@
 	<!-- baseline-aligned cluster (owner report, PR #42 polish): one true
 		baseline per item + svg on the same line, group centered by the bar. -->
 	<div class="flex min-w-0 flex-1 items-baseline gap-2">
+		<!-- Section heading, not a crumb: there is no separate Results page
+			to open beyond the question surface. -->
+		<span class="shrink-0 text-[12.5px] leading-none text-ink-2">{trail.rootLabel}</span>
+		<span aria-hidden="true" class="flex shrink-0 items-center">
+			<svg
+				width="12"
+				height="12"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				class="shrink-0 text-ink-2"><path d="M9 6l6 6-6 6" /></svg
+			>
+		</span>
 		<ol class="flex min-w-0 flex-1 items-baseline gap-2">
 			{#each trail.crumbs as crumb, i (crumb.level)}
 				{#if i > 0}
@@ -110,7 +131,7 @@
 					</li>
 				{/if}
 				<li class="flex min-w-0 items-baseline" class:flex-1={crumb.current}>
-					{#if crumb.interactive}
+					{#if crumb.action !== null}
 						<!-- Clipped text is complete in the DOM, so the tip is a
 							hover/focus supplement only (silent). -->
 						<KeyHint label={crumb.label} nameless silent side="bottom">
@@ -118,7 +139,7 @@
 								<button
 									{...props}
 									type="button"
-									class="min-w-0 truncate py-3 text-left leading-none {crumbClass(crumb)}"
+									class="min-w-[6ch] max-w-full truncate py-3 text-left leading-none {crumbClass(crumb)}"
 									onclick={() => openCrumb(crumb)}
 								>
 									{crumb.label}
@@ -134,7 +155,7 @@
 									{...props}
 									tabindex="-1"
 									aria-current={crumb.current ? 'page' : undefined}
-									class="min-w-0 truncate leading-none {crumbClass(crumb)}"
+									class="min-w-[8ch] max-w-full truncate leading-none {crumbClass(crumb)}"
 								>
 									{crumb.label}
 								</span>
@@ -148,4 +169,7 @@
 			<span class="shrink-0 font-mono leading-none text-[11px] text-ink-2">{meta}</span>
 		{/if}
 	</div>
+	<!-- Trail changes are announced; focus alone does not say which level is
+		now current or where the next back press goes. -->
+	<span class="sr-only" aria-live="polite">{trail.live}</span>
 </nav>

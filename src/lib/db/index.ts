@@ -437,6 +437,12 @@ export interface PersistedSessionRun {
 	/** Admitted event ids at settle, in admission order. Order matters:
 	 * it is the admitted set the cards/facet derivations saw. */
 	admittedIds: string[];
+	/** The graph subject and drawer selection at the last write (issue #142).
+	 * Optional: rows written before this field read back undefined; restore
+	 * validates against `admittedIds` and otherwise defaults to the first
+	 * product card (never a fabricated anchor). */
+	graphSubjectId?: string | null;
+	selectedEventId?: string | null;
 	settledAt: number;
 	/** Wall-clock run time as the done row showed it; null while the run
 	 * was still settling when pinned (post-assembly, pre-settle row). */

@@ -1,88 +1,129 @@
 /**
- * In-app navigation trail (issue #142) — the step stack the center
- * surface's breadcrumb bar renders.
+ * In-app navigation trail (issue #142) — what the center surface's
+ * breadcrumb bar renders and where the chevron/Esc ascend.
  *
- * The app is a static SPA with no router (spec §8): "back" is a descend of
- * the in-app stack, never browser history, and the URL never changes. One
- * derivation owns what the bar shows and where the chevron/Esc ascend, so
- * the results and session surfaces cannot disagree about depth:
- * Results → session → subject.
+ * The app is a static SPA with no router (spec §8): "back" is a pop of the
+ * in-app stacks, never browser history, and the URL never changes. The model
+ * has two real center pages — Results and the session graph — plus one piece
+ * of session state on the bar:
  *
- * Labels are existing text only (spec §2 rule 1): the session question from
- * the shell and the subject's dossier title (cache-first or the rule-5
- * fallback already shown on the card). The bar generates nothing.
+ *   Results [section] › question [Results] › anchor card [current]
+ *
+ * `Results` is a section label, not a crumb: the question crumb is the real
+ * Results destination, and the anchor card is the session's current graph
+ * subject (spec §9:103). A canvas click moves the drawer selection only; it
+ * never moves the card. The card changes only when a product is selected
+ * from OUTSIDE the canvas (results card, drawer deep-link, chat citation).
+ *
+ * The chevron pops one anchor: the previous card and the drawer event that
+ * was selected when it was re-anchored. When there is no anchor history it
+ * returns to Results. The previous-anchor title is reused verbatim; the bar
+ * generates no text (spec §2 rule 1).
  */
 import type { CenterView } from '$lib/shell.svelte';
 
-/** What one back press does. `clear-subject` stays inside the session
- * surface (the graph anchor and drawer chrome survive); `results` returns
- * to the results surface at its preserved scroll position. */
-export type AscendTarget = 'clear-subject' | 'results';
+/** What one back press does. `previous-anchor` restores the previous graph
+ * anchor and its drawer selection; `results` returns to the results surface
+ * at its preserved position. */
+export type AscendTarget = 'previous-anchor' | 'results';
+
+/** A real crumb destination. The question crumb opens Results; the current
+ * card is a span, never a button. */
+export type NavAction = 'results';
 
 export interface NavCrumb {
-	level: 'results' | 'session' | 'subject';
+	level: 'session' | 'subject';
 	/** Visible text — never generated for the bar. */
 	label: string;
-	/** A real destination: renders as a button. The current crumb is a span. */
-	interactive: boolean;
+	/** A real destination; null renders the current crumb as a span. */
+	action: NavAction | null;
 	/** Always the deepest crumb: carries aria-current. After an ascend the
 	 * bar focuses the next back control (the chevron) or the bar itself. */
 	current: boolean;
+	/** Machine-made fallback text (rule-5 title): render in mono. */
+	mono: boolean;
 }
 
 export interface NavTrail {
+	/** The app section heading outside the breadcrumb list. */
+	rootLabel: 'Results';
 	crumbs: NavCrumb[];
-	/** The back chevron's exactly-one-level target; null = trail root. */
+	/** The back chevron's exactly-one-step target; null = trail root. */
 	up: AscendTarget | null;
+	/** The chevron's accessible label ("Back to results" or the previous
+	 * card's on-screen title). */
+	upLabel: string;
+	/** Polite live text for the changed trail (screen readers hear the new
+	 * level and the next back destination; the visible bar has no motion). */
+	live: string;
 }
 
+/** Shell.newSession's default; a blank shell title must not paint `Results`
+ * as the current level (issue #142 review). */
+const UNTITLED_SESSION = 'Untitled session';
+
 /**
- * `subjectTitle` is the selected subject's existing dossier title, or null
- * when nothing is selected / the live run belongs to someone else.
+ * `subjectTitle` is the GRAPH ANCHOR's existing node title (card title,
+ * cached node tile, else the rule-5 fallback); null when there is no anchor
+ * or the live run belongs to someone else. It is deliberately not the
+ * drawer selection's dossier title: a canvas click can change the selection
+ * without changing the card.
  */
 export function deriveNavTrail(input: {
 	view: CenterView;
 	sessionTitle: string | null;
 	subjectTitle: string | null;
+	subjectMono: boolean;
+	/** The previous anchor's on-screen title, or null when the history is
+	 * empty (the back target is then Results). */
+	previousAnchorTitle: string | null;
 }): NavTrail | null {
 	// Search is outside the stack (no session, no results): no bar.
 	if (input.view !== 'results' && input.view !== 'session') return null;
 
 	const onResults = input.view === 'results';
-	const sessionTitle = input.sessionTitle?.trim() ?? '';
-	// The subject crumb belongs to the session surface only (owner ruling,
-	// #142): results keeps its Results → session anatomy even while a
-	// selection lives on for the card ring.
+	const sessionTitle = input.sessionTitle?.trim() || UNTITLED_SESSION;
+	// The anchor card belongs to the session surface only; results keeps its
+	// Results › question anatomy while the ring/card state lives on.
 	const subjectTitle = onResults ? '' : (input.subjectTitle?.trim() ?? '');
 	const hasSubject = subjectTitle !== '';
+	const previousAnchorTitle = onResults ? null : (input.previousAnchorTitle?.trim() || null);
 
 	const crumbs: NavCrumb[] = [
 		{
-			level: 'results',
-			label: 'Results',
-			// On the results surface this is where you are; from a session it
-			// is the way back.
-			interactive: !onResults,
-			current: false
-		}
-	];
-	if (sessionTitle !== '') {
-		crumbs.push({
 			level: 'session',
 			label: sessionTitle,
-			// A crumb click clears the selected subject and keeps the graph
-			// and drawer; with nothing selected it is the current level.
-			interactive: hasSubject,
-			current: false
+			// The question is the results page. With an anchor open it is one
+			// step up; at the trail root it is where the user already is.
+			action: hasSubject ? 'results' : null,
+			current: !hasSubject,
+			mono: false
+		}
+	];
+	if (hasSubject) {
+		crumbs.push({
+			level: 'subject',
+			label: subjectTitle,
+			action: null,
+			current: true,
+			mono: input.subjectMono
 		});
 	}
-	if (hasSubject) {
-		crumbs.push({ level: 'subject', label: subjectTitle, interactive: false, current: true });
-	}
-	crumbs[crumbs.length - 1].current = true;
 
-	return {
-		crumbs,
-		up: onResults ? null : hasSubject ? 'clear-subject' : 'results'
-	};
+	const up: AscendTarget | null = onResults
+		? null
+		: hasSubject && previousAnchorTitle !== null
+			? 'previous-anchor'
+			: 'results';
+	const upLabel = onResults
+		? ''
+		: up === 'previous-anchor'
+			? `Back to ${previousAnchorTitle}`
+			: 'Back to results';
+	const current = crumbs[crumbs.length - 1];
+	const live = onResults
+		? `At ${current.label}`
+		: `At ${current.label}; ${upLabel}`;
+
+	return { rootLabel: 'Results', crumbs, up, upLabel, live };
 }

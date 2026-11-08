@@ -3,18 +3,40 @@
 	 * (routes/+layout.svelte), mirroring how the page mounts it. */
 	import { Tooltip } from 'bits-ui';
 	import BreadcrumbBar from '$lib/components/shell/BreadcrumbBar.svelte';
-	import type { AscendTarget, NavCrumb, NavTrail } from '$lib/nav';
+	import type { AscendTarget, NavAction, NavCrumb, NavTrail } from '$lib/nav';
 
 	interface Props {
+		rootLabel?: 'Results';
 		crumbs: NavCrumb[];
 		up: AscendTarget | null;
+		upLabel?: string;
+		live?: string;
 		meta?: string;
 	}
 
-	let { crumbs, up, meta = '' }: Props = $props();
+	let {
+		rootLabel = 'Results',
+		crumbs,
+		up,
+		upLabel = '',
+		live = '',
+		meta = ''
+	}: Props = $props();
 
 	let events = $state<string[]>([]);
-	const trail: NavTrail = $derived({ crumbs, up });
+	const trail: NavTrail = $derived({
+		rootLabel,
+		crumbs,
+		up,
+		upLabel:
+			upLabel ||
+			(up === 'previous-anchor'
+				? 'Back to previous card'
+				: up === 'results'
+					? 'Back to results'
+					: ''),
+		live
+	});
 	let bar = $state<{ focusAfterAscend: () => void } | null>(null);
 </script>
 
@@ -23,7 +45,7 @@
 		bind:this={bar}
 		{trail}
 		{meta}
-		onCrumb={(level) => events.push(`crumb:${level}`)}
+		onCrumb={(action: NavAction) => events.push(`crumb:${action}`)}
 		onAscend={(target) => events.push(`ascend:${target}`)}
 	/>
 	<!-- Focus probe for focusAfterAscend(); scoped out of the bar so the

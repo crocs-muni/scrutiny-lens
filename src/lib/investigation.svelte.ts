@@ -100,6 +100,16 @@ function isAbortShaped(err: unknown): boolean {
     .includes("abort");
 }
 
+/** One step of the anchor history (issue #142): the graph subject that was
+ * open before an outside re-anchor, plus the drawer selection at that
+ * moment. The back chevron restores both. Camera/zoom and expansions are not
+ * part of the frame: a fresh map re-frames and expansions belong to the old
+ * neighborhood (#29b ruling 8 / #95). */
+export interface AnchorFrame {
+	anchorId: string;
+	selectionId: string | null;
+}
+
 class Investigation {
   phase = $state<Phase | "idle">("idle");
   /** Per-relay slice receipts, in arrival order — the trace's literal layer. */
@@ -270,6 +280,12 @@ class Investigation {
    * investigation like the selection. */
   graphSubjectId = $state<string | null>(null);
 
+  /** Anchor history (issue #142): LIFO of the graph subjects that were open
+   * before an outside re-anchor, with the drawer selection they had. The
+   * chevron pops one frame; Results is the root when the stack is empty.
+   * Per run — resetRun clears it, and a Results detour starts a fresh trail. */
+  anchorHistory = $state<AnchorFrame[]>([]);
+
   /** Expansion stack (issue #29b ruling 8): related products the user
    * expanded, in order — the toolbar's undo chip pops it LIFO.
    * Admitted-only: entries never imply a fetch. */
@@ -356,6 +372,7 @@ class Investigation {
     this.contextPool = [];
     this.selectedEventId = null;
     this.graphSubjectId = null;
+    this.anchorHistory = [];
     this._resetExpansions();
     this.contextFetched = new Set();
     this.shareHints = [];
@@ -438,6 +455,8 @@ class Investigation {
       sessionId: this.sessionId,
       searches: settled.searches,
       admittedIds: settled.admitted.map((e) => e.id),
+      graphSubjectId: this.graphSubjectId,
+      selectedEventId: this.selectedEventId,
       settledAt: Date.now(),
       elapsedMs: this.elapsedMs,
       ...(runRelays.length === 0
@@ -918,6 +937,25 @@ class Investigation {
     this.resetRun(); // ends running=true; set deltas below
     this.phase = "done";
     this.sessionId = sessionId;
+    // Card + selection (issue #142 review): a restored session should not
+    // drop the user on a fresh results list. Persisted ids are validated
+    // against this frontier; a legacy row without them defaults to the first
+    // product, else the first admitted event (a metadata-only share), so a
+    // zero-card session still has a graph to open.
+    const admittedIds = new Set(events.map((e) => e.id));
+    const persistedAnchor =
+      run.graphSubjectId !== undefined &&
+      run.graphSubjectId !== null &&
+      admittedIds.has(run.graphSubjectId)
+        ? run.graphSubjectId
+        : null;
+    this.graphSubjectId = persistedAnchor ?? assembled[0]?.id ?? events[0]?.id ?? null;
+    this.selectedEventId =
+      run.selectedEventId !== undefined &&
+      run.selectedEventId !== null &&
+      admittedIds.has(run.selectedEventId)
+        ? run.selectedEventId
+        : null;
     // Relay snapshot (issue #131): painted from the RECORD, never from live
     // Settings — a restored session must name the relays its run actually
     // asked. A legacy row without the field restores as "not recorded"
@@ -1129,10 +1167,23 @@ class Investigation {
    * otherwise showing an unrelated neighborhood; applied to a map click it
    * rebuilt the tree under the user's cursor, leaving them with the clicked
    * node and its own bound record. So the map's own clicks never move the
-   * anchor — a deliberate "make this the subject" gesture is #142's. */
-  selectSubject(id: string, origin: "map" | "elsewhere" = "elsewhere"): void {
+   * anchor — a deliberate "make this the subject" gesture is #142's.
+   *
+   * `origin: 'results'` starts a fresh trail: the page has already cleared the
+   * anchor history, so reopening a card from Results must not remember the
+   * card the user just left. `elsewhere` (drawer deep-link, chat citation) is
+   * the only producer of anchor-history frames. */
+  selectSubject(
+    id: string,
+    origin: "map" | "elsewhere" | "results" = "elsewhere",
+  ): void {
+    const priorAnchor = this.graphSubjectId;
+    const priorSelection = this.selectedEventId;
     this.selectedEventId = id;
-    if (origin === "map" && this.graphSubjectId !== null) return;
+    if (origin === "map" && priorAnchor !== null) {
+      this.persistRunRecord();
+      return;
+    }
     const subject = this.result?.admitted.find((e) => e.id === id);
     // Same t-tag classification deriveSubjectGraph/deriveDossier gate on (spec
     // §9): 'product' re-anchors, 'metadata' never does. An event outside the
@@ -1140,23 +1191,57 @@ class Investigation {
     // anchor is never moved on a guess (spec §2).
     const kind =
       subject === undefined ? undefined : scrutinyEventType(subject as unknown as FabricEvent);
-    if (kind === "product" && this.graphSubjectId !== id) {
+    if (kind === "product" && priorAnchor !== id) {
+      // Remember the card that was open and the drawer event being inspected
+      // under it. A first subject (priorAnchor null) creates no step: its
+      // back target is Results.
+      if (priorAnchor !== null && origin === "elsewhere") {
+        this.anchorHistory.push({ anchorId: priorAnchor, selectionId: priorSelection });
+      }
       this.graphSubjectId = id;
       // Expansions belong to the OLD anchor's neighborhood (#29b ruling 8,
       // #97): carried across an anchor swap they would paint another
       // subject's ring; _resetExpansions drops the trio atomically.
       this._resetExpansions();
-    } else if (kind !== "product" && this.graphSubjectId === null) {
+    } else if (kind !== "product" && priorAnchor === null) {
       this.graphSubjectId = id;
     }
+    // The run record carries the card + selection so a reload-restore can
+    // paint the same anchor instead of dropping the user on a fresh results
+    // list (issue #142 review, #83 restore path).
+    this.persistRunRecord();
   }
 
-  /** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc clear the
-   * ring and return the drawer to its honest no-subject line. The graph
-   * subject stays (ruling 4). The results cards' click-to-reaffirm (#29a
-   * ruling 10) is untouched — this path never runs there. */
+  /** Canvas-only deselect (#29b ruling 7): empty-pane click / Esc / the
+   * drawer's visible Clear control clear the ring and return the drawer to
+   * its honest no-subject line. The graph subject stays (ruling 4). */
   clearSelection(): void {
     this.selectedEventId = null;
+    this.persistRunRecord();
+  }
+
+  /** Restore one anchor-history frame (issue #142): a forced anchor, unlike
+   * selectSubject's product-only rule — a metadata-first session can be the
+   * previous card and must become the graph subject again. Expansions always
+   * reset (they belong to the old neighborhood); the drawer selection is
+   * restored exactly, including null. */
+  restoreAnchor(anchorId: string, selectionId: string | null): void {
+    this.graphSubjectId = anchorId;
+    this.selectedEventId = selectionId;
+    this._resetExpansions();
+    this.persistRunRecord();
+  }
+
+  /** Pop the most recent anchor step. The page owns focus + context fill. */
+  popAnchor(): AnchorFrame | null {
+    const frame = this.anchorHistory.at(-1) ?? null;
+    if (frame !== null) this.anchorHistory.pop();
+    return frame;
+  }
+
+  /** Results is a trail root: a detour there starts a fresh anchor history. */
+  clearAnchorHistory(): void {
+    this.anchorHistory = [];
   }
 
   /** Reveal a related product's admitted neighbors (#29b ruling 8). */
@@ -1923,6 +2008,7 @@ export function resetInvestigation(): void {
   investigation.restoreMissId = null;
   investigation.selectedEventId = null;
   investigation.graphSubjectId = null;
+  investigation.anchorHistory = [];
   investigation._resetExpansions();
   investigation.hasShareHints = false;
   investigation.contextFetched = new Set();

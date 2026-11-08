@@ -69,6 +69,32 @@ export interface NodeTile {
 	label?: string;
 }
 
+/** The graph node's existing title and voice: the card interpretation wins
+ * (search-fill provenance), the cached node tile serves everything the card
+ * lane never touched, rule-5 fallback otherwise. Shared with the nav's card
+ * crumb so the bar and the card cannot name the same subject differently
+ * (issue #142 review). */
+export interface SubjectTitle {
+	text: string;
+	/** Cache hit → true (sans, AI prose). Miss → false (mono, rule-5). */
+	interpreted: boolean;
+}
+
+export function subjectTitleOf(
+	event: NostrEvent,
+	card: ProductCard | undefined,
+	tile: NodeTile | undefined
+): SubjectTitle {
+	const interpreted = (card !== undefined && card.interpreted) || tile !== undefined;
+	return {
+		text:
+			interpreted && card !== undefined
+				? card.title
+				: (tile?.title ?? deriveFallbackTitle(event)),
+		interpreted
+	};
+}
+
 export interface SubjectGraphNode {
 	id: string;
 	kind: NodeKind;
@@ -455,9 +481,7 @@ export function deriveSubjectGraph(
 		const kind = kinds.get(id) as NodeKind;
 		const card = cardsById.get(id);
 		const tile = tiles.get(id);
-		// Card interpretation wins (search-fill provenance); the node tile
-		// is the surface for everything the card lane never interpreted.
-		const interpreted = (card !== undefined && card.interpreted) || tile !== undefined;
+		const title = subjectTitleOf(event, card, tile);
 		const resolution = resolve(id, coreEvents);
 		const { word, editedN } = chainWordOf(resolution);
 		// Subject counts scan ALL admitted bindings (dossier parity — the
@@ -494,15 +518,12 @@ export function deriveSubjectGraph(
 			role,
 			event,
 			retracted: retracted(id),
-			title:
-				interpreted && card !== undefined
-					? card.title
-					: (tile?.title ?? deriveFallbackTitle(event)),
-			interpreted,
+			title: title.text,
+			interpreted: title.interpreted,
 			typeToken: tile?.typeToken,
 			pubkey: event.pubkey,
 			createdAt: event.created_at,
-			snippet: kind === 'product' && interpreted ? card?.snippet : undefined,
+			snippet: kind === 'product' && title.interpreted ? card?.snippet : undefined,
 			boundMetadata: bound.length,
 			files: fileCount,
 			editedN,
