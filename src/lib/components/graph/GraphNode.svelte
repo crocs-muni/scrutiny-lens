@@ -449,12 +449,8 @@
 		clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%);
 	}
 
-	.doc-cut {
-		position: relative;
-	}
-
-	/* A ring plate rides under the card. Declared after `.doc-cut` so its
-	 * absolute placement wins on the plate element. */
+	/* A ring plate rides under the card; the cards are all `relative` so they
+	 * stack above it by DOM order. */
 	.node-ring {
 		position: absolute;
 		pointer-events: none;
