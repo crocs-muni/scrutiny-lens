@@ -319,14 +319,11 @@
 			</div>
 
 			{#if data.snippet !== undefined}
-				<!-- §9 anatomy: one description line on both kinds (product card
-					snippet / record node-tile label). Writing rule: AI prose is sans;
-					an uninterpreted record's rule-5 skeleton is mono, never prose. -->
-				<p
-					class="mt-1.5 truncate leading-[1.5] text-ink-2 {data.interpreted
-						? 'text-[12px]'
-						: 'font-mono text-[11px]'}"
-				>
+				<!-- §9 anatomy: one description line on both kinds (a product's card
+					snippet, a record's node-tile label). It only ever exists on an
+					interpreted node — an uninterpreted one has no description, because
+					its rule-5 title already IS the first content line. -->
+				<p class="mt-1.5 truncate text-[12px] leading-[1.5] text-ink-2">
 					{data.snippet}
 				</p>
 			{/if}
