@@ -32,7 +32,12 @@ import type { ProviderOverrideInput } from "../provider";
 import { buildSystemPrompt, DEFAULT_PROFILE } from "../prompts/vocabCcd";
 import { IconTokenEnum } from "./cards";
 
-export const BATCH_SIZE = 12;
+/** Events per LLM call. Four, not twelve: the interpret lane's per-attempt
+ * budget is the gateway's 30s, and a cold gpt-oss-120b run needs ~34s for a
+ * dozen records (measured 2026-11-08 on the Athena corpus, 12 nodes ≈ 34s →
+ * every node stayed rule-5). Four records land in ~11s and page serially,
+ * which also paints the trickle sooner instead of one lump at the end. */
+export const BATCH_SIZE = 4;
 
 export const NODE_ENTITY_TYPE = "node";
 export const SCHEMA_VERSION = "nodemv/1.0";
