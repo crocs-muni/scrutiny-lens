@@ -21,6 +21,7 @@
  * Grammar (line-based, additive):
  *   ``` fenced blocks → code block (language class echoed, content escaped)
  *   `* `/`- `/`+ ` runs → <ul>, `${n}. ` runs → <ol>
+ *   |a|b| + |---|---| rows → table (cells inline-parsed; alignment echoed)
  *   anything else → paragraph text, joined with '\n'
  * Unknown markdown features degrade to parseInline inside their paragraph —
  * never garbage, never stripped.
@@ -33,10 +34,91 @@ export type ChatBlock =
 	| { kind: 'paragraph'; text: string }
 	| { kind: 'bullets'; items: string[] }
 	| { kind: 'numbered'; items: string[] }
-	| { kind: 'code'; lang: string; text: string };
+	| { kind: 'code'; lang: string; text: string }
+	/** GFM table. `align` is per column; null = default (left). */
+	| { kind: 'table'; header: string[]; rows: string[][]; align: (TableAlign | null)[] };
+
+export type TableAlign = 'left' | 'center' | 'right';
 
 const BULLET = /^[*+-]\s+/;
 const ORDERED = /^\d+\.\s+/;
+const HEADING = /^#{1,6}\s/;
+const BLOCKQUOTE = /^>/;
+/** A GFM delimiter row: at least two columns, or one fully piped column. */
+const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/;
+const TABLE_SEPARATOR_ONE = /^\s*\|\s*:?-+:?\s*\|\s*$/;
+
+/** Split one GFM row. Escaped `\|` and code spans stay inside the cell. */
+function splitTableRow(line: string): string[] {
+	let row = line.trim();
+	if (row.startsWith('|')) row = row.slice(1);
+	if (row.endsWith('|') && !row.endsWith('\\|')) row = row.slice(0, -1);
+	const cells: string[] = [];
+	let current = '';
+	/** 0 = not in code; otherwise the opening backtick-run length. */
+	let codeTicks = 0;
+	for (let i = 0; i < row.length; i++) {
+		const ch = row[i];
+		if (ch === '\\' && row[i + 1] === '|') {
+			current += '|';
+			i++;
+			continue;
+		}
+		if (ch === '`') {
+			let run = 1;
+			while (row[i + run] === '`') run++;
+			if (codeTicks === 0) codeTicks = run;
+			else if (run === codeTicks) codeTicks = 0;
+			current += '`'.repeat(run);
+			i += run - 1;
+			continue;
+		}
+		if (ch === '|' && codeTicks === 0) {
+			cells.push(current.trim());
+			current = '';
+			continue;
+		}
+		current += ch;
+	}
+	cells.push(current.trim());
+	return cells;
+}
+
+function tableAlign(cell: string): TableAlign | null {
+	const left = cell.startsWith(':');
+	const right = cell.endsWith(':');
+	if (left && right) return 'center';
+	if (right) return 'right';
+	if (left) return 'left';
+	return null;
+}
+
+/** A GFM table start at lines[i..i+1]; header and delimiter cell counts must
+ * match (cmark-gfm's guard), else the lines stay paragraph text. */
+function tableAt(
+	lines: string[],
+	i: number
+): { header: string[]; align: (TableAlign | null)[] } | null {
+	if (i + 1 >= lines.length || !lines[i].includes('|')) return null;
+	const separator = lines[i + 1];
+	if (!TABLE_SEPARATOR.test(separator) && !TABLE_SEPARATOR_ONE.test(separator)) return null;
+	const header = splitTableRow(lines[i]);
+	const delimiter = splitTableRow(separator);
+	if (header.length !== delimiter.length) return null;
+	return { header, align: delimiter.map(tableAlign) };
+}
+
+/** A body row ends at a blank line or any other block start, even when the
+ * following block contains a pipe (models often omit the blank line). */
+function isBlockStart(line: string): boolean {
+	return (
+		BULLET.test(line) ||
+		ORDERED.test(line) ||
+		HEADING.test(line) ||
+		BLOCKQUOTE.test(line) ||
+		line.trim().startsWith('```')
+	);
+}
 
 /** marked-inline + DOMPurify — the single sanitizer THE app is allowed to
  * hand a raw string, and the single HTML form the renderer pastes. */
@@ -54,6 +136,7 @@ export function parseBlocks(text: string): ChatBlock[] {
 	let paragraph: string[] = [];
 	let list: { kind: 'bullets' | 'numbered'; items: string[] } | null = null;
 	let fence: { lang: string; lines: string[] } | null = null;
+	const lines = text.split('\n');
 
 	const flushParagraph = (): void => {
 		if (paragraph.length > 0) {
@@ -68,7 +151,8 @@ export function parseBlocks(text: string): ChatBlock[] {
 		}
 	};
 
-	for (const line of text.split('\n')) {
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
 		if (fence !== null) {
 			if (line.trim().startsWith('```')) {
 				blocks.push({ kind: 'code', lang: fence.lang, text: fence.lines.join('\n') });
@@ -83,6 +167,23 @@ export function parseBlocks(text: string): ChatBlock[] {
 			flushParagraph();
 			flushList();
 			fence = { lang: fenceStart[1] ?? '', lines: [] };
+			continue;
+		}
+		const start = tableAt(lines, i);
+		if (start !== null) {
+			flushParagraph();
+			flushList();
+			const { header, align } = start;
+			const rows: string[][] = [];
+			let next = i + 2;
+			for (; next < lines.length; next++) {
+				const row = lines[next];
+				if (row.trim() === '' || !row.includes('|') || isBlockStart(row)) break;
+				const cells = splitTableRow(row);
+				rows.push(header.map((_, column) => cells[column] ?? ''));
+			}
+			blocks.push({ kind: 'table', header, rows, align });
+			i = next - 1;
 			continue;
 		}
 		if (BULLET.test(line)) {
