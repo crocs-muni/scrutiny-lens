@@ -27,6 +27,7 @@ import { generateRecords } from "../records";
 import { writeDeadLetter } from "../deadLetter";
 import { bestIdentifier, projectSkeleton, tagValues } from "../projector";
 import { extractedGate } from "../verifier";
+import { canonicalContentOf } from "../canonical";
 import { resolveGraph, type GraphView, type NostrEvent } from "../../fabric";
 import type { ProviderOverrideInput } from "../provider";
 import { buildSystemPrompt, DEFAULT_PROFILE } from "../prompts/vocabCcd";
@@ -405,6 +406,7 @@ function finalizeNode(
   det: Deterministic,
   draft: NodeDraft | undefined,
   ctx: DeadLetterCtx,
+  events: readonly NostrEvent[],
 ): { vm: NodeVM; fromDraft: boolean } {
   const base = {
     entityId: det.entityId,
@@ -463,7 +465,15 @@ function finalizeNode(
     case "unknown": {
       let summary = clip(draftText(draft?.summary) ?? "", 140);
       if (summary) {
-        const gate = extractedGate(summary, event.content);
+        // #163: summary quotes verify against RESOLVED content — a later
+        // root-author patch makes the raw text history (spec §2; rework
+        // decisions §5). No canonical content ⇒ the summary is unverifiable
+        // and takes the same dead-letter path as an extrapolatory one.
+        const canonical = canonicalContentOf(event.id, events);
+        const gate =
+          canonical === undefined
+            ? ({ state: "extrapolatory" } as const)
+            : extractedGate(summary, canonical);
         if (gate.state === "extrapolatory") {
           // Quote verification failed: the summary cites nothing on the event.
           writeDeadLetter({
@@ -621,6 +631,7 @@ export async function batchNodeInterpret(
         pageDets[j],
         drafts.get(pageEvents[j].id),
         ctx,
+        events,
       );
       nodes.push(vm);
       if (fromDraft) interpretedIds.push(vm.entityId);
