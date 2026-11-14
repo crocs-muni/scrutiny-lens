@@ -14,9 +14,10 @@ import {
 	buildProduct,
 	type UnsignedEvent
 } from '@scrutiny-fabric/core';
-import { deriveSubjectGraph, chainWordOf } from '$lib/graph/subject-graph';
+import { deriveSubjectGraph, chainWordOf, subjectTitleOf } from '$lib/graph/subject-graph';
 import type { NostrEvent } from '$lib/fabric';
 import type { ProductCard } from '$lib/pipeline/cards';
+import { deriveFallbackTitle } from '$lib/pipeline/cards';
 
 const AUTHOR = 'aa'.repeat(32);
 
@@ -407,12 +408,13 @@ describe('deriveSubjectGraph — node voice', () => {
 			cards: [cardFor(f.root)],
 			tiles
 		});
-		// Record: tile paints sans with the token — never the rule-5 mono id.
+		// Record: tile paints sans with the token — never the rule-5 mono id —
+		// and its tile label is the description line (§9 anatomy).
 		expect(view.nodes.find((n) => n.id === 'm1')).toMatchObject({
 			title: 'ROCA advisory for the TPM module',
 			interpreted: true,
 			typeToken: 'vulnerability',
-			snippet: undefined
+			snippet: 'ROCA advisory'
 		});
 		// Product: the card surface outranks the node tile even on a hit.
 		expect(view.nodes.find((n) => n.id === 'root')).toMatchObject({
@@ -427,6 +429,43 @@ describe('deriveSubjectGraph — node voice', () => {
 			cards: []
 		});
 		expect(noTiles.nodes.find((n) => n.id === 'm1')).toMatchObject({ interpreted: false, typeToken: undefined });
+	});
+
+	it('an interpreted linked record carries its node-tile label as the description line (§9 anatomy)', () => {
+		const f = baseFixture();
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', {
+			showDeleted: false,
+			expanded: NO_EXPAND, expandedBridges: NO_BRIDGES,
+			cards: [],
+			tiles: new Map([
+				['m1', { title: 'ROCA advisory for the TPM module', typeToken: 'vulnerability', metaType: 'advisory', label: 'ROCA advisory' }]
+			])
+		});
+		expect(view.nodes.find((n) => n.id === 'm1')).toMatchObject({ interpreted: true, snippet: 'ROCA advisory' });
+	});
+
+	it('an uninterpreted record has no description line (rule-5 skeleton is never AI prose)', () => {
+		const f = baseFixture();
+		// No tile, no card: the record falls back to its rule-5 mono title and
+		// `interpreted` is false, so no snippet may surface even though the
+		// deterministic fallback title exists — an uninterpreted card must
+		// never dress a skeleton up as AI prose (§9 writing rule).
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', {
+			showDeleted: false,
+			expanded: NO_EXPAND, expandedBridges: NO_BRIDGES,
+			cards: []
+		});
+		expect(view.nodes.find((n) => n.id === 'm1')).toMatchObject({ interpreted: false, snippet: undefined });
+	});
+
+	it('a product still takes its card snippet as the description line', () => {
+		const f = baseFixture();
+		const view = deriveSubjectGraph([f.root, f.m1, f.b1], 'root', {
+			showDeleted: false,
+			expanded: NO_EXPAND, expandedBridges: NO_BRIDGES,
+			cards: [cardFor(f.root, { snippet: 'ROCA-affected Athena smartcard' })]
+		});
+		expect(view.nodes.find((n) => n.id === 'root')).toMatchObject({ interpreted: true, snippet: 'ROCA-affected Athena smartcard' });
 	});
 
 	it('subject counts scan the admitted store, not the placed subset', () => {
@@ -457,5 +496,27 @@ describe('deriveSubjectGraph — node voice', () => {
 		});
 		const subject = view.nodes.find((n) => n.id === 'm1');
 		expect(subject).toMatchObject({ boundMetadata: 2, kind: 'metadata', role: 'subject' });
+	});
+});
+
+// The bar's card crumb reuses this helper, so its precedence is what decides
+// whether the crumb reads as AI prose or as machine fallback (spec §9).
+describe('subjectTitleOf — which existing surface names the node', () => {
+	const event = product('root content\n', 1000, ['cve:CVE-2017-15361'], 'root');
+	const tile = { title: 'Node title', typeToken: 'product' };
+
+	it('an interpreted card wins over a cached node tile', () => {
+		const title = subjectTitleOf(event, cardFor(event, { title: 'Card title' }), tile);
+		expect(title).toEqual({ text: 'Card title', interpreted: true });
+	});
+
+	it('a raw card does not shadow a cached node title', () => {
+		const title = subjectTitleOf(event, cardFor(event, { interpreted: false, title: 'fallback text' }), tile);
+		expect(title).toEqual({ text: 'Node title', interpreted: true });
+	});
+
+	it('no cache at all is the rule-5 fallback, marked machine-made', () => {
+		const title = subjectTitleOf(event, undefined, undefined);
+		expect(title).toEqual({ text: deriveFallbackTitle(event), interpreted: false });
 	});
 });

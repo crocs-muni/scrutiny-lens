@@ -221,6 +221,81 @@ describe('selectSubject — product re-anchor (issue #85, spec §9)', () => {
 		expect(investigation.graphSubjectId).toBe('m1');
 	});
 
+	it('an outside re-anchor remembers the previous card and its drawer event', () => {
+		investigation.result = session([
+			event('p1', 'scrutiny-product'),
+			event('m1', 'scrutiny-metadata'),
+			event('p2', 'scrutiny-product'),
+		]);
+		investigation.selectSubject('p1');
+		investigation.selectSubject('m1'); // drawer deep-link under p1
+		investigation.selectSubject('p2'); // chat/deep-link
+		expect(investigation.anchorHistory).toEqual([{ anchorId: 'p1', selectionId: 'm1' }]);
+
+		const frame = investigation.popAnchor();
+		expect(frame).toEqual({ anchorId: 'p1', selectionId: 'm1' });
+		investigation.restoreAnchor(frame!.anchorId, frame!.selectionId);
+		expect(investigation.graphSubjectId).toBe('p1');
+		expect(investigation.selectedEventId).toBe('m1');
+	});
+
+	it('a metadata-first anchor is restorable even when the store is forced', () => {
+		investigation.result = session([
+			event('m1', 'scrutiny-metadata'),
+			event('p2', 'scrutiny-product'),
+		]);
+		investigation.selectSubject('m1');
+		investigation.selectSubject('p2');
+		expect(investigation.graphSubjectId).toBe('p2');
+		expect(investigation.anchorHistory).toEqual([{ anchorId: 'm1', selectionId: 'm1' }]);
+
+		const frame = investigation.popAnchor()!;
+		investigation.restoreAnchor(frame.anchorId, frame.selectionId);
+		expect(investigation.graphSubjectId).toBe('m1');
+		expect(investigation.selectedEventId).toBe('m1');
+	});
+
+	it('a results selection starts no history step', () => {
+		investigation.result = session([
+			event('p1', 'scrutiny-product'),
+			event('p2', 'scrutiny-product'),
+		]);
+		investigation.selectSubject('p1');
+		investigation.selectSubject('p2', 'results');
+		expect(investigation.graphSubjectId).toBe('p2');
+		expect(investigation.anchorHistory).toEqual([]);
+	});
+
+	it('map clicks, metadata selections and same-anchor repeats never push history', () => {
+		investigation.result = session([
+			event('p1', 'scrutiny-product'),
+			event('p2', 'scrutiny-product'),
+			event('m1', 'scrutiny-metadata'),
+		]);
+		investigation.selectSubject('p1');
+		investigation.selectSubject('p2', 'map');
+		investigation.selectSubject('m1');
+		investigation.selectSubject('p1');
+		expect(investigation.anchorHistory).toEqual([]);
+	});
+
+	it('restoreAnchor resets expansions and clearAnchorHistory empties the trail', () => {
+		investigation.result = session([
+			event('p1', 'scrutiny-product'),
+			event('p2', 'scrutiny-product'),
+		]);
+		investigation.selectSubject('p1');
+		investigation.expandRelated('r1');
+		investigation.selectSubject('p2');
+		const frame = investigation.popAnchor()!;
+		investigation.restoreAnchor(frame.anchorId, frame.selectionId);
+		expect(investigation.expandedRelated).toEqual([]);
+
+		investigation.clearAnchorHistory();
+		expect(investigation.anchorHistory).toEqual([]);
+		expect(investigation.popAnchor()).toBeNull();
+	});
+
 	it('an event outside the admitted set keeps the old first-subject rule (never anchors on a guess)', () => {
 		investigation.result = session([event('p1', 'scrutiny-product')]);
 		// Unknown kind: the anchor is only filled when still empty.

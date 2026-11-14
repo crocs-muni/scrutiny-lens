@@ -3,12 +3,12 @@
  *
  * Everything here is deterministic: the drawer's four sections render this
  * shape verbatim, so the drawer's landing PR can assert "AI writes nothing in
- * the drawer" structurally (spec §2 rule 1). The ONE cache read is the card
- * title/description on a cache hit — the interpretations cache keyed
- * (eventId, model) that the results cards already read (spec §6); a miss
- * never spawns an AI call, it falls back to the exact rule-5 vocabulary the
- * card shows (deriveFallbackTitle, exported from cards.ts so the fallback
- * cannot drift between surfaces).
+ * the drawer" structurally (spec §2 rule 1). The cache reads are the
+ * interpretations the trust lanes already wrote and persisted (spec §6): a
+ * product's card title/description, or a linked record's node-tile title and
+ * label. A subject neither lane touched never spawns an AI call — it falls back
+ * to the exact rule-5 vocabulary the card shows (deriveFallbackTitle, exported
+ * from cards.ts so the fallback cannot drift between surfaces).
  *
  * Protocol seam rulings baked in:
  * - core.resolve() is the sole patch source (AGENTS.md hard rule). History
@@ -41,6 +41,7 @@ import {
 	type Resolution
 } from '$lib/fabric';
 import { deriveFallbackTitle, type ProductCard } from '$lib/pipeline/cards';
+import type { NodeTile } from '$lib/graph/subject-graph';
 import { artifactsOf, type ArtifactRef } from '$lib/artifacts';
 
 export interface DossierTitle {
@@ -63,10 +64,12 @@ export type ChainPointState =
 	| 'overlay'
 	| 'retraction';
 
-export interface HistoryRow {
+/** One History row, discriminated on `observed` (issue #165): an observed
+ * row carries the admitted event, so author and signed time come from
+ * evidence and cannot be invented; a reference the admitted set does not
+ * hold names only its id — no author, no timestamp (spec §2 rule 5). */
+interface HistoryRowBase {
 	id: string;
-	author: string;
-	createdAt: number;
 	position: number | null;
 	state: ChainPointState;
 	/** §7.3 state word — set iff state === 'overlay'. */
@@ -76,6 +79,18 @@ export interface HistoryRow {
 	/** False → renders under the "not in the canonical chain" group. */
 	canonical: boolean;
 }
+
+interface ObservedHistoryRow extends HistoryRowBase {
+	observed: true;
+	/** The admitted event this row is about. */
+	event: NostrEvent;
+}
+
+interface UnobservedHistoryRow extends HistoryRowBase {
+	observed: false;
+}
+
+export type HistoryRow = ObservedHistoryRow | UnobservedHistoryRow;
 
 export interface FileRow {
 	/** Artifact identity (`${recordId}#${fnv1a(url)}`) — unique per
@@ -197,71 +212,54 @@ function retractionOf(
 	);
 }
 
-function historyRows(
+/** History = canonical chain + retraction row + the non-canonical group
+ * (issue #29 ruling 5). Exported for the #165 trust gate only — the four-input
+ * join itself is the seam #166 moves into core's buildDossier(); do not grow
+ * it here. */
+export function historyRows(
 	subject: NostrEvent,
 	resolution: Resolution,
 	events: NostrEvent[],
 	coreEvents: CoreNostrEvent[]
 ): HistoryRow[] {
 	const byId = new Map(events.map((e) => [e.id, e]));
-	const rows: HistoryRow[] = [];
-	// The root row is the subject verbatim: deriveDossier already returned
-	// null when the subject isn't in `events`, and admission dedupes by id —
-	// a `byId.get(subject.id) ?? subject` lookup here would be self-identity.
-	rows.push({
-		id: subject.id,
-		author: subject.pubkey,
-		createdAt: subject.created_at,
-		position: 0,
-		state: 'root',
-		canonical: true
-	});
+	/** The admitted event when the set holds this id, else the explicit
+	 * unobserved row — the only row constructor, so there is no shape for a
+	 * synthesized author or timestamp to fit (#165). */
+	function rowFor(id: string, point: Omit<HistoryRowBase, 'id'>): HistoryRow {
+		const event = byId.get(id);
+		return event === undefined
+			? { id, ...point, observed: false }
+			: { id, ...point, observed: true, event };
+	}
+
+	// deriveDossier already returned null when the subject is not in
+	// `events`, so the root row's lookup is self-identity: always observed.
+	const rows: HistoryRow[] = [
+		rowFor(subject.id, { position: 0, state: 'root', canonical: true })
+	];
 
 	const chain = resolution.chain;
 	if (chain.status === 'resolved' || chain.status === 'halted' || chain.status === 'aborted') {
 		chain.applied.forEach((id, i) => {
-			const ev = byId.get(id);
-			rows.push({
-				id,
-				author: ev?.pubkey ?? '',
-				createdAt: ev?.created_at ?? 0,
-				position: i + 1,
-				state: 'applied',
-				canonical: true
-			});
+			rows.push(rowFor(id, { position: i + 1, state: 'applied', canonical: true }));
 		});
 	}
 	if (chain.status === 'halted') {
-		const ev = byId.get(chain.haltedAt);
-		rows.push({
-			id: chain.haltedAt,
-			author: ev?.pubkey ?? '',
-			createdAt: ev?.created_at ?? 0,
-			position: chain.applied.length + 1,
-			state: 'halted-here',
-			canonical: true
-		});
+		rows.push(
+			rowFor(chain.haltedAt, {
+				position: chain.applied.length + 1,
+				state: 'halted-here',
+				canonical: true
+			})
+		);
 	}
 	if (chain.status === 'forked') {
-		const parent = byId.get(chain.forkParentId);
-		rows.push({
-			id: chain.forkParentId,
-			author: parent?.pubkey ?? '',
-			createdAt: parent?.created_at ?? 0,
-			position: null,
-			state: 'fork-parent',
-			canonical: true
-		});
+		rows.push(
+			rowFor(chain.forkParentId, { position: null, state: 'fork-parent', canonical: true })
+		);
 		for (const id of chain.branchIds) {
-			const ev = byId.get(id);
-			rows.push({
-				id,
-				author: ev?.pubkey ?? '',
-				createdAt: ev?.created_at ?? 0,
-				position: null,
-				state: 'fork-branch',
-				canonical: false
-			});
+			rows.push(rowFor(id, { position: null, state: 'fork-branch', canonical: false }));
 		}
 	}
 
@@ -271,41 +269,26 @@ function historyRows(
 	// "not in the canonical chain" bucket regardless of what else resolves).
 	const retraction = retractionOf(subject as unknown as CoreNostrEvent, coreEvents);
 	if (retraction !== undefined) {
-		rows.push({
-			id: retraction.id,
-			author: retraction.pubkey,
-			createdAt: retraction.created_at,
-			position: null,
-			state: 'retraction',
-			canonical: true
-		});
+		rows.push(
+			rowFor(retraction.id, { position: null, state: 'retraction', canonical: true })
+		);
 	}
 
 	// Non-canonical group (issue #29 ruling 5): root-author pending patches,
 	// then foreign overlays carrying their §7.3 state word.
 	for (const id of resolution.pending) {
-		const ev = byId.get(id);
-		rows.push({
-			id,
-			author: ev?.pubkey ?? '',
-			createdAt: ev?.created_at ?? 0,
-			position: null,
-			state: 'pending',
-			canonical: false
-		});
+		rows.push(rowFor(id, { position: null, state: 'pending', canonical: false }));
 	}
 	for (const overlay of resolution.overlays) {
-		const ev = byId.get(overlay.id);
-		rows.push({
-			id: overlay.id,
-			author: ev?.pubkey ?? overlay.author,
-			createdAt: ev?.created_at ?? 0,
-			position: null,
-			state: 'overlay',
-			overlayState: overlay.state,
-			targetId: overlay.targetId,
-			canonical: false
-		});
+		rows.push(
+			rowFor(overlay.id, {
+				position: null,
+				state: 'overlay',
+				overlayState: overlay.state,
+				targetId: overlay.targetId,
+				canonical: false
+			})
+		);
 	}
 	return rows;
 }
@@ -388,7 +371,8 @@ function fileRows(
 export function deriveDossier(
 	subjectId: string,
 	events: NostrEvent[],
-	cards: ProductCard[]
+	cards: ProductCard[],
+	tiles: ReadonlyMap<string, NodeTile> = new Map()
 ): Dossier | null {
 	const subject = events.find((e) => e.id === subjectId);
 	if (subject === undefined) return null;
@@ -400,7 +384,16 @@ export function deriveDossier(
 	if (type !== 'product' && type !== 'metadata') return null;
 
 	const card = cards.find((c) => c.id === subjectId);
-	const interpreted = card !== undefined && card.interpreted;
+	// One interpretation per subject, from whichever lane touched it: the card
+	// lane paints products during a search fill, the node lane paints whatever
+	// the canvas placed (§9 anatomy). A linked record has no card, so its title
+	// and one-liner live in the tile — without this the drawer showed a record's
+	// rule-5 title beside a canvas card carrying its AI text.
+	const tile = tiles.get(subjectId);
+	const cardTitle = card !== undefined && card.interpreted ? card.title : undefined;
+	const interpreted = cardTitle !== undefined || tile !== undefined;
+	const title = cardTitle ?? tile?.title ?? deriveFallbackTitle(subject);
+	const snippet = (card !== undefined && card.interpreted ? card.snippet : undefined) ?? tile?.label;
 	const resolution = resolve(subjectId, coreEvents);
 	const retraction = retractionOf(coreSubject, coreEvents);
 	const content = contentOf(resolution);
@@ -412,12 +405,11 @@ export function deriveDossier(
 		subject,
 		subjectType: type,
 		retracted: retraction !== undefined,
-		title: {
-			text: interpreted && card !== undefined ? card.title : deriveFallbackTitle(subject),
-			interpreted
-		},
-		// Descriptions are products-only (BIBLE N1 ④) and cache-only.
-		snippet: type === 'product' && interpreted ? card?.snippet : undefined,
+		title: { text: title, interpreted },
+		// §9 anatomy: the description line exists on both kinds now — a product's
+		// card snippet, a record's node-tile label; an uninterpreted subject shows
+		// no line at all rather than fabricated prose.
+		snippet: interpreted ? snippet : undefined,
 		identifiers,
 		publisher: subject.pubkey,
 		createdAt: subject.created_at,

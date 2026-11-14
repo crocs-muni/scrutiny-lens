@@ -212,7 +212,9 @@ const GROUNDING_INSTRUCTIONS = [
 	'3. Never fabricate event ids, identifiers, or quotes.',
 	'4. The user is looking at a single visual "card": the Graph root subject (a product) plus its bound metadata. "This card", "this product", "the subject" all mean THAT root — resolve deictic references against it, never against the literal word ("card" need not match the product\'s category).',
 	'5. Prefer answering with what the events DO say about the root subject. Declare ungrounded ONLY when neither the root nor its bound events carry an answer at all — a wording mismatch (the question\'s noun vs the product\'s category) is never grounds for refusal.',
-	`6. If the question still cannot be answered from the session events, reply with EXACTLY one line: ${UNGROUNDED_SENTINEL} {"availableContext":"<what the session does contain>"} — no other text, and never bracket raw event ids inside availableContext.`
+	'6. If the question still cannot be answered from the session events, reply with EXACTLY one line: ' +
+		`${UNGROUNDED_SENTINEL} {"availableContext":"<what the session does contain>"} — no other text, and never bracket raw event ids inside availableContext.`,
+	'7. If you use a Markdown table, keep citation markers out of the table cells. Put one "Sources:" line after the table, with one marker per source, so the table renders as a table and every quote stays verifiable.'
 ].join('\n');
 
 /* ------------------------------------------------------------------ *

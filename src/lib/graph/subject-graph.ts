@@ -69,6 +69,35 @@ export interface NodeTile {
 	label?: string;
 }
 
+/** The graph node's existing title and voice: the card interpretation wins
+ * (search-fill provenance), the cached node tile serves everything the card
+ * lane never touched, rule-5 fallback otherwise. Shared with the nav's card
+ * crumb so the bar and the card cannot name the same subject differently
+ * (issue #142 review). */
+export interface SubjectTitle {
+	text: string;
+	/** Cache hit → true (sans, AI prose). Miss → false (mono, rule-5). */
+	interpreted: boolean;
+}
+
+export function subjectTitleOf(
+	event: NostrEvent,
+	card: ProductCard | undefined,
+	tile: NodeTile | undefined
+): SubjectTitle {
+	const interpreted = card?.interpreted === true || tile !== undefined;
+	// The card surface wins only when it is INTERPRETED: a raw card's text is
+	// already the rule-5 fallback, so letting it shadow a cached node title
+	// would drop prose the app has and render machine text in sans.
+	return {
+		text:
+			card?.interpreted === true
+				? card.title
+				: (tile?.title ?? deriveFallbackTitle(event)),
+		interpreted
+	};
+}
+
 export interface SubjectGraphNode {
 	id: string;
 	kind: NodeKind;
@@ -85,7 +114,11 @@ export interface SubjectGraphNode {
 	typeToken: string | undefined;
 	pubkey: string;
 	createdAt: number;
-	/** Subject one-liner: products only, interpreted only (BIBLE N1 ④). */
+	/** The card's one-line description, unified across kinds (§9 anatomy):
+	 * a product takes its card snippet; a linked record takes the persisted
+	 * node-tile `label` the node lane already wrote (runNodeFill / nodes.ts
+	 * metadata branch). Interpreted only — a rule-5 skeleton label must
+	 * never render as AI prose. Undefined when neither source exists. */
 	snippet: string | undefined;
 	/** Subject icon-counts: admitted bindings to metadata / with http(s)
 	 * content — counted over the FULL admitted set (dossier parity,
@@ -455,9 +488,7 @@ export function deriveSubjectGraph(
 		const kind = kinds.get(id) as NodeKind;
 		const card = cardsById.get(id);
 		const tile = tiles.get(id);
-		// Card interpretation wins (search-fill provenance); the node tile
-		// is the surface for everything the card lane never interpreted.
-		const interpreted = (card !== undefined && card.interpreted) || tile !== undefined;
+		const title = subjectTitleOf(event, card, tile);
 		const resolution = resolve(id, coreEvents);
 		const { word, editedN } = chainWordOf(resolution);
 		// Subject counts scan ALL admitted bindings (dossier parity — the
@@ -494,15 +525,16 @@ export function deriveSubjectGraph(
 			role,
 			event,
 			retracted: retracted(id),
-			title:
-				interpreted && card !== undefined
-					? card.title
-					: (tile?.title ?? deriveFallbackTitle(event)),
-			interpreted,
+			title: title.text,
+			interpreted: title.interpreted,
 			typeToken: tile?.typeToken,
 			pubkey: event.pubkey,
 			createdAt: event.created_at,
-			snippet: kind === 'product' && interpreted ? card?.snippet : undefined,
+			// §9 anatomy: the one description line. A product carries its card
+			// snippet, a record its node-tile label (products never get one), and
+			// an uninterpreted node carries neither — a rule-5 skeleton must not
+			// pose as AI prose, and its title already IS the first content line.
+			snippet: title.interpreted ? (card?.snippet ?? tile?.label) : undefined,
 			boundMetadata: bound.length,
 			files: fileCount,
 			editedN,

@@ -93,6 +93,24 @@ describe('visibleCards (spec §3)', () => {
 	it('filtering OUT all cards yields an empty set honestly', () => {
 		expect(visibleCards(ADMITTED, { vendor: new Set(['nobody']) }, ALL_CARDS)).toHaveLength(0);
 	});
+
+	// Issue #160: the rail's cardinality is the keyed each in +page.svelte
+	// (`(card.id)`), and a 548-card run reached it with one id twice —
+	// Svelte threw each_key_duplicate and the page died. Whichever writer
+	// duplicates the assembly, the derivation paints one card per id.
+	it('a duplicated id in the assembly folds to one card (#160)', () => {
+		expect(visibleCards(ADMITTED, {}, [cardA, cardA]).map((c) => c.id)).toEqual([cardA.id]);
+		expect(visibleCards(ADMITTED, {}, [cardA, cardB, cardA]).map((c) => c.id)).toEqual([
+			cardA.id,
+			cardB.id
+		]);
+	});
+
+	it('the fold holds under a selection that keeps the duplicated card (#160)', () => {
+		expect(visibleCards(ADMITTED, { vendor: new Set(['apple']) }, [cardA, cardA]).map((c) => c.id)).toEqual([
+			cardA.id
+		]);
+	});
 });
 
 describe('semantic facet axes (BIBLE J2: type/status/fill — #108 vocabulary)', () => {

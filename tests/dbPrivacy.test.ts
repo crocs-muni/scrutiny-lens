@@ -11,6 +11,7 @@ import {
 	putSession,
 	appendDeadLetter
 } from '$lib/db';
+import { _setKeyStorageForTests, resetSettings, settings } from '../src/lib/settings.svelte';
 
 const KEY = 'sk-SECRET-DO-NOT-LEAK-12345';
 
@@ -43,6 +44,28 @@ describe('API key never reaches a stored object (spec §6, ADR-018 pattern)', ()
 		const dump = await dumpAllForTests();
 		expect(Object.keys(dump).length).toBeGreaterThan(0); // vacuity guard
 		expect(JSON.stringify(dump)).not.toContain(KEY);
+	});
+
+	// The restore path is the one that can leak: a key that never passes through
+	// a keystroke must still arm the strip before any write happens (spec §6).
+	it('a key restored from session storage is still stripped from every write path', async () => {
+		let held: string | null = null;
+		_setKeyStorageForTests({
+			getItem: () => held,
+			setItem: (_key, value) => void (held = value),
+			removeItem: () => void (held = null)
+		});
+		try {
+			settings.setApiKey(KEY);
+			settings.apiKey = ''; // the reload
+			await settings.hydrate(); // restore arms registerSecret
+			expect(settings.apiKey).toBe(KEY);
+			await putSession({ id: 's-restore', title: `about ${KEY}`, createdAt: 100 });
+			expect(JSON.stringify(await dumpAllForTests())).not.toContain(KEY);
+		} finally {
+			_setKeyStorageForTests(undefined);
+			resetSettings();
+		}
 	});
 
 	// Red control with an UNREGISTERED marker: proves the positive test above

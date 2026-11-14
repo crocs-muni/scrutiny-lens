@@ -19,7 +19,8 @@
 		IconChevronUp,
 		IconClock,
 		IconCpu,
-		IconShield
+		IconShield,
+		IconX
 	} from '@tabler/icons-svelte';
 	import { nip19 } from 'nostr-tools';
 	import KeyHint from './KeyHint.svelte';
@@ -67,6 +68,9 @@
 		 * the dossier in place — the metadata-dossier path pre-canvas. */
 		onSelect?: (id: string) => void;
 		onClearFilters?: () => void;
+		/** Visible twin of the Esc first step: clear the drawer subject while
+		 * the graph anchor stays (#29b ruling 7, issue #142 review). */
+		onClearSelection?: () => void;
 		onToggle: () => void;
 		onResize: (next: number) => void;
 	}
@@ -79,6 +83,7 @@
 		hiddenByFilter = false,
 		onSelect,
 		onClearFilters,
+		onClearSelection,
 		onToggle,
 		onResize
 	}: Props = $props();
@@ -164,9 +169,7 @@
 	/** History rows name authors as short npubs (mono) — kind-0 profiles
 	 * belong to the publisher chip, not per-row fetches. The tooltip carries
 	 * the same encoding in full, so the two can be matched. */
-	function npubShort(pubkey: string): string {
-		if (pubkey === '') return 'unknown';
-		const npub = nip19.npubEncode(pubkey);
+	function shortNpub(npub: string): string {
 		return `${npub.slice(0, 14)}…`;
 	}
 
@@ -266,6 +269,14 @@
 		<!-- BIBLE L1090: share lives in the drawer header — copies the
 			record's share links (issue #31: URL + nostr: URI). -->
 		{#if dossier !== null}
+			<KeyHint
+				label="Clear selection"
+				side="top"
+				class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
+				onclick={() => onClearSelection?.()}
+			>
+				<IconX size={14} stroke-width={2} />
+			</KeyHint>
 			<SharePopover subject={dossier.subject} />
 		{/if}
 		<KeyHint
@@ -372,8 +383,9 @@
 					{/snippet}
 				</KeyHint>
 			</div>
-			<!-- ④ description: products only, one line, cache-only — a miss
-				renders no line at all rather than fabricated prose. -->
+			<!-- ④ description: one line on both kinds — a product's card snippet or
+				a record's node-tile label; an uninterpreted subject renders no line
+				at all rather than fabricated prose. -->
 			{#if dossier.snippet !== undefined}
 				<p class="mt-1.5 text-[13.5px] leading-relaxed text-ink-2">{dossier.snippet}</p>
 			{/if}
@@ -417,11 +429,20 @@
 							not in the canonical chain
 						</div>
 					{/if}
-					<div class="flex items-center gap-2 text-[12px] text-ink-2">
+					<div class="flex items-center gap-2 text-[12px] text-ink-2" data-history-row>
 						<span class="w-7 shrink-0 font-mono text-[11px] text-ink-3">
 							{row.position !== null ? `#${row.position}` : '·'}
 						</span>
-						{#if row.state === 'retraction'}
+						{#if !row.observed}
+							<!-- #165: the reference is real, its event is not in the
+								admitted set — say that, never a blank author or 1970. A
+								dashed chip marks the absence (nothing is claimed). -->
+							<span
+								class="shrink-0 rounded-[6px] border border-dashed border-line bg-inset px-2 py-px font-mono text-[10.5px] text-ink-2"
+							>
+								referenced, not fetched
+							</span>
+						{:else if row.state === 'retraction'}
 							<span
 								class="shrink-0 rounded-full border border-[oklch(0.93_0.04_20)] bg-red-tint px-2 py-px font-mono text-[10.5px] font-medium text-red"
 							>
@@ -445,37 +466,36 @@
 						</span>
 						<!-- Row values are hover-only (no per-row tab stops on a long
 							history): the full npub rides as sr-only text and the time as
-							a time element with its datetime. -->
-						{#if row.author === ''}
-							<span class="shrink-0 font-mono text-[11px] text-ink-3">{npubShort(row.author)}</span>
-						{:else}
-							{@const npub = nip19.npubEncode(row.author)}
+							a time element with its datetime. Both read the row's admitted
+							event, so an unobserved row renders neither (#165). -->
+						{#if row.observed}
+							{@const npub = nip19.npubEncode(row.event.pubkey)}
 							<KeyHint hoverOnly nameless side="top">
 								{#snippet content()}
 									<span class="font-mono break-all">{npub}</span>
 								{/snippet}
 								{#snippet trigger({ props })}
 									<span {...props} class="shrink-0 font-mono text-[11px] text-ink-3">
-										<span aria-hidden="true">{npubShort(row.author)}</span>
+										<span aria-hidden="true">{shortNpub(npub)}</span>
 										<span class="sr-only">{npub}</span>
 									</span>
 								{/snippet}
 							</KeyHint>
+							<KeyHint hoverOnly nameless side="top">
+								{#snippet content()}
+									<span class="font-mono">{absolute(row.event.created_at)}</span>
+								{/snippet}
+								{#snippet trigger({ props })}
+									<time
+										{...props}
+										datetime={isoOf(row.event.created_at)}
+										class="shrink-0 font-mono text-[11px] text-ink-2"
+									>
+										{formatRel(row.event.created_at * 1000)}
+									</time>
+								{/snippet}
+							</KeyHint>
 						{/if}
-						<KeyHint hoverOnly nameless side="top">
-							{#snippet content()}
-								<span class="font-mono">{absolute(row.createdAt)}</span>
-							{/snippet}
-							{#snippet trigger({ props })}
-								<time
-									{...props}
-									datetime={isoOf(row.createdAt)}
-									class="shrink-0 font-mono text-[11px] text-ink-2"
-								>
-									{formatRel(row.createdAt * 1000)}
-								</time>
-							{/snippet}
-						</KeyHint>
 					</div>
 				{/each}
 			</div>

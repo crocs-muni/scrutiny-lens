@@ -1,6 +1,6 @@
 // Settings flow (issue #11, spec §5/§6): runes state over the #12 settings
-// store — defaults → hydrate → persist-on-change; the API key stays
-// memory-only and arms the redaction strip on entry.
+// store — defaults → hydrate → persist-on-change; the API key rides this tab's
+// session storage and arms the redaction strip on entry or restore.
 
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -13,7 +13,14 @@ import {
 	putSession,
 	saveSettings
 } from '$lib/db';
-import { defaultSettings, nextAutoModel, settings, resetSettings } from '../src/lib/settings.svelte';
+import {
+	_setKeyStorageForTests,
+	clearSessionKey,
+	defaultSettings,
+	nextAutoModel,
+	settings,
+	resetSettings
+} from '../src/lib/settings.svelte';
 import { RELAY_MAX, RELAY_MIN } from '../src/lib/config';
 
 const KEY = 'sk-test-1234567890abcdef';
@@ -199,6 +206,89 @@ describe('hydrate dirty guard (WP3)', () => {
 		// …while clean fields still hydrate from the record.
 		expect(settings.endpoint).toBe('https://persisted.example/v1');
 		expect(settings.appearance).toBe('dark');
+	});
+});
+
+describe('session key (spec §6: reload keeps it, the tab close forgets it)', () => {
+	/** node has no sessionStorage; the store exposes a seam for exactly this. */
+	function fakeStorage(): {
+		getItem(key: string): string | null;
+		setItem(key: string, value: string): void;
+		removeItem(key: string): void;
+		read(): string | null;
+	} {
+		let held: string | null = null;
+		return {
+			getItem: () => held,
+			setItem: (_key, value) => void (held = value),
+			removeItem: () => void (held = null),
+			read: () => held
+		};
+	}
+
+	afterEach(() => {
+		_setKeyStorageForTests(undefined);
+	});
+
+	it('restores the key after a reload and re-arms the redaction strip', async () => {
+		const store = fakeStorage();
+		_setKeyStorageForTests(store);
+		settings.setApiKey(KEY);
+		expect(store.read()).toBe(KEY);
+
+		// A reload: runes state is fresh, session storage survived.
+		settings.apiKey = '';
+		await settings.hydrate();
+		expect(settings.apiKey).toBe(KEY);
+	});
+
+	it('a key typed before hydration wins over the stored one', async () => {
+		const store = fakeStorage();
+		_setKeyStorageForTests(store);
+		settings.setApiKey(KEY);
+		settings.apiKey = '';
+		settings.setApiKey('sk-typed-after-reload-0000');
+		await settings.hydrate();
+		expect(settings.apiKey).toBe('sk-typed-after-reload-0000');
+	});
+
+	it('clear all local data removes the stored key', async () => {
+		const store = fakeStorage();
+		_setKeyStorageForTests(store);
+		settings.setApiKey(KEY);
+		clearSessionKey();
+		settings.apiKey = '';
+		await settings.hydrate();
+		expect(settings.apiKey).toBe('');
+		expect(store.read()).toBeNull();
+	});
+
+	it('an unavailable storage degrades to memory-only without throwing', async () => {
+		_setKeyStorageForTests(null);
+		expect(() => settings.setApiKey(KEY)).not.toThrow();
+		expect(settings.apiKey).toBe(KEY);
+		settings.apiKey = '';
+		await settings.hydrate();
+		expect(settings.apiKey).toBe('');
+	});
+
+	it('a storage that throws on access degrades the same way', async () => {
+		_setKeyStorageForTests({
+			getItem() {
+				throw new Error('denied');
+			},
+			setItem() {
+				throw new Error('denied');
+			},
+			removeItem() {
+				throw new Error('denied');
+			}
+		});
+		expect(() => settings.setApiKey(KEY)).not.toThrow();
+		expect(settings.apiKey).toBe(KEY);
+		settings.apiKey = '';
+		await expect(settings.hydrate()).resolves.toBeUndefined();
+		expect(settings.apiKey).toBe('');
 	});
 });
 

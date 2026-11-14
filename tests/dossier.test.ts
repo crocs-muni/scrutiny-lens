@@ -10,13 +10,15 @@ import { describe, expect, it } from 'vitest';
 import {
 	DELETION_KIND,
 	buildBinding,
+	buildMetadata,
 	buildPatch,
 	buildProduct,
 	fencePatchPayload,
+	resolve,
 	type UnsignedEvent
 } from '@scrutiny-fabric/core';
-import { deriveDossier, incomingFrom } from '$lib/dossier';
-import type { NostrEvent } from '$lib/fabric';
+import { deriveDossier, historyRows, incomingFrom } from '$lib/dossier';
+import type { CoreNostrEvent, NostrEvent } from '$lib/fabric';
 import type { ProductCard } from '$lib/pipeline/cards';
 
 const AUTHOR = 'aa'.repeat(32);
@@ -143,6 +145,37 @@ describe('resolve() is the sole patch source', () => {
 	});
 });
 
+describe('history rows state only what the admitted set holds (#165)', () => {
+	it('a chain reference outside the admitted set is unobserved — never a blank author or epoch time', () => {
+		const root = productRoot('v1\n', [], 'root');
+		const p1 = patchEvent('root', 'root', 'v1\n', 'v2\n', 2000, AUTHOR, 'p1');
+		const p2 = patchEvent('root', 'p1', 'v2\n', 'v3\n', 3000, AUTHOR, 'p2');
+		// resolve() names p2 (it read the wider batch), but the admitted set
+		// the drawer may show stops at p1 — the #166 join's shape, and today
+		// the only way a referenced id can be absent from `events`.
+		const resolution = resolve('root', [root, p1, p2] as unknown as CoreNostrEvent[]);
+		const admitted = [root, p1];
+		const rows = historyRows(root, resolution, admitted, admitted as unknown as CoreNostrEvent[]);
+
+		const missing = rows.find((r) => r.id === 'p2');
+		expect(missing).toBeDefined();
+		expect(missing).toMatchObject({
+			observed: false,
+			position: 2,
+			state: 'applied',
+			canonical: true
+		});
+		// §2 rule 5: with no event there is no author and no time to show —
+		// neither field exists on an unobserved row, so neither can be faked.
+		expect(missing).not.toHaveProperty('author');
+		expect(missing).not.toHaveProperty('createdAt');
+		expect(missing).not.toHaveProperty('event');
+		// §2 rule 2: the section count is the rows array's length, unobserved
+		// rows included.
+		expect(rows).toHaveLength(3);
+	});
+});
+
 describe('cache-first title (never a drawer-private alternate)', () => {
 	it('cache hit: the interpreted card title, sans-flagged', () => {
 		const root = productRoot('raw content words here\n', ['cpe:2.3:h:x'], 'root');
@@ -171,6 +204,30 @@ describe('cache-first title (never a drawer-private alternate)', () => {
 		const d = deriveDossier('root', [root], [])!;
 		expect(d.identifiers).toContain('zz9:opaque-namespace-value');
 		expect(d.counts.summary).toBe(d.identifiers.length);
+	});
+
+	it('a linked record takes its title and one-liner from the node tile (§9 anatomy)', () => {
+		const record = signed(
+			buildMetadata('Vendor security notice — CVE-2019-15809 (Minerva).\n', 1000, ['cve:CVE-2019-15809']).template,
+			AUTHOR,
+			'm1'
+		);
+		const d = deriveDossier('m1', [record], [], new Map([
+			['m1', { title: 'Minerva advisory from the vendor', typeToken: 'advisory', label: 'AT90SC ECDSA timing leak' }]
+		]))!;
+		expect(d.title).toEqual({ text: 'Minerva advisory from the vendor', interpreted: true });
+		expect(d.snippet).toBe('AT90SC ECDSA timing leak');
+	});
+
+	it('a record no lane interpreted keeps the rule-5 face and shows no line', () => {
+		const record = signed(
+			buildMetadata('Vendor security notice — CVE-2019-15809 (Minerva).\n', 1000).template,
+			AUTHOR,
+			'm2'
+		);
+		const d = deriveDossier('m2', [record], [])!;
+		expect(d.title.interpreted).toBe(false);
+		expect(d.snippet).toBeUndefined();
 	});
 });
 
