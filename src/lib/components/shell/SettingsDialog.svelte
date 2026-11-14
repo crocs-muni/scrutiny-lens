@@ -10,6 +10,7 @@
 	 * here serializes it into the database. */
 
 	import { Combobox } from 'bits-ui';
+	import { untrack } from 'svelte';
 	import {
 		IconCheck,
 		IconChevronDown,
@@ -25,7 +26,13 @@
 	import KeyField from '$lib/components/ui/KeyField.svelte';
 	import KeyHint from './KeyHint.svelte';
 	import { clearAllLocalData } from '$lib/db';
-	import { clearSessionKey, nextAutoModel, settings } from '$lib/settings.svelte';
+	import {
+		clearSessionKey,
+		nextAutoModel,
+		rebaseRelayDrafts,
+		sameRelayPool,
+		settings
+	} from '$lib/settings.svelte';
 	import { RELAY_MAX, RELAY_MIN, type Appearance } from '$lib/config';
 
 	interface Props {
@@ -168,9 +175,14 @@
 	// anything other than settings.relays is exactly the #131 lie. Dirty drafts
 	// (user typing) are the fresher truth and stay put; the flip back to
 	// pristine after a commit or revert makes this re-run harmlessly.
+	// Drafts are read untracked (issue #151): they are this effect's OUTPUT,
+	// so tracking them would re-run the effect on its own write. The rule
+	// itself is the shared pure one — a foreground refresh from another tab
+	// now moves the pool under an open editor, and only a dirty editor may
+	// keep what it has.
 	$effect(() => {
-		if (dirty) return;
-		relayDrafts = padRelayDrafts([...settings.relays]);
+		const rebased = rebaseRelayDrafts(untrack(() => relayDrafts), settings.relays, dirty);
+		if (rebased !== null) relayDrafts = padRelayDrafts(rebased);
 	});
 	// Backdrop close applies ONLY when the press itself started on the
 	// backdrop — a text-selection drag that leaves the dialog would
@@ -185,8 +197,7 @@
 		// Identical list (blur with no edit, or a revert already applied):
 		// there is nothing to save; the finally below still rebuilds the
 		// padded view of the committed pool.
-		const unchanged =
-			drafts.length === settings.relays.length && drafts.every((u, i) => u === settings.relays[i]);
+		const unchanged = sameRelayPool(drafts, settings.relays);
 		try {
 			// Save failures don't throw (SaveOutcome → persistState, rendered by
 			// the footer) — only validation reaches this catch, before any
