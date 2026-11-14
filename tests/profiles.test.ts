@@ -9,15 +9,27 @@
  * chip's found/missing/unasked decision is asserted through the exported pure
  * mapping profileClaim; the browser-only rendering is left to the a11y/manual
  * pass.
+ *
+ * #135 adds the local-first half: a kind-0 this device already resolved is a
+ * device row (IndexedDB), so a reloaded tab — the cache-restored card case —
+ * paints the same avatar + name with zero relay traffic, and an author no row
+ * and no relay knows still lands on the deterministic identicon + npub token.
  */
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import type { NostrEvent } from 'nostr-tools/core';
 import type { Filter } from 'nostr-tools/filter';
-import { _closeForTests, clearAllLocalData, initPersistence, saveSettings } from '$lib/db';
+import {
+	_closeForTests,
+	clearAllLocalData,
+	initPersistence,
+	loadProfile,
+	saveSettings
+} from '$lib/db';
 import { resetSettings, settings } from '$lib/settings.svelte';
 import { getProfile, profileClaim, resetProfiles } from '../src/lib/net/profiles';
+import { identiconCells, publisherNpub, publisherToken } from '../src/lib/publisher';
 
 /** Fake relay cloud shared with the module mock below. vi.hoisted runs before
  * the mocked module is imported, so the factory can close over it. */
@@ -171,5 +183,105 @@ describe('profileClaim (what the chip is allowed to say)', () => {
 		expect(profileClaim({ name: null, picture: 'https://img/x.png' })).toBe('found');
 		expect(profileClaim(null)).toBe('missing');
 		expect(profileClaim(undefined)).toBe('unasked');
+	});
+});
+
+/** A reload: the tab's memo and settings die, the device's rows do not
+ * (issue #83's restore is exactly this seam). */
+async function reload(): Promise<void> {
+	_closeForTests();
+	await initPersistence();
+	resetSettings();
+	resetProfiles();
+	fake.queries.length = 0;
+}
+
+const ALICE = { name: 'Alice', picture: 'https://img/x.png' };
+
+describe('cache-restored cards keep their publisher identity (issue #135)', () => {
+	it('paints a previously resolved profile from the device, asking no relay', async () => {
+		settings.relays = [...POOL_A];
+		fake.respond = () => [kind0(ALICE)];
+		expect(await getProfile(PUBKEY)).toEqual(ALICE);
+		expect(fake.queries).toHaveLength(1);
+
+		// The write-through is fire-and-forget; a reload must still find the row.
+		await vi.waitFor(async () => expect(await loadProfile(PUBKEY)).not.toBeNull());
+		await reload();
+		// This session's relays know nothing (cache-restored run, or offline):
+		// without the device row the chip would go bare, which IS the bug.
+		fake.respond = () => [];
+
+		expect(await getProfile(PUBKEY)).toEqual(ALICE);
+		expect(fake.queries).toHaveLength(0);
+	});
+
+	it('a stored snapshot answers under a different pool (it is a fact about the author)', async () => {
+		settings.relays = [...POOL_A];
+		fake.respond = () => [kind0(ALICE)];
+		expect(await getProfile(PUBKEY)).toEqual(ALICE);
+		await vi.waitFor(async () => expect(await loadProfile(PUBKEY)).not.toBeNull());
+
+		await reload();
+		fake.respond = () => [];
+		settings.relays = [...POOL_B];
+		expect(await getProfile(PUBKEY)).toEqual(ALICE);
+		expect(fake.queries).toHaveLength(0);
+	});
+
+	it('a restored cohort asks once per UNKNOWN author and never for a stored one', async () => {
+		settings.relays = [...POOL_A];
+		fake.respond = (_relays, filter) =>
+			filter.authors?.[0] === PUBKEY ? [kind0(ALICE)] : [];
+		expect(await getProfile(PUBKEY)).toEqual(ALICE);
+		await vi.waitFor(async () => expect(await loadProfile(PUBKEY)).not.toBeNull());
+
+		await reload();
+		const unknown = [
+			getPublicKey(generateSecretKey()),
+			getPublicKey(generateSecretKey())
+		];
+		// One query each for the two strangers — the bound the acceptance line
+		// names — and the stored author comes back without touching a relay.
+		const results = await Promise.all([getProfile(PUBKEY), ...unknown.map(getProfile)]);
+		expect(results[0]).toEqual(ALICE);
+		expect(results.slice(1)).toEqual([null, null]);
+		expect(fake.queries).toHaveLength(2);
+		expect(fake.queries.map((q) => q.filter.authors?.[0])).toEqual(expect.arrayContaining(unknown));
+	});
+});
+
+describe('an unresolvable author falls back deterministically (issue #135)', () => {
+	const stranger = getPublicKey(generateSecretKey());
+
+	it('resolves an honest miss and invents no device row', async () => {
+		settings.relays = [...POOL_A];
+		fake.respond = () => [];
+
+		expect(await getProfile(stranger)).toBeNull();
+		expect(profileClaim(null)).toBe('missing');
+		// A miss is not evidence about the author — nothing gets written.
+		expect(await loadProfile(stranger)).toBeNull();
+	});
+
+	it('derives a non-empty npub token and the same identicon on every load', () => {
+		const token = publisherToken(stranger);
+		expect(token).not.toBe('');
+		expect(token.startsWith('npub1')).toBe(true);
+		expect(publisherToken(stranger)).toBe(token);
+
+		const cells = identiconCells(stranger);
+		expect(cells).toHaveLength(5);
+		expect(cells.every((row) => row.length === 5)).toBe(true);
+		// Mirrored by construction, so the 16px icon reads as one glyph — and
+		// keyed by the author, so a reload redraws the same one (the icon is a
+		// 9-bit grid: uniqueness across authors is not promised).
+		for (const row of cells) expect(row).toEqual([...row].reverse());
+		expect(identiconCells(stranger)).toEqual(cells);
+	});
+
+	it('degrades a malformed author id instead of throwing', () => {
+		expect(publisherNpub('not-hex')).toBe('not-hex');
+		expect(publisherToken('not-hex')).not.toBe('');
 	});
 });

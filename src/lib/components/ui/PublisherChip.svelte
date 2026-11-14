@@ -18,8 +18,8 @@
 	 * with no "no profile" claim anywhere in its tooltip or labels. */
 
 	import { fly } from 'svelte/transition';
-	import { npubEncode } from 'nostr-tools/nip19';
 	import { getProfile, profileClaim, type ProfileLookup } from '$lib/net/profiles';
+	import { identiconCells, publisherHue, publisherNpub, publisherToken } from '$lib/publisher';
 	import KeyHint from '../shell/KeyHint.svelte';
 
 	interface Props {
@@ -40,13 +40,14 @@
 	/** Gates the arrival fade: content mounts only once the profile settles. */
 	let settled = $state(false);
 
-	/** Full npub for the tooltip; falls back to the raw hex if bech32 encode fails. */
-	const npub = $derived(encodeNpub(pubkey));
+	/** Full npub for the tooltip; the fallback derivations live in
+	 * $lib/publisher so "deterministic, never blank" is unit-testable. */
+	const npub = $derived(publisherNpub(pubkey));
 	/** label token: bech32 npub's first 8 chars + trailing 4 (mono, machine-made). */
-	const labelToken = $derived(`${npub.slice(0, 8)}…${npub.slice(-4)}`);
+	const labelToken = $derived(publisherToken(pubkey));
 
-	const hue = $derived(hashHue(pubkey));
-	const cells = $derived(mirroredCells(pubkey));
+	const hue = $derived(publisherHue(pubkey));
+	const cells = $derived(identiconCells(pubkey));
 
 	/** What the settled lookup licenses this chip to claim. */
 	const claim = $derived(profileClaim(profile));
@@ -75,47 +76,6 @@
 			active = false;
 		};
 	});
-
-	/** npubEncode throws on malformed hex — degrade to the raw 8:4 slice. */
-	function encodeNpub(hex: string): string {
-		try {
-			return npubEncode(hex);
-		} catch {
-			return hex;
-		}
-	}
-
-	/** FNV-1a over the pubkey → a stable hue seed for both identicon tones
-	 * (full uint32; the triangle render maps it into oklch's hue wheel — the
-	 * value must NOT be pre-modded since mirroredCells consumes it too). */
-	function hashHue(key: string): number {
-		let hash = 0x811c9dc5;
-		for (const ch of key) {
-			hash ^= ch.charCodeAt(0);
-			hash = Math.imul(hash, 0x01000193);
-		}
-		return hash >>> 0;
-	}
-
-	/** Deterministic 5×5 two-tone pattern from the pubkey: the left-top 3×3
-	 * region is mirrored both ways so the icon reads symmetric at 16px. Bit i
-	 * of a per-cell keyed mix picks each cell's tone — no random state. */
-	function mirroredCells(key: string): boolean[][] {
-		const seed = hashHue(key);
-		const grid: boolean[][] = [];
-		for (let y = 0; y < 5; y++) {
-			const row: boolean[] = [];
-			for (let x = 0; x < 5; x++) {
-				const sy = y <= 2 ? y : 4 - y;
-				const sx = x <= 2 ? x : 4 - x;
-				const i = sy * 3 + sx;
-				const bit = Math.imul(seed, i + 1) + 0x9e3779b9 + sx * 37 + sy * 91;
-				row.push(((bit >>> i) & 1) === 1);
-			}
-			grid.push(row);
-		}
-		return grid;
-	}
 </script>
 
 <KeyHint nameless hoverOnly={!focusable} side="bottom">

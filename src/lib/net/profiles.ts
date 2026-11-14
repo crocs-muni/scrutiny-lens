@@ -15,8 +15,18 @@
 // being edited, or dead is NOT evidence about a different pool, so the pool is
 // part of the cache key instead of ambient state — otherwise the chip replays
 // "no kind-0 profile on your relays" under relays that were never asked.
+//
+// Local-first for HITS (issue #135, spec §6): a kind-0 this device already
+// resolved is local data, so it answers before any relay is asked. Cache-
+// restored cards (a reload rebuilds the surface from IndexedDB, #83) used to
+// mount every chip at once and re-ask for every publisher; the relay burst
+// timed out and the cards sat bare even though the identity had resolved
+// minutes earlier. A stored row is a fact about the AUTHOR (a signed kind-0
+// this device saw), not a claim about the current relays — only the miss
+// ("no kind-0 on your relays") stays pool-scoped.
 
 import { SimplePool } from 'nostr-tools/pool';
+import { loadProfile, saveProfile } from '$lib/db';
 
 export interface PublisherProfile {
 	name: string | null;
@@ -31,8 +41,9 @@ export type ProfileLookup = PublisherProfile | null | undefined;
 /** What a settled lookup licenses the chip to say (spec §2 never-lie). */
 export type ProfileClaim = 'found' | 'missing' | 'unasked';
 
-/** Settled profile cache — a pubkey asked twice under one pool pays zero
- * relays. Keyed by pool fingerprint (see lookupKey). */
+/** In-tab memo — a pubkey asked twice under one pool pays zero work. Keyed by
+ * pool fingerprint (see lookupKey); the device's cross-reload rows live in
+ * IndexedDB instead (loadProfile/saveProfile, issue #135). */
 const cache = new Map<string, PublisherProfile | null>();
 /** Misses are cached only briefly — a cold-start failure (relay list being
  * edited, relay warming) must NOT freeze the identicon for the tab's whole
@@ -104,8 +115,9 @@ export async function getProfile(pubkey: string): Promise<ProfileLookup> {
 /**
  * Pool-scoped resolve. An empty pool asks nothing and therefore answers
  * undefined (never a miss: "no profile" is a claim about relays, and there
- * are none). Everything else is served from the pool-keyed cache, the
- * short-lived miss table, or one shared fresh query.
+ * are none). Everything else is served from the pool-keyed memo, then the
+ * device's stored snapshot (issue #135), the short-lived miss table, or one
+ * shared fresh query.
  */
 function queryProfile(pubkey: string, pool: readonly string[]): Promise<ProfileLookup> {
 	if (pool.length === 0) return Promise.resolve(undefined);
@@ -120,6 +132,21 @@ function queryProfile(pubkey: string, pool: readonly string[]): Promise<ProfileL
 	if (pending) return pending;
 
 	const fetch = (async () => {
+		// Device snapshot BEFORE the relays (issue #135): restoring a session
+		// mounts a card per admitted product at once, and a relaunch has no
+		// memo to answer them — this row is what keeps every already-resolved
+		// publisher's avatar and name on screen instead of a burst of
+		// identical kind-0 queries against the same small relay pool.
+		const stored = await loadProfile(pubkey);
+		// A row with neither field carries nothing worth surfacing — same rule
+		// parseProfile applies to a relay read, so a stored blank can never
+		// make the chip claim 'found' over an empty cell (spec §2 never-lie).
+		if (stored !== null && (stored.name !== null || stored.picture !== null)) {
+			const profile: PublisherProfile = { name: stored.name, picture: stored.picture };
+			cache.set(key, profile);
+			return profile;
+		}
+
 		await acquire();
 		try {
 			const profile = await fetchProfile(pubkey, pool);
@@ -127,6 +154,10 @@ function queryProfile(pubkey: string, pool: readonly string[]): Promise<ProfileL
 			else {
 				cache.set(key, profile);
 				misses.delete(key);
+				// Fire-and-forget, like every write-through in this app: the
+				// chip paints from `profile` either way, and a lost row only
+				// costs one relay query on the next load (spec §6 degrade).
+				void saveProfile({ pubkey, ...profile, at: Date.now() });
 			}
 			return profile;
 		} finally {
@@ -187,7 +218,9 @@ function pickString(value: unknown): string | undefined {
 /**
  * Test seam — same shape as resetInvestigation: clears the pool-keyed settled
  * cache, the miss table and any in-flight dedupe so a spec file starts from
- * zero relays.
+ * zero relays. Device rows are NOT touched (that is clearAllLocalData): a
+ * reload is exactly the case this seam simulates, and the whole point of the
+ * #135 local-first read is that the stored snapshots survive it.
  */
 export function resetProfiles(): void {
 	cache.clear();
