@@ -40,6 +40,86 @@ describe('scrubAnswer — failed citations vanish', () => {
 	});
 });
 
+/* #187: two claims can renumber onto ONE registry number (the same event
+ * cited twice — one quote verbatim, one extrapolatory). A gate keyed by
+ * number then keeps the convicted claim's marker because its twin's number
+ * is verified: the screen shows two claims under [1] and only one is
+ * supported. spec §2 rules 2 and 5 — a citation mark is a computed claim,
+ * never decoration — so the gate keys by marker OCCURRENCE in reading order. */
+describe('scrubAnswer — occurrence-keyed gate', () => {
+	it('drops the extrapolatory twin that renumbered onto a verified number', () => {
+		const out = scrubAnswer(
+			'Keygen uses the affected library [1]. Availability was extended to 2029 [1].',
+			[
+				{ n: 1, verified: true },
+				{ n: 1, verified: false }
+			]
+		);
+		expect(out.content).toBe('Keygen uses the affected library [1]. Availability was extended to 2029.');
+		expect(out.citations).toEqual([{ n: 1, verified: true }]);
+	});
+
+	it('renders one pill and one marked sentence for the two-claims-one-number case', () => {
+		const settled = scrubAnswer('First claim [1]. Second claim [1].', [
+			{ n: 1, verified: true },
+			{ n: 1, verified: false }
+		]);
+		const parts = layoutAnswer(settled.content, settled.citations);
+		expect(parts.filter((p) => p.kind === 'pill')).toEqual([{ kind: 'pill', n: 1, marks: [1] }]);
+		// the surviving sentence keeps the underline; the convicted one has none
+		expect(parts).toEqual([
+			{ kind: 'text', text: 'First claim ', marks: [1] },
+			{ kind: 'pill', n: 1, marks: [1] },
+			{ kind: 'text', text: '. ', marks: [1] },
+			{ kind: 'text', text: 'Second claim.', marks: [] }
+		]);
+	});
+
+	it('keeps the occurrence whose own quote the checker found, not the first of that number', () => {
+		const out = scrubAnswer(
+			'The report claims a 9.8 severity [1]. The library is ROCA-affected [1].',
+			[
+				{ n: 1, verified: false },
+				{ n: 1, verified: true }
+			]
+		);
+		expect(out.content).toBe('The report claims a 9.8 severity. The library is ROCA-affected [1].');
+		expect(out.citations).toEqual([{ n: 1, verified: true }]);
+	});
+
+	it('keeps two occurrences of one number when both citations are verified', () => {
+		const content = 'ROCA affects keygen [1] and signing [1].';
+		const both = [
+			{ n: 1, verified: true },
+			{ n: 1, verified: true }
+		];
+		const out = scrubAnswer(content, both);
+		expect(out.content).toBe(content);
+		expect(out.citations).toEqual(both);
+	});
+
+	it('drops a marker occurrence with no resolved citation of its number', () => {
+		// A bare repeat of an already-cited number is an unbacked claim: one
+		// verified citation backs one occurrence, never every [N] that
+		// happens to carry its number.
+		const out = scrubAnswer('Affected cards [1] and again [1].', [{ n: 1, verified: true }]);
+		expect(out.content).toBe('Affected cards [1] and again.');
+		expect(out.citations).toEqual([{ n: 1, verified: true }]);
+	});
+
+	it('a bare marker cannot shift the gate onto another claim', () => {
+		// resolveFinal leaves the model's own bare [N] tokens in the text
+		// (markers.ts: those carry no payload). Pairing is per number, so a
+		// stray [9] cannot consume the verdict meant for claim [1].
+		const out = scrubAnswer('Model echo [9]. Claim [1] here. Bogus [2] there.', [
+			{ n: 1, verified: true },
+			{ n: 2, verified: false }
+		]);
+		expect(out.content).toBe('Model echo. Claim [1] here. Bogus there.');
+		expect(out.citations).toEqual([{ n: 1, verified: true }]);
+	});
+});
+
 describe('layoutAnswer — claim spans and pills', () => {
 	const cite = (n: number) => ({ n, verified: true });
 
