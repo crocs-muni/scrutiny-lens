@@ -30,7 +30,7 @@ import {
 } from "$lib/pipeline";
 import type { SearchRequest } from "$lib/ai/agents/query";
 import type { NostrEvent } from 'nostr-tools/core';
-import { batchNodeInterpret } from "$lib/ai/agents/nodes";
+import { batchNodeInterpret, BATCH_SIZE } from "$lib/ai/agents/nodes";
 import {
   getEvent,
   getInterpretation,
@@ -1318,7 +1318,14 @@ class Investigation {
         // subject (spec §8 lifecycle).
         if (this.controller !== controller || controller.signal.aborted) return;
         const batch: string[] = [];
-        while (batch.length < 12 && this.nodeQueue.length > 0) {
+        // ONE page per turn, not three: the call below carries a single 60s
+        // deadline while batchNodeInterpret pages every BATCH_SIZE events into
+        // its own LLM call. Filling 12 ids here made three sequential calls
+        // share one budget — a cold endpoint's first page ate it, pages 2-3
+        // aborted on arrival, and the whole batch dropped to rule-5 (the exact
+        // "records stay raw" symptom). One page = one deadline, and the
+        // trickle paints sooner (issue #188's measurement).
+        while (batch.length < BATCH_SIZE && this.nodeQueue.length > 0) {
           const id = this.nodeQueue.shift();
           if (id !== undefined && !this.nodeTiles.has(id)) batch.push(id);
         }
@@ -1366,13 +1373,24 @@ class Investigation {
         });
         if (this.controller !== controller) return;
         if (!res.ok) {
+          // Silence here is indistinguishable from "no key", "never queued"
+          // and "model returned junk" — the one symptom an operator cannot
+          // read. One line names the lane, the kind and the model.
+          if (lensDebug()) {
+            console.debug(
+              `[lens-trace] nodes: page failed kind=${res.kind} ids=${missing.length} model=${model} msg=${res.message}`,
+            );
+          }
           // Unreachable endpoint: stop burning tokens; schema/content
           // failures retry nothing — the fallback is already the truth.
           if (res.kind === "unreachable") {
             // Drain the tail honestly (review M1): ids stay rule-5 until
-            // something re-queues them (nodeQueued semantics), but the
-            // queue itself empties — keyArrived's drain-wait must never
-            // spin on an orphaned queue.
+            // something re-queues them, but the queue itself empties so
+            // keyArrived's drain-wait can't spin on an orphaned queue.
+            // The queued-set entries go too: keeping them made one cold
+            // open permanent — every later graph visit skipped these ids
+            // and the records could never fill again in that session.
+            for (const id of missing) this.nodeQueued.delete(id);
             this.nodeQueue = [];
             return;
           }
