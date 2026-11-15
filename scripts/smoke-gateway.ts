@@ -321,16 +321,6 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
             lastUser = String(last.content);
           }
         }
-        if (model.startsWith("smoke-ui-fail")) {
-          res.statusCode = 500;
-          res.setHeader("content-type", "application/json");
-          res.end(
-            JSON.stringify({
-              error: { message: "smoke-ui-fail: scripted gateway failure", type: "server_error", code: 500 },
-            }),
-          );
-          return;
-        }
         // The node lane's prompt embeds its payload as a JSON line, the card
         // lane posts a bare array. Answering only the array left every graph
         // record empty, so the record-interpretation grammar (#188's whole
@@ -342,7 +332,7 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
             const parsed = JSON.parse(lastUser) as unknown;
             if (Array.isArray(parsed)) asked = parsed as Array<{ id: string }>;
           } catch {
-            // Neither shape — an empty KV answer is the honest failure.
+            // Neither shape — the translate lane below answers it.
           }
           kv = asked
             .map(
@@ -350,6 +340,18 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
                 `id: ${a.id}\ntitle: Smoke-interpreted card ${i + 1}\nsnippet: The fake gateway's whole-record interpretation for visual grammar verification — read, summarized, and painted as one record.`,
             )
             .join("\n\n");
+        }
+        // `smoke-ui-fail` keeps answering the translate lane and fails only the
+        // fills, so a run exercises the §4 degradation banner in isolation.
+        if (model.startsWith("smoke-ui-fail") && kv !== "") {
+          res.statusCode = 500;
+          res.setHeader("content-type", "application/json");
+          res.end(
+            JSON.stringify({
+              error: { message: "smoke-ui-fail: scripted gateway failure", type: "server_error", code: 500 },
+            }),
+          );
+          return;
         }
         if (kv === "") {
           // Neither payload shape → the translate lane, whose prompt ends with
