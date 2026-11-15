@@ -23,10 +23,11 @@
 
 import { z } from "zod";
 import { type AIKind, type AIResult, type CallLLM } from "../output";
-import { generateRecords } from "../records";
+import { generateRecords, streamRecords, type StreamLLM } from "../records";
 import { writeDeadLetter } from "../deadLetter";
 import { bestIdentifier, projectSkeleton, tagValues } from "../projector";
 import { extractedGate } from "../verifier";
+import { canonicalContentOf } from "../canonical";
 import { resolveGraph, type GraphView, type NostrEvent } from "../../fabric";
 import type { ProviderOverrideInput } from "../provider";
 import { buildSystemPrompt, DEFAULT_PROFILE } from "../prompts/vocabCcd";
@@ -186,6 +187,14 @@ export interface BatchNodeInterpretOptions {
   abortSignal?: AbortSignal;
   /** Test seam; defaults to the real generateText transport. */
   callLLM?: CallLLM;
+  /** Progressive paint: with BOTH a stream seam and a callback, each page is
+   * read through streamRecords and every record the model CLOSES is finalized
+   * through the same gate the settled list gets (id affinity + per-kind schema
+   * + quote gate) and reported immediately. records.ts's contract holds: this
+   * is an earlier view of the same truth, never additional truth — the settled
+   * page still returns the authoritative list (callers dedupe per id). */
+  streamLLM?: StreamLLM;
+  onNode?: (vm: NodeVM) => void;
 }
 
 /* ------------------------------------------------------------------ *
@@ -405,6 +414,7 @@ function finalizeNode(
   det: Deterministic,
   draft: NodeDraft | undefined,
   ctx: DeadLetterCtx,
+  canonical: ReadonlyMap<string, string>,
 ): { vm: NodeVM; fromDraft: boolean } {
   const base = {
     entityId: det.entityId,
@@ -461,9 +471,14 @@ function finalizeNode(
       schema = MetadataNodeVMSchema;
       break;
     case "unknown": {
+      // #163: everything this branch renders comes from ONE text — the
+      // resolved content. Gating against canonical while feeding the model
+      // (and falling back to) raw text made a patched node dead-letter and
+      // then paint the stale pre-patch prose anyway.
+      const text = canonical.get(event.id) ?? event.content;
       let summary = clip(draftText(draft?.summary) ?? "", 140);
       if (summary) {
-        const gate = extractedGate(summary, event.content);
+        const gate = extractedGate(summary, text);
         if (gate.state === "extrapolatory") {
           // Quote verification failed: the summary cites nothing on the event.
           writeDeadLetter({
@@ -474,7 +489,7 @@ function finalizeNode(
             model: ctx.model,
             payload: { summary: draft?.summary },
             reason:
-              "summary extrapolatory (quote gate found no contiguous match in event content)",
+              "summary extrapolatory (quote gate found no contiguous match in the resolved content)",
           });
           summary = "";
         }
@@ -487,8 +502,7 @@ function finalizeNode(
         )
           ? (draft?.typeToken as "generic" | "document" | "unknown")
           : "unknown",
-        summary:
-          summary || clip(event.content, 140) || "No interpretable content.",
+        summary: summary || clip(text, 140) || "No interpretable content.",
       };
       schema = UnknownNodeVMSchema;
       break;
@@ -535,6 +549,16 @@ export async function batchNodeInterpret(
 
   const dets = events.map((e) => buildDeterministic(e, view, events));
 
+  // #163: resolve every event's canonical content ONCE per call, and give the
+  // same map to the payload the model reads, the quote gate, and the fallback
+  // — one text per node, so a gate failure can never be a raw/canonical
+  // mismatch. Also removes the per-node O(n) resolve() the first cut paid.
+  const canonical = new Map<string, string>();
+  for (const e of events) {
+    const text = canonicalContentOf(e.id, events);
+    if (text !== undefined) canonical.set(e.id, text);
+  }
+
   const nodes: NodeVM[] = [];
   // Model-backed records only — degraded skeletons stay out of this list,
   // so a consumer (the cache) can persist interpretations without ever
@@ -555,18 +579,54 @@ export async function batchNodeInterpret(
         // bytes leave the browser for the BYOK endpoint, so 400 chars is
         // the privacy + token ceiling (cards clip at 200; nodes keep a
         // little more because the title has to name the artifact).
-        content: clip(e.content, 400),
+        // Canonical (#163): the model must read the same bytes the gate
+        // verifies against, or a patched node is summarised from history and
+        // then rejected for not matching the present.
+        content: clip(canonical.get(e.id) ?? e.content, 400),
       })),
     });
 
-    const res = await generateRecords({
+    // One record per event, bound by the echoed entityId BEFORE any paint:
+    // a mangled id must never paste another event's text onto this one
+    // (spec §2, id-mangling incident).
+    const requested = new Set(pageEvents.map((e) => e.id));
+    const deadLetterCtx = (j: number): DeadLetterCtx => ({
+      entityId: pageEvents[j].id,
+      profile,
+      model,
+    });
+    /** Progressive paint: the closed record goes through the same
+     * finalizeNode gate the settled list uses (affinity, per-kind schema,
+     * quote gate), so a half-described or extrapolatory record never paints
+     * and nothing here can outrun the settled truth. A repeat of an
+     * already-claimed id is dropped, exactly as the settled binder drops it —
+     * a model echoing one entityId twice must not paint twice or write two
+     * dead letters. */
+    const paintClosed = (onNode: (vm: NodeVM) => void) => {
+      const claimed = new Set<string>();
+      return (draft: NodeDraft): void => {
+        if (claimed.has(draft.entityId)) return; // repeat echo
+        const j = pageEvents.findIndex((e) => e.id === draft.entityId);
+        if (j < 0) return; // foreign echo — the page's ids only
+        claimed.add(draft.entityId);
+        const { vm, fromDraft } = finalizeNode(
+          pageEvents[j],
+          pageDets[j],
+          draft,
+          deadLetterCtx(j),
+          canonical,
+        );
+        if (fromDraft) onNode(vm);
+      };
+    };
+    const reader = {
       schema: NodeDraft,
       knownKeys: NODE_KEYS,
       booleans: ["isRoot"],
       system,
       messages: [
         {
-          role: "user",
+          role: "user" as const,
           content: [
             "Interpret each event into one record, echoing its `entityId` EXACTLY.",
             "The `kind` and `retracted` fields per event are pre-decided — do NOT change them; supply only the content fields for that kind:",
@@ -583,12 +643,27 @@ export async function batchNodeInterpret(
         },
       ],
       provider: opts.provider,
-      callLLM: opts.callLLM,
       abortSignal: opts.abortSignal,
       // Interpret lane (issue #107): cap a reasoning model's hidden
       // thinking where the endpoint honors it.
-      reasoningEffort: "low",
-    });
+      reasoningEffort: "low" as const,
+    };
+    // Progressively painted pages read the same prompt through the stream so
+    // each closed record paints before the page settles; without both seams
+    // the batch reader stays the default (tests, and any caller that wants one
+    // lump). Settle semantics are identical: streamRecords ends on the same
+    // authoritative parse of the full text.
+    const res =
+      opts.streamLLM !== undefined && opts.onNode !== undefined
+        ? await streamRecords<NodeDraft>({
+            ...reader,
+            streamLLM: opts.streamLLM,
+            onRecord: paintClosed(opts.onNode),
+          })
+        : await generateRecords<NodeDraft>({
+            ...reader,
+            callLLM: opts.callLLM,
+          });
 
     if (!res.ok) {
       if (res.kind === "schema_failure") {
@@ -599,28 +674,20 @@ export async function batchNodeInterpret(
     }
 
     // Id-binding: a salvaged partial page maps by entityId, never by
-    // position — a dropped record degrades only its own event. Id affinity
-    // gate (spec §2 never-lie, id-mangling incident): bind only records
-    // whose echoed entityId was requested for this page; foreign echoes and
-    // repeats of an already-claimed id are dropped, so a mangled id can't
-    // paste another event's text onto this one.
-    const requested = new Set(pageEvents.map((e) => e.id));
+    // position — a dropped record degrades only its own event; foreign
+    // echoes and repeats are dropped.
     const drafts = new Map<string, NodeDraft>();
     for (const draft of res.result) {
       if (!requested.has(draft.entityId) || drafts.has(draft.entityId)) continue;
       drafts.set(draft.entityId, draft);
     }
     for (let j = 0; j < pageEvents.length; j++) {
-      const ctx: DeadLetterCtx = {
-        entityId: pageEvents[j].id,
-        profile,
-        model,
-      };
       const { vm, fromDraft } = finalizeNode(
         pageEvents[j],
         pageDets[j],
         drafts.get(pageEvents[j].id),
-        ctx,
+        deadLetterCtx(j),
+        canonical,
       );
       nodes.push(vm);
       if (fromDraft) interpretedIds.push(vm.entityId);

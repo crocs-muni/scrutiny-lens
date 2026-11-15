@@ -5,7 +5,12 @@
 // PersistedSettings field (IndexedDB must never hold it): it rides this tab's
 // session storage instead, and every entry — typed or restored at boot —
 // arms the redaction strip via registerSecret().
+//
+// Issue #151 adds the one cross-tab path: a tab returning to the foreground
+// re-reads the persisted relay pool (refresh(), wired by watchForeground),
+// because IndexedDB is last-write-wins and nothing pushes between tabs.
 
+import { transition, type PersistEvent, type PersistState } from '$lib/settings/persist';
 import {
 	initPersistence,
 	loadSettings,
@@ -48,6 +53,55 @@ export function nextAutoModel(
 	const only = models[0];
 	if (current !== '' && current !== previousAuto) return null;
 	return only;
+}
+
+/** The pool a persisted record means (issue #131): canonicalized on read, and
+ * defaults when nothing real survives folding — a legacy row full of slashed
+ * duplicates or invalid entries must never hand createTransport a list it
+ * rejects. One rule for boot hydrate and the #151 foreground refresh, so the
+ * two entry points cannot disagree about the same record. */
+function poolFromPersisted(relays: readonly string[]): string[] {
+	const canonical = canonicalRelayUrls(relays);
+	return canonical.urls.length > 0 ? canonical.urls : [...defaultSettings.relays];
+}
+
+/** Relay-pool identity: order IS part of the pool (the editor shows it in
+ * this order and a run snapshots it), so this compares element-wise rather
+ * than as a set. */
+export function sameRelayPool(a: readonly string[], b: readonly string[]): boolean {
+	return a.length === b.length && a.every((url, i) => url === b[i]);
+}
+
+/** Issue #151: the pool a foreground refresh adopts, or null for "nothing to
+ * adopt". Pure so the three cases — a pool another tab persisted, a pool
+ * this tab already shows (returning a fresh array would be reactive churn for
+ * every focus), and no persisted pool at all (memory-only tab) — are testable
+ * without IndexedDB. */
+export function rebasedRelayPool(
+	local: readonly string[],
+	persisted: readonly string[] | undefined
+): string[] | null {
+	if (persisted === undefined) return null;
+	const next = poolFromPersisted(persisted);
+	return sameRelayPool(local, next) ? null : next;
+}
+
+/** Issue #151: what the Settings relay editor shows when the committed pool
+ * moves underneath it — a foreground refresh can now replace settings.relays
+ * while the dialog is open. Pristine drafts follow the pool: the editor
+ * showing anything other than the pool the app queries is the #131 lie.
+ * Dirty drafts are the fresher truth and are NEVER silently overwritten —
+ * the user commits or discards them, and only that commit writes (IndexedDB
+ * stays last-write-wins; merge semantics for concurrent edits are out of
+ * scope for #151). null = leave the drafts alone (dirty, or already equal),
+ * so the dialog's rebase $effect writes no state it would re-derive. */
+export function rebaseRelayDrafts(
+	drafts: readonly string[],
+	pool: readonly string[],
+	dirty: boolean
+): string[] | null {
+	if (dirty) return null;
+	return sameRelayPool(drafts, pool) ? null : [...pool];
 }
 
 /** Fields written through setters before hydration — hydrate() skips them
@@ -122,8 +176,23 @@ class Settings {
 	/** Boot truth for awaiting surfaces: true once the one hydrate ran. */
 	hydrated = $state(false);
 	/** Persistence truth for the settings UI (spec §2 never-lie): what the
-	 * last save actually did, never an optimistic "saved". */
+	 * last save actually did, never an optimistic "saved". The mirror of the
+	 * machine state below — every write goes through transition() so the
+	 * one-retry and terminal-unavailable laws are structural. */
 	persistState = $state<'idle' | 'saving' | 'saved' | 'failed' | 'unavailable'>('idle');
+	#persist: PersistState = { phase: 'idle' };
+
+	/** Fold one persistence event and mirror the phase onto persistState. */
+	#fold(event: PersistEvent): PersistState {
+		this.#persist = transition(this.#persist, event);
+		this.persistState = this.#persist.phase;
+		return this.#persist;
+	}
+
+	/** Monotone count of writes this tab issued (issue #151): a foreground
+	 * read that STARTED before a newer local write must not apply its stale
+	 * snapshot over the user's edit. Non-reactive — nothing renders off it. */
+	#writes = 0;
 
 	/** Single-flight boot barrier: awaits initPersistence() + the one
 	 * hydrate(). Memoized so layout, search start, share resolve and profile
@@ -151,8 +220,7 @@ class Settings {
 			// boundary keyed on the string. Empty after folding (all-invalid
 			// legacy row) keeps defaults rather than a pool createTransport
 			// would reject — hydrate must never brick the boot.
-			const canonical = canonicalRelayUrls(persisted.relays);
-			this.relays = canonical.urls.length > 0 ? canonical.urls : [...defaultSettings.relays];
+			this.relays = poolFromPersisted(persisted.relays);
 		}
 		if (persisted?.appearance !== undefined && !dirtyFields.has('appearance'))
 			this.appearance = persisted.appearance;
@@ -169,12 +237,50 @@ class Settings {
 		this.hydrated = true;
 	}
 
+	/** Issue #151: adopt the relay pool another tab persisted, on return to
+	 * the foreground. Nothing pushes across tabs — IndexedDB is last-write-
+	 * wins, and a BroadcastChannel would be a second source of truth for a
+	 * 1–4 entry list, which #151 rules out for this cycle; so a tab re-reads
+	 * the record the platform says it may now be behind on.
+	 *
+	 * Guards, in order:
+	 *  - nothing read yet → boot's hydrate() owns the first read (a refresh
+	 *    here would race it with the same record).
+	 *  - the machine says a save is in flight or has failed → this tab holds
+	 *    unsaved truth the record does not carry; adopting the record would
+	 *    silently discard the user's edit. 'failed' stays until the user edits
+	 *    again (the machine is the UI's truth), and that is the intent: a pool
+	 *    that did not persist keeps showing here. The machine is consulted
+	 *    directly — `persistState` is only its mirror.
+	 *  - a write landed while the read was in flight (#writes) → that write
+	 *    is fresher than the record this read saw.
+	 *
+	 * Never writes, so a foreground refresh cannot clobber the persisted
+	 * pool; the Settings editor's half of the rule is rebaseRelayDrafts.
+	 * Relays only: the pool is the field two tabs can disagree about without
+	 * a reload (every query snapshots it), which is what #151 reports. */
+	async refresh(): Promise<void> {
+		if (!this.hydrated) return;
+		// Both the machine (truth) and its mirror (what the settings footer
+		// last told the user). 'failed' means "your pool did not persist":
+		// adopting the record would silently drop that edit, and contradicting
+		// a footer that already said "failed" is its own lie (spec §2).
+		if (this.#persist.phase === 'saving' || this.#persist.phase === 'failed') return;
+		if (this.persistState === 'saving' || this.persistState === 'failed') return;
+		const seq = this.#writes;
+		const persisted = await loadSettings();
+		if (seq !== this.#writes) return;
+		const next = rebasedRelayPool(this.relays, persisted?.relays);
+		if (next !== null) this.relays = next;
+	}
+
 	/** One save, folded into persistState. Save failures never throw (spec
 	 * §2): the state carries the truth the settings UI renders. */
 	async #save(patch: Partial<PersistedSettings>): Promise<SaveOutcome> {
-		this.persistState = 'saving';
+		this.#writes += 1;
+		this.#fold({ type: 'save' });
 		const outcome = await saveSettings(patch);
-		this.persistState = outcome;
+		this.#fold({ type: 'outcome', outcome });
 		return outcome;
 	}
 
@@ -217,10 +323,12 @@ class Settings {
 			);
 		this.relays = canonical.urls;
 		dirtyFields.add('relays');
-		this.persistState = 'saving';
+		// Same epoch bump as #save (this path retries its own save, issue #131).
+		this.#writes += 1;
+		this.#fold({ type: 'save' });
 		let outcome = await saveSettings({ relays: canonical.urls });
 		if (outcome === 'failed') outcome = await saveSettings({ relays: canonical.urls });
-		this.persistState = outcome;
+		this.#fold({ type: 'outcome', outcome });
 		return outcome;
 	}
 
@@ -246,12 +354,47 @@ class Settings {
 		clearSessionKey();
 		dirtyFields.clear();
 		bootBarrier = null;
+		this.#writes = 0;
 		this.hydrated = false;
+		this.#persist = { phase: 'idle' };
 		this.persistState = 'idle';
 	}
 }
 
 export const settings = new Settings();
+
+/** The slice of `document` a foreground refresh needs, narrowed so node tests
+ * can hand in a fake instead of synthesizing DOM events (same seam shape as
+ * KeyStorage above) and so the SSR import path can stay document-free. */
+export interface ForegroundSource {
+	addEventListener(type: 'visibilitychange', listener: () => void): void;
+	removeEventListener(type: 'visibilitychange', listener: () => void): void;
+	readonly visibilityState: string;
+}
+
+/** Issue #151: adopt another tab's relay pool when this one comes back into
+ * the foreground. `visibilitychange` — not `focus`, not a timer — is the
+ * platform signal that already means "the user is looking at this tab now",
+ * and it is the event a browser already fires on every tab switch, so there
+ * is no polling loop and no second cross-tab channel. Returns the
+ * uninstaller: tests install one per fake tab, and nothing else may stack
+ * listeners on the real document.
+ *
+ * Only the visible edge refreshes: the hidden edge is this tab LEAVING, where
+ * a read costs an IndexedDB wake-up for a pool nobody is looking at. */
+export function watchForeground(source: ForegroundSource): () => void {
+	const onVisibilityChange = (): void => {
+		if (source.visibilityState !== 'visible') return;
+		void settings.refresh();
+	};
+	source.addEventListener('visibilitychange', onVisibilityChange);
+	return () => source.removeEventListener('visibilitychange', onVisibilityChange);
+}
+
+// Installed once at import: +layout imports this module before any query can
+// run, so there is no call site to forget. The guard is the SSR/prerender
+// path, not a second code path — no document means nothing to listen to.
+if (typeof document !== 'undefined') watchForeground(document);
 
 /** Test seam — the singleton survives across spec files (same shape as
  * resetShell). Runes compile to state only under the svelte plugin, so

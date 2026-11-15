@@ -1,7 +1,7 @@
 // Config surface (issue #11, spec §5/§8): env-derived defaults for the AI
 // endpoint and the relay pool, plus the 1–4 relay bound the editor enforces.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
 	DEFAULT_ENDPOINT,
 	DEFAULT_RELAYS,
@@ -10,6 +10,11 @@ import {
 	isValidRelayUrl,
 	parseRelayUrls
 } from '../src/lib/config';
+
+// Vitest loads the developer's .env into $env/dynamic/public, so a local
+// PUBLIC_RELAY_URLS or PUBLIC_LLM_ENDPOINT would change the defaults asserted
+// below. The built-in defaults are the contract here; env overrides are not.
+vi.mock('$env/dynamic/public', () => ({ env: {} }));
 
 describe('relay pool bounds (spec §8: 1–4 entries, owner ruling 2026-09-03)', () => {
 	it('fixes the pool at 1–4 entries', () => {

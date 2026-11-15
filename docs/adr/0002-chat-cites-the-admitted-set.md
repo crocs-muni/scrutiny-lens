@@ -7,5 +7,3 @@ Chosen over the literal "on-screen" reading of spec §2 rule 3 (spec §2's phras
 The cost is that a citation can point at an event whose card is filtered away. It is absorbed by the same mechanism ADR 0001 built: opening a citation's dossier goes through the store-level selection, and when the card is hidden the dossier renders anyway with the hidden-by-filter announcement. When #29b lands, the canvas subsumes this: the graph shows all admitted events.
 
 Consequence in code: the ported `chatground()` parameter named `visibleEvents` (and its prompt's "visible nodes" language) is re-purposed as the grounding set = the session's admitted events; the rename happens with #30 and the locked rule becomes "every citation resolves to an admitted event id".
-
-Owner-ruled 2026-09-14 during #30 planning.

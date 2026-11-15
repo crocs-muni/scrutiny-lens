@@ -17,6 +17,7 @@
  */
 
 import { extractedGate } from './verifier';
+import { canonicalContentOf } from './canonical';
 import type { NostrEvent } from '../fabric';
 
 /** Palette slots (citations.css --cite-0..5) — the pairing hue cycles over
@@ -114,7 +115,24 @@ export function createCitationRegistry(): CitationRegistry {
 			return { ok: false, marker, reason: 'unresolvable' };
 		}
 
-		const match = extractedGate(quote, event.content);
+		// #163: verify against RESOLVED content, never the raw event. A root
+		// whose patched text replaced this quote must not count it as current
+		// support (spec §2 rule 3; the canonical-content note in
+		// docs/vision/agentic-harness.md). No canonical content means the
+		// quote is unverifiable — the gate is never re-run over raw text.
+		const canonical = canonicalContentOf(eventId, events);
+		if (canonical === undefined) {
+			const citation: Citation = {
+				n: byEvent.get(eventId) as number,
+				eventId,
+				quote,
+				verified: false
+			};
+			if (nodeTitle !== undefined) citation.nodeTitle = nodeTitle;
+			return { ok: true, citation };
+		}
+
+		const match = extractedGate(quote, canonical);
 		const citation: Citation = {
 			n: byEvent.get(eventId) as number,
 			eventId,

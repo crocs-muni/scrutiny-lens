@@ -45,9 +45,10 @@ export interface TurnMeta {
 	counts: { current: number; retracted: number; unknown: number };
 	/** Markers the verifier resolved that produced NO visible marker — i.e.
 	 * claims actually removed from the rendered answer. Derived from what
-	 * rendered, never from the model's own count: two claims can renumber to
-	 * the same citation number, and `scrubAnswer` keys its verified set by
-	 * number, so a merely-reported "extrapolatory" can survive on screen. A
+	 * rendered, never from the model's own count: the settle gate strips
+	 * every marker whose own occurrence failed (#187 pairs markers with
+	 * resolved citations by occurrence, and bare tokens are stripped before
+	 * the scrub), so `resolved - rendered` is exactly the removal count. A
 	 * number that says "dropped" while the claim is still visible would be
 	 * the exact lie this surface exists to avoid. */
 	dropped: number;
@@ -108,10 +109,11 @@ export function buildTurnMeta(
 	const counts = { current: 0, retracted: 0, unknown: 0 };
 	for (const s of sources) counts[s.status] += 1;
 
-	// Resolved citations vs markers still in the rendered text. A marker that
-	// vanished was a removed claim; a claim the checker rejected but whose
-	// number survived (two claims, one source) is still on screen, so it must
-	// not be reported as dropped.
+	// Resolved citations vs markers still in the rendered text. Every marker
+	// in the settled content belongs to exactly one resolved citation (the
+	// settle gate strips bare tokens and unresolved runs), so the difference
+	// is the claims the scrub removed — never a claim that renumbered onto a
+	// verified number, which is now stripped rather than rendered.
 	const resolved = message.claimsSummary?.total ?? 0;
 	const rendered = (message.content.match(MARKER) ?? []).length;
 

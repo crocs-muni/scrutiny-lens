@@ -31,9 +31,10 @@ export interface MarkerScan {
 	 * balanced AND parses as JSON; null for a malformed/unterminated run
 	 * (strip at settle, withhold-tail candidate mid-stream). */
 	objectText: string | null;
-	/** True when a `{` followed the `[N]` — the settle gate strips
-	 * malformed BRACED markers but never bare canonical `[N]` tokens
-	 * (those carry the surviving pills' numbers). */
+	/** True when a `{` followed the `[N]` — the settle gate strips malformed
+	 * BRACED markers AND bare canonical `[N]` tokens (STRIP-uniform: a token
+	 * with no payload can never carry a verdict, and leaving it would consume
+	 * the verdict meant for a later citation of its number, #187). */
 	braced: boolean;
 }
 

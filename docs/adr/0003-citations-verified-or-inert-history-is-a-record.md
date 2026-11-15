@@ -7,5 +7,3 @@ Rejected: excising the whole claim sentence (the strictest reading of "the claim
 History is a record. Chat messages persist with their citations resolved as of answer time — pinned numbers, verified quote spans, color pairing. Loading a session never re-verifies: a later retraction or patch arriving must not silently change what an answer said (history that shifts under you is its own lie). Pending shimmer pills and aborted streams persist nothing — only settled final frames land in the store.
 
 Consequences: `claimsSummary` counts drops so conformance tests can assert zero unverified pills in rendered output; citation numbers (and their color pairing) are pinned per conversation and persist with the session, so "report 2" means the same event for the whole chat and its reloads.
-
-Owner-ruled 2026-09-14 during #30 planning.
