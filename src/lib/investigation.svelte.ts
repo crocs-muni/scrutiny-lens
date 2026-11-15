@@ -64,7 +64,7 @@ import {
   type FacetGroup,
   type ProductCard,
 } from "$lib/pipeline/cards";
-import { mergeSettledCards } from "$lib/pipeline/card-fill";
+import { mergeSettledCards, paintCard } from "$lib/pipeline/card-fill";
 import { settings } from "$lib/settings.svelte";
 import { shell } from "$lib/shell.svelte";
 import { aggregatePerRelay, type RelayReceipt } from "$lib/relay-readout";
@@ -1785,7 +1785,10 @@ clearFacets(): void {
           onPaint: (card, i) => {
             if (this.controller !== controller) return;
             const merged = this.cards.slice();
-            merged[indexOf(card, i)] = card;
+            const at = indexOf(card, i);
+            // Paint onto the freshest facts: a stream that finishes after
+            // the traversal merge must not restore pre-context counts.
+            merged[at] = paintCard(merged[at], card);
             this.cards = merged;
             // Live denominator (issue #118): the post-context merge can
             // append arrivals mid-leg, so the banner counts against the
@@ -1885,7 +1888,10 @@ clearFacets(): void {
         // advanced truth (issue #104: painted cards never revert to raw;
         // the re-issue only asks for the still-unfilled remainder).
         if (live !== undefined && live.interpreted && !filled[i].interpreted) continue;
-        merged[at] = filled[i];
+        // Paint onto the freshest facts, never this pass's own snapshot:
+        // the traversal merge may have refreshed the live card while the
+        // pass was mid-flight (tests/settle-merge-counts.test.ts).
+        merged[at] = paintCard(live, filled[i]);
         if (filled[i].interpreted) failedSet.delete(filled[i].id);
         else failedSet.add(filled[i].id);
       }

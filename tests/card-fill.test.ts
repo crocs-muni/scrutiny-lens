@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	cardFillOf,
 	mergeSettledCards,
+	paintCard,
 	settleCard,
 	type CardFill
 } from '../src/lib/pipeline/card-fill';
@@ -170,5 +171,36 @@ describe('mergeSettledCards — invariant over random live/fresh sets', () => {
 				expect(settleCard(card('a'), fill, candidate)).toBeDefined();
 			}
 		}
+	});
+});
+
+describe('paintCard — a fill pass paints onto the freshest facts', () => {
+	it('no live card → the painted card stands as-is', () => {
+		const painted = card('a', { interpreted: true, title: 'AI' });
+		expect(paintCard(undefined, painted)).toBe(painted);
+	});
+
+	it('a raw settle keeps the live card (fresher than the pass snapshot)', () => {
+		const live = card('a', { boundMetadata: 2 });
+		const snapshot = card('a', { boundMetadata: 0 });
+		expect(paintCard(live, snapshot)).toBe(live);
+	});
+
+	it('an interpreted settle keeps fresh facts and takes only the paint', () => {
+		const live = card('a', { boundMetadata: 2, files: 1, updates: 4 });
+		const painted = card('a', {
+			boundMetadata: 0,
+			interpreted: true,
+			title: 'AI title',
+			snippet: 'AI snippet'
+		});
+		expect(paintCard(live, painted)).toMatchObject({
+			boundMetadata: 2,
+			files: 1,
+			updates: 4,
+			title: 'AI title',
+			snippet: 'AI snippet',
+			interpreted: true
+		});
 	});
 });

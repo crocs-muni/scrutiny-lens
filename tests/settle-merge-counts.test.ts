@@ -216,4 +216,31 @@ describe('settle merge — deterministic counts vs mid-flight AI paint (spec §2
 		expect(card?.title).toBe(`T-${product.id}`);
 		expect(card?.boundMetadata).toBe(1);
 	});
+
+	it('a fill pass that settles AFTER the traversal merge cannot write its stale snapshot back', async () => {
+		// The lane claims the chunk before the traversal (pre-context card,
+		// count 0). The traversal merge then refreshes deterministic facts.
+		// Only afterwards does the fill pass paint — and it must paint onto
+		// the freshest facts, not onto the snapshot it claimed.
+		const product = forgeProduct('p1');
+		const metadata = forgeMetadata('CERT-1');
+		const binding = forgeBinding(product.id, metadata.id);
+		vi.mocked(createTransport).mockReturnValue(new GatedTransport([product], [metadata, binding]));
+
+		const started = investigation.start(QUESTION);
+		await vi.waitFor(() => {
+			expect(investigation.cards.length).toBe(1);
+			expect(investigation.pending.size).toBe(1);
+		});
+
+		openSettle();
+		await vi.waitFor(() => expect(investigation.cards[0]?.boundMetadata).toBe(1));
+		openFill();
+		await started;
+
+		const card = investigation.cards.find((c) => c.id === product.id);
+		expect(card?.interpreted).toBe(true);
+		expect(card?.title).toBe(`T-${product.id}`);
+		expect(card?.boundMetadata).toBe(1);
+	});
 });

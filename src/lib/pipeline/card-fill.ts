@@ -68,6 +68,25 @@ export function settleCard(
 }
 
 /**
+ * The fill-direction counterpart: a lane that settles or paints a card must
+ * paint onto the FRESHEST facts, never onto the card it claimed.
+ *
+ * `this.cards` may have been refreshed by the traversal merge while a pass
+ * was mid-flight. Letting the pass write its own snapshot back (`merged[at] =
+ * filled[i]`) re-installed the pre-context counts — the second half of the
+ * bug above. A raw settle keeps the live card (fresher raw truth); an
+ * interpreted settle keeps only the paint fields.
+ */
+export function paintCard(
+	live: ProductCard | undefined,
+	painted: ProductCard
+): ProductCard {
+	if (live === undefined) return painted;
+	if (!painted.interpreted) return live;
+	return { ...live, title: painted.title, snippet: painted.snippet, interpreted: true };
+}
+
+/**
  * Post-traversal merge: fresh deterministic truth for every card the full
  * admitted set contains, live AI paint preserved, context arrivals appended
  * in assembly order. Pure by construction — no store handles, no sets other
