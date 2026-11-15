@@ -117,8 +117,9 @@ export function createCitationRegistry(): CitationRegistry {
 
 		// #163: verify against RESOLVED content, never the raw event. A root
 		// whose patched text replaced this quote must not count it as current
-		// support (spec §2; rework decisions §5). No canonical content means
-		// the quote is unverifiable — the gate is never re-run over raw text.
+		// support (spec §2 rule 3; the canonical-content note in
+		// docs/vision/agentic-harness.md). No canonical content means the
+		// quote is unverifiable — the gate is never re-run over raw text.
 		const canonical = canonicalContentOf(eventId, events);
 		if (canonical === undefined) {
 			const citation: Citation = {

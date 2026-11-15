@@ -284,9 +284,11 @@ function resolveFinal(
 				const res = registry.resolve(payload.data.eventId, events, payload.data.quote, event ? nodeTitleOf(event) : undefined);
 				if (res.ok && event) {
 					// #163: the quote is checked against the RESOLVED content — a
-					// root-author patch makes the raw content history (spec §2;
-					// rework decisions §5). Unresolvable canonical content leaves
-					// the citation unverified rather than falling back to raw text.
+					// root-author patch makes the raw content history (spec §2
+					// rule 3; the canonical-content note in
+					// docs/vision/agentic-harness.md). Unresolvable canonical
+					// content leaves the citation unverified rather than falling
+					// back to raw text.
 					const canonical = canonicalContentOf(event.id, events);
 					const gate =
 						canonical === undefined
