@@ -115,16 +115,16 @@ afterEach(async () => {
 
 describe('node trickle — cache-first, never lies about absence', () => {
 	it('paints a primed node surface with zero LLM spend (revisited graph, spec §6)', async () => {
+		const subject = event('m1');
 		// Prior visit's interpretation, persisted by the fill itself.
-		await saveInterpretation('m1', MODEL, 'node', {
+		await saveInterpretation(subject.id, MODEL, 'node', {
 			title: 'Security target for the TPM module',
 			typeToken: 'target',
 			metaType: 'target',
 			label: 'Security Target'
 		});
-		const paid = [event('m1')];
-		await investigation._nodeFillForTests(['m1'], paid);
-		expect(investigation.nodeTiles.get('m1')).toEqual({
+		await investigation._nodeFillForTests([subject.id], [subject]);
+		expect(investigation.nodeTiles.get(subject.id)).toEqual({
 			title: 'Security target for the TPM module',
 			typeToken: 'target',
 			metaType: 'target',
@@ -133,17 +133,16 @@ describe('node trickle — cache-first, never lies about absence', () => {
 	});
 
 	it('a cold cache without an API key settles silently: no tile, no write, no error, no attempt', async () => {
-		const silent = [event('m1')];
-		const [only] = silent.map((e) => e.id);
-		await investigation._nodeFillForTests([only as string], silent);
-		expect(investigation.nodeTiles.has(only as string)).toBe(false);
-		expect(await getInterpretation(only as string, MODEL)).toBeNull();
+		const subject = event('m1');
+		await investigation._nodeFillForTests([subject.id], [subject]);
+		expect(investigation.nodeTiles.has(subject.id)).toBe(false);
+		expect(await getInterpretation(subject.id, MODEL)).toBeNull();
 		expect(wire.requests.length).toBe(0);
 		// Keyless is NOT an attempt: the id must stay askable once a key lands.
 		settings.apiKey = 'test-key';
 		wire.call = async (args) => answer(args.messages.at(-1)?.content ?? '');
-		await investigation._nodeFillForTests([only as string], silent);
-		expect(investigation.nodeTiles.has(only as string)).toBe(true);
+		await investigation._nodeFillForTests([subject.id], [subject]);
+		expect(investigation.nodeTiles.has(subject.id)).toBe(true);
 	});
 });
 
@@ -267,6 +266,21 @@ describe('node trickle — every id ends a turn with a verdict (#199)', () => {
 		expect(wire.requests.length - before).toBe(1);
 		expect(pageIds(wire.requests.at(-1) ?? '').length).toBe(2);
 		expect(tiled(ids.slice(0, 4))).toBe(4);
+	});
+
+	it('drains a lane a redraw extends mid-run, then returns (#201)', async () => {
+		settings.apiKey = 'test-key';
+		let extended = false;
+		wire.call = async (args) => {
+			if (!extended) {
+				extended = true;
+				// The canvas re-derives while the first page is still open.
+				investigation.nodeFillFor(ids.slice(8, 12));
+			}
+			return answer(args.messages.at(-1)?.content ?? '');
+		};
+		await investigation._nodeFillForTests(ids.slice(0, 8), admitted);
+		expect(tiled(ids)).toBe(12);
 	});
 });
 
