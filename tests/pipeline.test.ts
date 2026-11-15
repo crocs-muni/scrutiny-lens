@@ -224,7 +224,7 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 			(n) =>
 				n.kind === 'capability' &&
 				n.message.includes('schema_failure') &&
-				n.message.includes('plain-text search of your words')
+				n.message.includes("plain-text searches of your question's terms")
 		)).toBe(true);
 	});
 
@@ -266,7 +266,7 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 			transport,
 			admit: () => ({ ok: true }),
 			emit: (e) => {
-				if (e.type === 'notice' && e.notice.message.includes('plain-text search of your words')) {
+				if (e.type === 'notice' && e.notice.message.includes("plain-text searches of your question's terms")) {
 					emitted.push(e.notice.message);
 				}
 			}
@@ -274,7 +274,7 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 		expect(emitted).toHaveLength(1);
 	});
 
-	it('mixed branch: failing AI + direct identifiers → identifier-only notice, never "your words"', async () => {
+	it('mixed branch: failing AI + identifiers → tag legs keep their route, remaining prose becomes probes (issue #164)', async () => {
 		const transport = new FakeTransport({ 'wss://a': { events: [] } });
 		const session = await runSearch({
 			question: 'cc:ANSSI-CC-2015/12 maintenance',
@@ -284,11 +284,59 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 			transport,
 			admit: () => ({ ok: true })
 		});
+		// The identifier keeps its direct tag leg…
+		expect(session.searches).toContainEqual({
+			kind: 'tag',
+			value: 'cc:ANSSI-CC-2015/12',
+			source: 'identifier'
+		});
+		// …and the leftover prose ("maintenance") degrades to one probe, not
+		// silence — and the notice counts it: one search is singular.
+		expect(
+			session.searches.some((s) => s.source === 'fallback' && s.value === 'maintenance')
+		).toBe(true);
 		const notice = session.notices.find(
 			(n) => n.kind === 'capability' && n.message.includes('AI translate degraded')
 		);
-		expect(notice?.message).toContain('identifier-only searches');
-		expect(notice?.message).not.toContain('your words');
+		expect(notice?.message).toContain("falling back to a plain-text search of your question's terms");
+	});
+
+	it('a question with no searchable terms says so, and asks for a name (issue #164)', async () => {
+		const transport = new FakeTransport({ 'wss://a': { events: [] } });
+		const session = await runSearch({
+			question: 'what is it?',
+			relays: ['wss://a'],
+			provider: PROVIDER,
+			callLLM: llmPlan('garbage not json'),
+			transport,
+			admit: () => ({ ok: true })
+		});
+		// Zero probes: nothing a relay could match, and the notice must not
+		// blame the corpus or claim identifier-only.
+		expect(session.searches).toEqual([]);
+		const notice = session.notices.find(
+			(n) => n.kind === 'capability' && n.message.includes('AI translate degraded')
+		);
+		expect(notice?.message).toContain('no searchable terms in your question');
+		expect(notice?.message).not.toContain('identifier-only');
+	});
+
+	it('a one-token question degrades to one probe and a singular notice (issue #164)', async () => {
+		const transport = new FakeTransport({ 'wss://a': { events: [] } });
+		const session = await runSearch({
+			question: 'roca',
+			relays: ['wss://a'],
+			provider: PROVIDER,
+			callLLM: llmPlan('garbage not json'),
+			transport,
+			admit: () => ({ ok: true })
+		});
+		expect(session.searches).toEqual([{ kind: 'text', value: 'roca', source: 'fallback' }]);
+		const notice = session.notices.find(
+			(n) => n.kind === 'capability' && n.message.includes('AI translate degraded')
+		);
+		expect(notice?.message).toContain("falling back to a plain-text search of your question's terms");
+		expect(notice?.message).not.toContain('plain-text searches');
 	});
 });
 

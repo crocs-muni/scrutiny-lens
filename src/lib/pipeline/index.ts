@@ -233,13 +233,13 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	});
 	const searches = plan.ok ? plan.result.searches : [];
 	// §4: when the AI path degraded the surface names the failure class, not
-	// a bare "couldn't structure". The wording depends on what actually
-	// happened: a prose fallback search was issued, or the run carries on
-	// identifier-only because no prose remained (mixed branch — 'your words'
-	// would be a lie there).
+	// a bare "couldn't structure". The wording depends on what actually ran:
+	// the deterministic text probes (#164), or nothing but the identifier
+	// tag legs.
 	if (plan.ok && plan.result.degradation !== undefined) {
 		const d = plan.result.degradation;
-		const hasFallbackSearch = searches.some((s) => s.source === 'fallback');
+		const fallbackSearches = searches.filter((s) => s.source === 'fallback').length;
+		const identifierSearches = searches.filter((s) => s.source === 'identifier').length;
 		// §2: name the failure AND its reason — a bare (invalid_request) hides
 		// config-vs-transport truths (e.g. 'model required' vs 404). d.message
 		// comes from provider-validation issues / error text; provider.ts
@@ -247,9 +247,14 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 		const reason = d.message.length > 140 ? d.message.slice(0, 139) + '…' : d.message;
 		const notice: PipelineNotice = {
 			kind: 'capability',
-			message: hasFallbackSearch
-				? `AI translate degraded (${d.kind}: ${reason}) — falling back to a plain-text search of your words`
-				: `AI translate degraded (${d.kind}: ${reason}) — identifier-only searches`
+			message:
+				fallbackSearches > 0
+					? `AI translate degraded (${d.kind}: ${reason}) — falling back to ${fallbackSearches === 1 ? 'a plain-text search' : 'plain-text searches'} of your question's terms`
+					: identifierSearches > 0
+						? `AI translate degraded (${d.kind}: ${reason}) — identifier-only searches`
+						: // #164 acceptance: a question with no searchable terms says so
+							// and asks for a name, instead of blaming the relays.
+							`AI translate degraded (${d.kind}: ${reason}) — no searchable terms in your question; add a product name or an identifier`
 		};
 		notices.push(notice);
 		emitNotice(notice);

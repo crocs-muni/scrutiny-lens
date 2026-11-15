@@ -10,7 +10,8 @@
 // literal layer folds to one line per relay (#132).
 
 import { describe, expect, it } from 'vitest';
-import { derivePhaseRows, doneLine, type TraceInput } from '$lib/trace';
+import { derivePhaseRows, doneLine, searchTallyLabel, type TraceInput } from '$lib/trace';
+import type { SearchRequest } from '$lib/ai/agents/query';
 import { aggregatePerRelay } from '$lib/relay-readout';
 
 const base: TraceInput = {
@@ -34,6 +35,8 @@ describe('derivePhaseRows — phase transitions', () => {
 		const running = derivePhaseRows({ ...base, phase: 'translate' });
 		expect(running[0].status).toBe('running');
 		expect(running[0].label).toBe('Translating query');
+		// Nothing ran yet — no probe receipts while translating.
+		expect(running[0].ticks).toEqual([]);
 
 		const translated = derivePhaseRows({
 			...base,
@@ -45,6 +48,32 @@ describe('derivePhaseRows — phase transitions', () => {
 		});
 		expect(translated[0].status).toBe('completed');
 		expect(translated[0].counter).toBe('cve:CVE-2017-15361 · vendor infineon');
+	});
+
+	it('interpret row receipts each search that ran; fallback probes tick amber (issue #164)', () => {
+		const rows = derivePhaseRows({
+			...base,
+			phase: 'fetch',
+			searches: [
+				{ kind: 'text', value: 'infineon sle78', source: 'fallback' },
+				{ kind: 'text', value: 'infineon', source: 'fallback' },
+				{ kind: 'tag', value: 'cve:CVE-2017-15361', source: 'identifier' }
+			],
+			slices: [
+				{ url: 'wss://a', received: 30, route: 'text:infineon sle78:nip50', rejected: 0, status: 'ok' },
+				{ url: 'wss://b', received: 12, route: 'text:infineon sle78:nip50', rejected: 0, status: 'ok' },
+				{ url: 'wss://a', received: 7, route: 'tag:cve:CVE-2017-15361', rejected: 0, status: 'ok' }
+			]
+		});
+		// Count-free receipts (see searchTicks): the per-probe N lives in
+		// the breadcrumb counter — a cache-assisted run's merged slice
+		// cannot attribute hits per probe, and a fabricated "0 records"
+		// would lie (spec §2).
+		expect(rows[0].ticks).toEqual([
+			{ text: 'infineon sle78 (fallback probe)', warn: true },
+			{ text: 'infineon (fallback probe)', warn: true },
+			{ text: '#cve:CVE-2017-15361', warn: false }
+		]);
 	});
 });
 
@@ -169,12 +198,23 @@ describe('derivePhaseRows — honesty cells', () => {
 		expect(ticks.find((t) => t.text.includes('lacks search'))?.warn).toBe(true);
 	});
 
+	it('search tally names the run count, and nothing before translation settles (issue #164)', () => {
+		const search = (value: string): SearchRequest => ({ kind: 'text', value, source: 'ai' });
+		// `start()` shows the results view before translation: a literal
+		// "via 0 searches" would sit there for the whole translate timeout.
+		expect(searchTallyLabel([])).toBe('');
+		expect(searchTallyLabel([search('roca')])).toBe(' via 1 search');
+		expect(searchTallyLabel([search('roca'), search('vulnerability'), search('ecdsa')])).toBe(
+			' via 3 searches'
+		);
+	});
+
 	it('a notice duplicated in the input renders once in the row (each_key_duplicate guard)', () => {
 		// §4 translate-fallback: the same degraded message can reach the run
 		// twice (incremental emit + final flush). PhaseRow keys ticks by text,
 		// so a repeat would throw each_key_duplicate; the row dedupes, keeping
 		// the first occurrence in place.
-		const msg = 'AI translate degraded (schema_failure) — falling back to a plain-text search of your words';
+		const msg = 'AI translate degraded (schema_failure) — falling back to plain-text searches of your question\'s terms';
 		const rows = derivePhaseRows({
 			...base,
 			phase: 'done',

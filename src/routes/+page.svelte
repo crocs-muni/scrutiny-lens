@@ -44,6 +44,7 @@
 	import type { ProviderOverrideInput } from '$lib/ai/provider';
 	import { bestIdentifier } from '$lib/ai/projector';
 	import { subjectGrounding, type NostrEvent } from '$lib/fabric';
+	import { searchTallyLabel } from '$lib/trace';
 
 	let centerHeight = $state(0);
 	/** The bar persists across the results↔session hop; the focus target
@@ -512,13 +513,19 @@
 			: investigation.recordedRelayReceipts.reduce((sum, r) => sum + r.received, 0)
 	);
 	const truncated = $derived(investigation.notices.some((n) => n.kind === 'truncated'));
+	/** #164: the run's own search count, named in the bar ("N fetched via K
+	 * searches") so a fallback-probe run reads as such — mono and
+	 * machine-computed (spec §2 rule 6). Empty until translation settles:
+	 * `start()` switches to the results view immediately, and "via 0
+	 * searches" would sit on screen for the whole translate timeout. */
+	const searchTally = $derived(searchTallyLabel(investigation.searches));
 	/** Results bar ledger (BIBLE J2). The session bar shows it only when the
 	 * run was relay-truncated: spec §9 requires the "relays may hold more"
 	 * line whenever a limit was hit, and the session surface has no other
 	 * place to say it. A complete run keeps the session bar wordless — the
 	 * canvas has no fetch of its own. */
 	const fetchedLine = $derived(
-		`fetched ${fetched}${truncated ? ' · relays may hold more' : ''}`
+		`fetched ${fetched}${searchTally}${truncated ? ' · relays may hold more' : ''}`
 	);
 	// Owner ruling 2026-09-09: the 'N invalid skipped' ledger is removed from
 	// the results surface (§4 line to follow via the docs ritual); the
@@ -527,10 +534,20 @@
 	// §4 edge states: done with zero surfaced cards — either nothing matched
 	// at all (relays confirmed searchable → honest "nothing matched") or the
 	// facet selection narrowed everything away (filtered chip variant).
+	// #164 acceptance: a question with no searchable terms yields zero
+	// searches. The pane must name that, not blame the relays: zero searches
+	// means nothing was asked, so "Nothing matched" would be a false claim
+	// about the corpus (spec §2).
+	const noTerms = $derived(
+		investigation.result !== null &&
+			investigation.error === null &&
+			investigation.running === false &&
+			investigation.searches.length === 0
+	);
 	const emptyDone = $derived(
 		investigation.result !== null &&
 			investigation.error === null &&
-			investigation.searches.length > 0 &&
+			(investigation.searches.length > 0 || noTerms) &&
 			// The settle traversal (refreshSessionContext) runs while `running`
 			// and can turn 0 cards into N: 'Nothing matched' must wait for the
 			// honest end of the run, not paint mid-settle (#82 acceptance:
@@ -918,6 +935,7 @@
 										<!-- spec §4: relays confirmed searchable, zero matched -->
 										<ResultsEmpty
 											filtered={Object.keys(investigation.selections).length > 0}
+											{noTerms}
 											relayCount={investigation.runRelays.length}
 											onClearFilters={() => investigation.clearFacets()}
 											onAskDifferently={() => shell.home()}

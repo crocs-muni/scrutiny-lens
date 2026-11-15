@@ -1,7 +1,8 @@
 // Query translation (issue #28, spec §1/§3): identifiers route DIRECTLY to
 // tag searches, never through AI; prose goes through one zod-gated AI call
-// (≤3 searches, prefixes open per IR-4); no key / AI-down → one free-text
-// search, never nothing. Decision clauses never become extra searches.
+// (≤3 searches, prefixes open per IR-4); no key / AI-down → the deterministic
+// ladder of issue #164 (identifier tag legs + ≤3 short rare-term probes,
+// never the raw question). Decision clauses never become extra searches.
 
 import { describe, expect, it } from "vitest";
 import type { CallLLM, CallLLMArgs } from "$lib/ai/output";
@@ -230,45 +231,139 @@ describe("translateQuestion — tolerant KV parsing of endpoint answers", () => 
   });
 });
 
-describe("translateQuestion — deterministic fallbacks (spec §2 rule 5 spirit)", () => {
-  it("schema failure retries once, then degrades to one free-text search", async () => {
-    const { call, calls } = fakeLLM("not json at all", "also not json");
-    const res = await translateQuestion({
-      question: "ROCA chips",
-      provider: PROVIDER,
-      callLLM: call,
-    });
-    expect(calls).toHaveLength(2);
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    expect(res.result.searches).toEqual([
-      { kind: "text", value: "ROCA chips", source: "fallback" },
-    ]);
-  });
+describe("translateQuestion — zero-AI fallback ladder (issue #164, spec §2 rule 5)", () => {
+  /** Reference questions from the issue — the live corpus must return
+   * non-zero verified results for each with the AI unavailable. */
+  const ECDSA_Q = "which card is fastest for ECDSA?";
+  const ROCA_Q = "which cards are affected by the ROCA vulnerability?";
+  const DOSSIER_Q = "show me the card dossier for the Infineon SLE78";
 
-  it("AI unreachable → one free-text search, not an error", async () => {
+  it("AI unreachable → identifier tag legs + short rare-term text probes, never the raw question", async () => {
     const res = await translateQuestion({
-      question: "ROCA chips",
+      question: ROCA_Q,
       provider: PROVIDER,
       callLLM: throwing("ECONNREFUSED"),
     });
-    expect(res.ok && res.result.searches).toEqual([
-      { kind: "text", value: "ROCA chips", source: "fallback" },
-    ]);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.searches.length).toBeGreaterThan(0);
+    expect(res.result.searches.some((s) => s.value === ROCA_Q)).toBe(false);
   });
 
-  it("no provider configured → question becomes one free-text search, no call", async () => {
+  it("no provider configured → deterministic ladder with zero model calls", async () => {
     const { call, calls } = fakeLLM("[]");
     const res = await translateQuestion({
-      question: "ROCA chips",
+      question: ECDSA_Q,
       provider: undefined,
       callLLM: call,
     });
     expect(calls).toHaveLength(0);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const searches = res.result.searches;
+    expect(searches.length).toBeGreaterThan(0);
+    // Tag legs where identifiers exist (here: none), then short probes.
+    expect(searches.some((s) => s.value === ECDSA_Q)).toBe(false);
+    // Ladder cap: at most 3 fallback text probes, never the raw question.
+    expect(searches.filter((s) => s.source === "fallback")).toHaveLength(3);
+    for (const s of searches) {
+      if (s.source === "fallback") {
+        expect(s.kind).toBe("text");
+        // short probes: stopword-stripped, longest tokens first
+        expect(s.value.split(/\s+/).length).toBeLessThanOrEqual(3);
+        expect(s.value.length).toBeLessThanOrEqual(120);
+      }
+    }
+  });
+
+  it("mixed identifier + failing AI → the identifier keeps its direct tag route alongside the fallback probes", async () => {
+    const res = await translateQuestion({
+      question: "CVE-2017-15361 in Infineon chips",
+      provider: PROVIDER,
+      callLLM: throwing("ECONNREFUSED"),
+    });
+    // The identifier keeps its tag leg; the prose degrades to a rare single
+    // then a generic solo — never the pair, which would AND the rare term's
+    // hits away.
     expect(res.ok && res.result.searches).toEqual([
-      { kind: "text", value: "ROCA chips", source: "fallback" },
+      { kind: "tag", value: "cve:CVE-2017-15361", source: "identifier" },
+      { kind: "text", value: "infineon", source: "fallback" },
+      { kind: "text", value: "chips", source: "fallback" },
     ]);
   });
+
+  it("rare pairs first, widening to single rare terms; generic words never AND into a rare probe", async () => {
+    const res = await translateQuestion({
+      question: DOSSIER_Q,
+      provider: undefined,
+      callLLM: throwing("unused"),
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const probes = res.result.searches.filter((s) => s.source === "fallback");
+    // Rare pair, then rare singles rarest-first — "dossier" is generic and
+    // must never pair with "infineon": the pair ANDs away the rare term's
+    // hits, and "sle78" alone is the corpus vocabulary the pair was riding.
+    // Measured live (issue #164): "infineon sle78" → 51 batch-valid on
+    // relay.scrutiny.cloud, so "sle78" alone returns at least those.
+    expect(probes.map((p) => p.value)).toEqual([
+      "infineon sle78",
+      "infineon",
+      "sle78",
+    ]);
+  });
+
+  it("a question of only generic words still gets solo probes (never nothing)", async () => {
+    const res = await translateQuestion({
+      question: "which cards are affected?",
+      provider: undefined,
+      callLLM: throwing("unused"),
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // Generics are solo only: paired they AND each other's hits away.
+    expect(res.result.searches.map((s) => s.value)).toEqual(["affected", "cards"]);
+  });
+
+	it('a question with no searchable term yields zero probes, never the raw question', async () => {
+		const res = await translateQuestion({
+			question: "what is it?",
+			provider: undefined,
+			callLLM: throwing("unused"),
+		});
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		// #164 acceptance: zero probes + an honest no-search state, not a
+		// raw-question probe (the bug the ladder replaced).
+		expect(res.result.searches).toEqual([]);
+	});
+
+	it('plural domain nouns are wrappers too, so the rare term keeps a leg', async () => {
+		const res = await translateQuestion({
+			question: "which certificates and products are affected by ROCA?",
+			provider: undefined,
+			callLLM: throwing("unused"),
+		});
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		const probes = res.result.searches.map((s) => s.value);
+		// "certificates"/"products"/"affected" are wrapper words; "roca" is
+		// the discriminator and must be probed first.
+		expect(probes[0]).toBe("roca");
+	});
+
+	it('decision-clause words never become probes (spec §3)', async () => {
+		const res = await translateQuestion({
+			question: "which cards are still certified?",
+			provider: undefined,
+			callLLM: throwing("unused"),
+		});
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		const probes = res.result.searches.map((s) => s.value);
+		expect(probes.some((p) => /\bstill\b/.test(p))).toBe(false);
+		expect(probes[0]).toBe("certified");
+	});
 
   it("an empty prose remainder after identifier extraction is not searched again", async () => {
     const { calls, call } = fakeLLM("[]");
