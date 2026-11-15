@@ -4,11 +4,12 @@
  *
  *   scrubAnswer  — STRIP-uniform (user ruling 2026-09-17, supersedes the
  *                  AI-Elements "unmatched markers stay literal" precedent):
- *                  a marker survives iff a VERIFIED citation carries its
- *                  number. Failed-verification AND recordless markers both
- *                  vanish: no pill, no [N], no claim underline — an
- *                  unreadable number with no backing is decoration, and the
- *                  rendered text must never quote decoration.
+ *                  a marker survives iff ITS OWN resolved citation was
+ *                  verified (#187 — occurrence, not number: two claims can
+ *                  share one number). Failed-verification AND recordless
+ *                  markers both vanish: no pill, no [N], no claim underline
+ *                  — an unreadable number with no backing is decoration, and
+ *                  the rendered text must never quote decoration.
  *
  *   layoutAnswer — splits settled content into text runs carrying the
  *                  citation numbers whose claim span covers them, plus pill
@@ -42,18 +43,44 @@ export function scrubAnswer<T extends ScrubCitation>(
 	content: string,
 	citations: T[]
 ): { content: string; citations: T[] } {
-	const verified = new Set(citations.filter((c) => c.verified).map((c) => c.n));
+	// #187: the gate keys by marker OCCURRENCE in reading order, never by
+	// citation number. Two claims renumber onto one number whenever the
+	// model cites the same event twice with different quotes (verbatim once,
+	// extrapolatory once — the registry pins the event, not the claim); a
+	// Set of numbers then keeps the convicted claim's marker because its
+	// twin's number is verified, and the rendered answer shows two claims
+	// under [1] with only one of them supported. spec §2 rules 2 and 5: a
+	// citation mark is a computed claim, not decoration.
+	//
+	// Pairing is per number, not by global marker index: resolveFinal leaves
+	// the model's own bare [N] tokens in the text, and a global index would
+	// let one of them consume the verdict meant for a later claim. The queue
+	// is only an alignment device — the verdict is still per occurrence.
+	const byNumber = new Map<number, number[]>();
+	citations.forEach((c, i) => {
+		const queue = byNumber.get(c.n);
+		if (queue === undefined) byNumber.set(c.n, [i]);
+		else queue.push(i);
+	});
+	const kept = new Set<number>();
+
 	// User ruling 2026-09-17 (chat-output rework): STRIP, uniformly. A
-	// marker stays iff a VERIFIED citation with its n survives — a bare [N]
-	// with no backing record used to linger as "literal inert text" and
-	// read like a rendered bug on screen ("[3]" over THALES/FIPS claims,
-	// live complaint). Swallow one adjacent space so no orphan whitespace
-	// remains. Regex derived from CANON_MARKER so the token grammar lives
-	// in exactly one place.
-	const text = content.replace(new RegExp(` ?${CANON_MARKER.source}`, 'g'), (raw, nRaw: string) =>
-		verified.has(Number(nRaw)) ? raw : ''
+	// marker stays iff its OWN occurrence was verified — a bare [N] with no
+	// backing record used to linger as "literal inert text" and read like a
+	// rendered bug on screen ("[3]" over THALES/FIPS claims, live
+	// complaint). Swallow one adjacent space so no orphan whitespace
+	// remains. Regex derived from CANON_MARKER so the token grammar lives in
+	// exactly one place.
+	const text = content.replace(
+		new RegExp(` ?${CANON_MARKER.source}`, 'g'),
+		(raw, nRaw: string) => {
+			const index = byNumber.get(Number(nRaw))?.shift();
+			if (index === undefined || !citations[index].verified) return '';
+			kept.add(index);
+			return raw;
+		}
 	);
-	return { content: text, citations: citations.filter((c) => c.verified) };
+	return { content: text, citations: citations.filter((_, i) => kept.has(i)) };
 }
 
 /* ------------------------------------------------------------------ *

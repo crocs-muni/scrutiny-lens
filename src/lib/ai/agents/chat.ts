@@ -241,11 +241,31 @@ function resolveFinal(
 ): { content: string; citations: ChatCitation[]; claimsSummary?: ClaimsSummary } {
 	const citations: ChatCitation[] = [];
 	const summary: ClaimsSummary = { total: 0, verbatim: 0, partial: 0, extrapolatory: 0 };
-	const replacements: Array<{ raw: string; replacement: string }> = [];
+	/** One edit per scanned marker, applied by OFFSET — never by string
+	 * replacement. A marker's raw text is not unique (two claims can cite the
+	 * same event with the same payload), and a bare `[1]` strip would also
+	 * match the canonical `[1]` another edit inserts, so `split/join` could
+	 * rewrite a marker twice. Offsets make each scan touch exactly its span. */
+	const edits: Array<{ start: number; end: number; replacement: string }> = [];
+
+	/** Strip a marker run, swallowing one adjacent space so no orphan
+	 * whitespace remains; other whitespace is literal content (indent-preserved
+	 * blocks, hard breaks) and is never collapsed globally. */
+	const stripAt = (start: number, end: number): void => {
+		const precededBySpace = start > 0 && fullText[start - 1] === ' ';
+		edits.push({ start: precededBySpace ? start - 1 : start, end, replacement: '' });
+	};
 
 	for (const scan of scanMarkers(fullText)) {
-		if (!scan.braced) continue; // bare canonical [N] — scrubAnswer owns it
-		const raw = fullText.slice(scan.start, scan.end);
+		// A bare canonical `[N]` carries no payload, so no verdict can belong to
+		// it (STRIP-uniform, ruling 2026-09-17). Strip it HERE, not in
+		// scrubAnswer: there the gate pairs markers with resolved citations by
+		// occurrence (#187), and a bare token would consume the verdict meant
+		// for the next citation of its number.
+		if (!scan.braced) {
+			stripAt(scan.start, scan.end);
+			continue;
+		}
 
 		let resolvedCitation: ChatCitation | undefined;
 		if (scan.objectText !== null) {
@@ -279,21 +299,28 @@ function resolveFinal(
 			summary.total += 1;
 			summary[resolvedCitation.support] += 1;
 			// Canonical renumber: the registry's stable [N], not the model's.
-			replacements.push({ raw, replacement: `[${resolvedCitation.n}]` });
+			edits.push({
+				start: scan.start,
+				end: scan.end,
+				replacement: `[${resolvedCitation.n}]`
+			});
 		} else {
 			// Unresolvable OR malformed (parseless/unterminated braces): strip
-			// the marker entirely — swallowing one adjacent space so no orphan
-			// whitespace remains. A failed/malformed citation must leave no
-			// trace on the settled surface (user ruling 2026-09-17 — the flat-
-			// capture predecessor leaked corrupt JSON into the PQC answer).
-			// Whitespace elsewhere is literal content (indent-preserved blocks,
-			// hard breaks) — never collapse globally.
-			const precededBySpace = fullText.slice(0, scan.start).endsWith(' ');
-			replacements.push({ raw: precededBySpace ? ` ${raw}` : raw, replacement: '' });
+			// the whole marker — a failed/malformed citation must leave no
+			// trace on the settled surface (user ruling 2026-09-17 — the
+			// flat-capture predecessor leaked corrupt JSON into the PQC answer).
+			stripAt(scan.start, scan.end);
 		}
 	}
 
-	const content = replacements.reduce((acc, r) => acc.split(r.raw).join(r.replacement), fullText);
+	// Scans arrive in text order, so a single forward pass rebuilds content.
+	let content = '';
+	let cursor = 0;
+	for (const edit of edits) {
+		content += fullText.slice(cursor, edit.start) + edit.replacement;
+		cursor = edit.end;
+	}
+	content += fullText.slice(cursor);
 	return {
 		content,
 		citations,

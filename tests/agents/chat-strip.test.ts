@@ -80,6 +80,25 @@ describe('settle gate — malformed markers strip, never render', () => {
 		expect(cites).toHaveLength(1);
 	});
 
+	it('a bare echo of a number cannot steal the verdict from the real claim (#187)', async () => {
+		// The model echoes its own [1] (no payload) before the claim that
+		// actually carries one. The settle gate strips the bare token, so
+		// scrubAnswer's occurrence pairing is identity: the surviving marker
+		// is the claim's own and it keeps its pill.
+		const ground = event('ev-good', 'Infineon RSA library used in smartcards (ROCA).');
+		const answer =
+			'As [1] shows. ROCA affects cards [1]{"eventId":"ev-good","quote":"Infineon RSA library used in smartcards (ROCA)."}.';
+		const { stream } = fakeStream([answer]);
+		const frames = await readFrames(
+			chatground({ question: 'q', history: [], groundingEvents: [ground], rootSummary: 'r', provider: PROVIDER, streamLLM: stream })
+		);
+		const final = frames[frames.length - 1];
+		expect(String(final.content)).toBe('As shows. ROCA affects cards [1].');
+		const cites = final.citations as { n: number; verified: boolean }[];
+		expect(cites).toHaveLength(1);
+		expect(cites[0]).toMatchObject({ n: 1, verified: true });
+	});
+
 	it('scrub strips the leftover number of a marker whose verification failed downstream', () => {
 		// End-to-end drift guard: resolveFinal kept a marker the verifier
 		// later convicts → scrub removes both the number and the citation.

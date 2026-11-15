@@ -103,20 +103,20 @@ describe('buildTurnMeta — dropped claims', () => {
 		expect(meta.dropped).toBe(0);
 	});
 
-	it('does not claim a drop when two claims share one source number and both still render', () => {
-		// scrubAnswer keys its verified set by citation NUMBER, so an
-		// extrapolatory claim that renumbered onto a verified number survives
-		// on screen. Saying "1 dropped" would assert a removal that did not
-		// happen — the exact lie this surface exists to avoid.
+	it('counts the twin the scrub removed when two claims shared one number', () => {
+		// #187: the gate keys by marker occurrence, so an extrapolatory claim
+		// that renumbered onto a verified number loses its marker. One marker
+		// now stands for two resolved claims — a removal the counts line must
+		// own; silence would assert nothing was thrown away.
 		const meta = buildTurnMeta(
 			msg(
 				[cite(1, 'ev1')],
 				{ total: 2, verbatim: 1, partial: 0, extrapolatory: 1 },
-				'First claim [1]. Second claim [1].'
+				'First claim [1]. Second claim.'
 			),
 			[ev('ev1', 30023, [])]
 		);
-		expect(meta.dropped).toBe(0);
+		expect(meta.dropped).toBe(1);
 	});
 
 	it('reports zero when the turn carried no summary (hydrated, pre-#177 rows)', () => {
