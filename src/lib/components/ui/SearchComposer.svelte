@@ -1,13 +1,13 @@
 <script lang="ts">
-	/* SEARCH COMPOSER — the J1 hero input (issue #37, spec §9).
+	/* SEARCH COMPOSER — the J1 hero input (issue #37, spec §9; issue #139).
 	 *
 	 * VENDORED MUTATION of canon PromptBar
-	 * (beautiful-ui-svelte/src/components/PromptBar/PromptBar.svelte) in its
-	 * TALL variant — the layout the beautiful-ui harness uses on its home
-	 * surface: multi-line input, controls on their own row (model picker
-	 * left, send right). Stripped per the app's real control set: the
-	 * attachments plus button, @/sources and /command menus, dictation, the
-	 * demo walkthrough, and the glimm celebratory sweep.
+	 * (beautiful-ui-svelte/src/components/PromptBar/PromptBar.svelte). The
+	 * tall variant's chat chrome (22px bubble, two-line field, up-arrow send,
+	 * "Question" label) made the hero read as the chat column: readers typed
+	 * meta questions into a relay search and got nothing (#139's UX review).
+	 * This is the QUERY BAR mutation: one line, a visible "Search" label, a
+	 * search glyph, and the model picker demoted to a small inline control.
 	 *
 	 * The model picker is app-wired instead of demo-hardcoded: the list is
 	 * fetched live from the user's endpoint (/v1/models, same seam as the
@@ -19,9 +19,10 @@
 	 * writing rule); titles/snippets stay sans. */
 
 	import GlideHighlight from 'beautiful-ui-svelte/src/lib/GlideHighlight.svelte';
-	import { IconArrowUp, IconChevronDown } from '@tabler/icons-svelte';
+	import { IconChevronDown, IconSearch } from '@tabler/icons-svelte';
 	import { fetchModels } from '$lib/ai/models';
 	import { settings } from '$lib/settings.svelte';
+	import { isCapabilityQuestion } from '$lib/chat/capability';
 	import KeyHint from '../shell/KeyHint.svelte';
 
 	interface Props {
@@ -35,28 +36,50 @@
 
 	let draft = $state('');
 	let modelOpen = $state(false);
-	let inputEl: HTMLTextAreaElement | null = null;
+	let metaNote = $state(false);
+	let inputEl: HTMLInputElement | null = null;
 
 	let models = $state<string[]>([]);
 	let modelsStatus = $state<'idle' | 'loading' | 'ok' | 'error'>('idle');
 
 	const canSend = $derived(draft.trim() !== '');
 
-	function send() {
-		if (!canSend) return;
-		onSubmit(draft.trim());
+	function submit(question: string): void {
+		onSubmit(question);
 		draft = '';
+		metaNote = false;
 		modelOpen = false;
 	}
 
-	/* Tall composer chord (canon PromptBar): Enter sends, Shift+Enter
-	 * newline, Escape closes the open menu first. */
+	function send(): void {
+		if (!canSend) return;
+		const question = draft.trim();
+		// #139: a meta question ("what can you do?") searches no relay and
+		// matches no event (#164's class). The reader is told once, and may
+		// still search it — guidance, never a block.
+		if (isCapabilityQuestion(question)) {
+			metaNote = true;
+			return;
+		}
+		submit(question);
+	}
+
+	function searchAnyway(): void {
+		if (canSend) submit(draft.trim());
+	}
+
+	/* Enter sends, Escape closes the open menu first. The field is one line,
+	 * so Shift+Enter has no newline to insert. */
 	function onkeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape' && modelOpen) {
 			modelOpen = false;
 			return;
 		}
-		if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+		if (event.key === 'Escape' && metaNote) {
+			metaNote = false;
+			return;
+		}
+		if (event.key === 'Enter' && !event.isComposing) {
 			event.preventDefault();
 			send();
 		}
@@ -100,117 +123,133 @@
 <svelte:window onpointerdown={onWindowPointerDown} />
 
 <div data-search-composer class="relative">
+	<!-- The label is the affordance: the field says what it is before the
+		reader types (spec §9 keyboard/label rule; #139). -->
+	<label for="hero-search" class="mb-2 block text-[12px] font-semibold tracking-wide text-ink-3 uppercase">
+		Search
+	</label>
 
-	<!-- composer: canon tall chrome (controls on their own row) -->
 	<div
-		class="relative isolate flex flex-col gap-2.5 rounded-[22px] border border-line bg-surface p-3.5 shadow-card transition-[border-color] duration-150 focus-within:border-line-strong"
+		class="flex items-center gap-1.5 rounded-[10px] border border-line bg-surface py-1.5 pr-1.5 pl-3 shadow-card transition-[border-color] duration-150 focus-within:border-line-strong"
 	>
 		<!-- svelte-ignore a11y_autofocus — the hero composer IS the page's
 			purpose (spotlight pattern); focus lands where the only action is. -->
-		<textarea
+		<input
+			id="hero-search"
 			bind:this={inputEl}
 			bind:value={draft}
 			{onkeydown}
-			rows="2"
 			autofocus
-			aria-label="Question"
-			placeholder="Ask in plain English, or drop a CVE, GHSA, package URL, cert id…"
-			class="min-h-[68px] w-full min-w-0 resize-none bg-transparent px-2 py-2 text-[14px] leading-5 text-ink outline-none [overflow-wrap:anywhere] placeholder:text-ink-2"
-		></textarea>
+			type="text"
+			autocomplete="off"
+			spellcheck="false"
+			aria-label="Search"
+			placeholder="Product, identifier (CVE, cert id, package URL), or plain English"
+			class="min-w-0 flex-1 bg-transparent py-1.5 text-[14px] leading-5 text-ink outline-none placeholder:text-ink-2"
+		/>
 
-		<div class="grid grid-cols-[auto_minmax(0,1fr)_28px] items-end gap-x-1">
-			<!-- model picker (left) — the menu anchors to the button and
-				grows over the composer like canon's, never floats to the
-				container's top edge. -->
-			<div class="relative col-start-1 row-start-1">
-				<button
-					type="button"
-					aria-expanded={modelOpen}
-					aria-label="Choose model"
-					onclick={toggleModels}
-					class="flex h-7 shrink-0 items-center gap-1 rounded-control px-1.5 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink {modelOpen
-						? 'bg-hover text-ink'
-						: ''}"
-				>
-					<span class={settings.model ? 'font-mono' : ''}>
-						{settings.model || 'Choose model'}
-					</span>
-					<IconChevronDown size={11} stroke={2.4} class="text-ink-3" />
-				</button>
-
-				{#if modelOpen}
-					<!-- model menu: canon's floating listbox above its trigger,
-						glide rows reskinned with the shared GlideHighlight. rows
-						are shrink-0 so the list scrolls at max-h instead of
-						flex-squashing. -->
-					<div
-						role="listbox"
-						tabindex="-1"
-						class="absolute bottom-full left-0 z-10 mb-2 w-72 rounded-card bg-surface p-1 shadow-raised"
-						style:animation="pop-in 180ms cubic-bezier(0.23,1,0.32,1) both"
-						style:transform-origin="bottom left"
-					>
-						{#if modelsStatus === 'loading' || modelsStatus === 'idle'}
-							<p class="px-2 py-2 text-[12.5px] text-ink-3">Loading models…</p>
-						{:else if modelsStatus === 'error'}
-							<p class="px-2 py-2 text-[12.5px] text-ink-3">
-								Couldn't load models — check the endpoint in Settings.
-							</p>
-						{:else}
-							<GlideHighlight
-								class="flex max-h-64 flex-col gap-px overflow-y-auto"
-								highlightClass="inset-x-0 rounded-chip bg-hover"
-							>
-								{#each models as id (id)}
-									<button
-										data-menu-row
-										type="button"
-										onmousedown={(event) => event.preventDefault()}
-										onclick={() => selectModel(id)}
-										class="relative z-10 flex h-7.5 w-full shrink-0 items-center gap-2 rounded-chip px-2 text-left"
-									>
-										<span class="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink"
-											>{id}</span
-										>
-										<span class="shrink-0 text-ink {id === settings.model ? '' : 'invisible'}">
-											<svg
-												width="13"
-												height="13"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												stroke-width="2.5"
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												aria-hidden="true"
-											>
-												<path d="M20 6L9 17l-5-5" />
-											</svg>
-										</span>
-									</button>
-								{/each}
-							</GlideHighlight>
-						{/if}
-					</div>
-				{/if}
-			</div>
-
-			<!-- send (right) — canon's ink send button -->
-			<KeyHint
-				label="Search"
-				keys="Enter"
-				side="left"
-				class="col-start-3 row-start-1 flex size-7 shrink-0 items-center justify-center rounded-control transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94]"
-				onclick={send}
+		<!-- model picker, demoted: a quiet inline control, not the field's
+			left-hand anchor. -->
+		<div class="relative shrink-0">
+			<button
+				type="button"
+				aria-expanded={modelOpen}
+				aria-label="Choose model"
+				onclick={toggleModels}
+				class="flex h-7 shrink-0 items-center gap-1 rounded-control px-1.5 text-[11.5px] font-medium text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink {modelOpen
+					? 'bg-hover text-ink'
+					: ''}"
 			>
-				<span
-					class="flex size-7 items-center justify-center rounded-control"
-					style:background={canSend ? 'var(--ink)' : 'var(--line-strong)'}
-					style:color={canSend ? 'var(--surface)' : 'var(--ink-2)'}
+				<span class={settings.model ? 'font-mono' : ''}>{settings.model || 'model'}</span>
+				<IconChevronDown size={11} stroke={2.4} class="text-ink-3" />
+			</button>
+
+			{#if modelOpen}
+				<!-- model menu: canon's floating listbox above its trigger,
+					glide rows reskinned with the shared GlideHighlight. rows
+					are shrink-0 so the list scrolls at max-h instead of
+					flex-squashing. -->
+				<div
+					role="listbox"
+					tabindex="-1"
+					class="absolute right-0 bottom-full z-10 mb-2 w-72 rounded-card bg-surface p-1 shadow-raised"
+					style:animation="pop-in 180ms cubic-bezier(0.23,1,0.32,1) both"
+					style:transform-origin="bottom right"
 				>
-					<IconArrowUp size={16} stroke={2.4} />
-				</span>
-			</KeyHint>
+					{#if modelsStatus === 'loading' || modelsStatus === 'idle'}
+						<p class="px-2 py-2 text-[12.5px] text-ink-3">Loading models…</p>
+					{:else if modelsStatus === 'error'}
+						<p class="px-2 py-2 text-[12.5px] text-ink-3">
+							Couldn't load models — check the endpoint in Settings.
+						</p>
+					{:else}
+						<GlideHighlight
+							class="flex max-h-64 flex-col gap-px overflow-y-auto"
+							highlightClass="inset-x-0 rounded-chip bg-hover"
+						>
+							{#each models as id (id)}
+								<button
+									data-menu-row
+									type="button"
+									onmousedown={(event) => event.preventDefault()}
+									onclick={() => selectModel(id)}
+									class="relative z-10 flex h-7.5 w-full shrink-0 items-center gap-2 rounded-chip px-2 text-left"
+								>
+									<span class="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">{id}</span>
+									<span class="shrink-0 text-ink {id === settings.model ? '' : 'invisible'}">
+										<svg
+											width="13"
+											height="13"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="2.5"
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											aria-hidden="true"
+										>
+											<path d="M20 6L9 17l-5-5" />
+										</svg>
+									</span>
+								</button>
+							{/each}
+						</GlideHighlight>
+					{/if}
+				</div>
+			{/if}
 		</div>
+
+		<!-- send: a search glyph, not the chat up-arrow (the arrow was half of
+			what made this read as chat, #139). -->
+		<KeyHint
+			label="Search"
+			keys="Enter"
+			side="left"
+			class="flex size-8 shrink-0 items-center justify-center rounded-control transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94]"
+			onclick={send}
+		>
+			<span
+				class="flex size-8 items-center justify-center rounded-control"
+				style:background={canSend ? 'var(--ink)' : 'var(--line-strong)'}
+				style:color={canSend ? 'var(--surface)' : 'var(--ink-2)'}
+			>
+				<IconSearch size={15} stroke={2.4} />
+			</span>
+		</KeyHint>
 	</div>
+
+	{#if metaNote}
+		<div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-ink-2">
+			<span>
+				That reads like a question about this app — a relay search usually matches nothing for it.
+			</span>
+			<button
+				type="button"
+				onclick={searchAnyway}
+				class="rounded-full border border-line-strong px-2.5 py-1 text-[11.5px] font-medium text-ink hover:bg-inset"
+			>
+				Search anyway
+			</button>
+		</div>
+	{/if}
 </div>
