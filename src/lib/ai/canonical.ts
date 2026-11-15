@@ -5,9 +5,9 @@
  * count as present-tense support: once a root-author patch has replaced that
  * text, the canonical content is the patched text, and the raw event is
  * history. Presenting a stale quote as current support is the never-lie rule
- * (spec §2) arriving through its own gate — which is why
- * `docs/rework/decisions.md` §5 ratifies "citations verify against canonical
- * content only".
+ * (spec §2 rule 3, and the "verified against resolved canonical content, not
+ * the raw event" note in `docs/vision/agentic-harness.md`) arriving through
+ * its own gate — which is why a citation verifies against canonical content.
  *
  * `core.resolve()` is the sole patch source (AGENTS.md hard rule); this module
  * is a one-call adapter over it, deliberately small so the real home —
