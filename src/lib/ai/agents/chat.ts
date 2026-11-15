@@ -50,6 +50,7 @@ import {
 } from '../provider';
 import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
 import { scanMarkers } from '../../chat/markers';
+import { capabilityAnswer } from '../../chat/capability';
 /** Injectable streaming transport — yields raw model text chunks as they arrive. Throws on transport failure. */
 export type StreamLLM = (args: CallLLMArgs) => AsyncIterable<string>;
 
@@ -424,6 +425,16 @@ export function chatground(opts: ChatGroundOptions): ReadableStream<Uint8Array> 
 		};
 
 		try {
+			// Capability questions are answered from computed session facts
+			// BEFORE the provider check: a keyless session is exactly where
+			// "what can you do?" gets asked first, and this lane cannot loop
+			// (issue #133).
+			const computed = capabilityAnswer(opts.question, opts.groundingEvents);
+			if (computed !== null) {
+				controller.enqueue(frame({ type: 'final', content: computed, citations: [] }));
+				return done();
+			}
+
 			const provRes = getProviderConfig(opts.provider);
 			if (!provRes.ok) {
 				return fail(
