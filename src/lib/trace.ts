@@ -100,6 +100,16 @@ function searchTicks(searches: SearchRequest[]): TraceTick[] {
 	});
 }
 
+/** Breadcrumb meta fragment for the run's own search count (issue #164):
+ * ` via 3 searches`, empty while translation has produced nothing yet —
+ * `start()` switches to the results view immediately, so a literal
+ * "via 0 searches" would sit on screen for the whole translate timeout
+ * (spec §2 rule 6: the count is computed, so it may not claim zero). */
+export function searchTallyLabel(searches: readonly SearchRequest[]): string {
+	if (searches.length === 0) return '';
+	return ` via ${searches.length} ${searches.length === 1 ? 'search' : 'searches'}`;
+}
+
 export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 	const { phase, searches, slices, notices, relayCount, error } = input;
 	const done = phase === 'done';

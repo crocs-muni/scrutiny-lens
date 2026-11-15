@@ -1,7 +1,8 @@
 // Query translation (issue #28, spec §1/§3): identifiers route DIRECTLY to
 // tag searches, never through AI; prose goes through one zod-gated AI call
-// (≤3 searches, prefixes open per IR-4); no key / AI-down → one free-text
-// search, never nothing. Decision clauses never become extra searches.
+// (≤3 searches, prefixes open per IR-4); no key / AI-down → the deterministic
+// ladder of issue #164 (identifier tag legs + ≤3 short rare-term probes,
+// never the raw question). Decision clauses never become extra searches.
 
 import { describe, expect, it } from "vitest";
 import type { CallLLM, CallLLMArgs } from "$lib/ai/output";

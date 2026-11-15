@@ -44,6 +44,7 @@
 	import type { ProviderOverrideInput } from '$lib/ai/provider';
 	import { bestIdentifier } from '$lib/ai/projector';
 	import { subjectGrounding, type NostrEvent } from '$lib/fabric';
+	import { searchTallyLabel } from '$lib/trace';
 
 	let centerHeight = $state(0);
 	/** The bar persists across the results↔session hop; the focus target
@@ -512,21 +513,19 @@
 			: investigation.recordedRelayReceipts.reduce((sum, r) => sum + r.received, 0)
 	);
 	const truncated = $derived(investigation.notices.some((n) => n.kind === 'truncated'));
+	/** #164: the run's own search count, named in the bar ("N fetched via K
+	 * searches") so a fallback-probe run reads as such — mono and
+	 * machine-computed (spec §2 rule 6). Empty until translation settles:
+	 * `start()` switches to the results view immediately, and "via 0
+	 * searches" would sit on screen for the whole translate timeout. */
+	const searchTally = $derived(searchTallyLabel(investigation.searches));
 	/** Results bar ledger (BIBLE J2). The session bar shows it only when the
 	 * run was relay-truncated: spec §9 requires the "relays may hold more"
 	 * line whenever a limit was hit, and the session surface has no other
 	 * place to say it. A complete run keeps the session bar wordless — the
 	 * canvas has no fetch of its own. */
-	/** #164: the run's own search count, named in the bar ("N fetched via K
-	 * searches") so a fallback-probe run reads as such — mono and
-	 * machine-computed (spec §2 rule 6). Zero only on a share cold-open,
-	 * where the bar never mounts (no results surface). */
-	const searchTally = $derived.by(() => {
-		const count = investigation.searches.length;
-		return `${count} ${count === 1 ? 'search' : 'searches'}`;
-	});
 	const fetchedLine = $derived(
-		`fetched ${fetched} via ${searchTally}${truncated ? ' · relays may hold more' : ''}`
+		`fetched ${fetched}${searchTally}${truncated ? ' · relays may hold more' : ''}`
 	);
 	// Owner ruling 2026-09-09: the 'N invalid skipped' ledger is removed from
 	// the results surface (§4 line to follow via the docs ritual); the

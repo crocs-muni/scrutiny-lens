@@ -290,15 +290,33 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 			value: 'cc:ANSSI-CC-2015/12',
 			source: 'identifier'
 		});
-		// …and the leftover prose ("maintenance") degrades to a probe, not
-		// silence — the notice names both halves of the plan.
+		// …and the leftover prose ("maintenance") degrades to one probe, not
+		// silence — and the notice counts it: one search is singular.
 		expect(
 			session.searches.some((s) => s.source === 'fallback' && s.value === 'maintenance')
 		).toBe(true);
 		const notice = session.notices.find(
 			(n) => n.kind === 'capability' && n.message.includes('AI translate degraded')
 		);
-		expect(notice?.message).toContain("plain-text searches of your question's terms");
+		expect(notice?.message).toContain("falling back to a plain-text search of your question's terms");
+	});
+
+	it('a one-token question degrades to one probe and a singular notice (issue #164)', async () => {
+		const transport = new FakeTransport({ 'wss://a': { events: [] } });
+		const session = await runSearch({
+			question: 'roca',
+			relays: ['wss://a'],
+			provider: PROVIDER,
+			callLLM: llmPlan('garbage not json'),
+			transport,
+			admit: () => ({ ok: true })
+		});
+		expect(session.searches).toEqual([{ kind: 'text', value: 'roca', source: 'fallback' }]);
+		const notice = session.notices.find(
+			(n) => n.kind === 'capability' && n.message.includes('AI translate degraded')
+		);
+		expect(notice?.message).toContain("falling back to a plain-text search of your question's terms");
+		expect(notice?.message).not.toContain('plain-text searches');
 	});
 });
 

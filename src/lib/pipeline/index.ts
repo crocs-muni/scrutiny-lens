@@ -238,7 +238,7 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	// tag legs.
 	if (plan.ok && plan.result.degradation !== undefined) {
 		const d = plan.result.degradation;
-		const hasFallbackSearch = searches.some((s) => s.source === 'fallback');
+		const fallbackSearches = searches.filter((s) => s.source === 'fallback').length;
 		// §2: name the failure AND its reason — a bare (invalid_request) hides
 		// config-vs-transport truths (e.g. 'model required' vs 404). d.message
 		// comes from provider-validation issues / error text; provider.ts
@@ -246,9 +246,10 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 		const reason = d.message.length > 140 ? d.message.slice(0, 139) + '…' : d.message;
 		const notice: PipelineNotice = {
 			kind: 'capability',
-			message: hasFallbackSearch
-				? `AI translate degraded (${d.kind}: ${reason}) — falling back to plain-text searches of your question's terms`
-				: `AI translate degraded (${d.kind}: ${reason}) — identifier-only searches`
+			message:
+				fallbackSearches > 0
+					? `AI translate degraded (${d.kind}: ${reason}) — falling back to ${fallbackSearches === 1 ? 'a plain-text search' : 'plain-text searches'} of your question's terms`
+					: `AI translate degraded (${d.kind}: ${reason}) — identifier-only searches`
 		};
 		notices.push(notice);
 		emitNotice(notice);
