@@ -4,6 +4,7 @@
 // and hydrates once at boot behind the ready() barrier. The API key is not a
 // PersistedSettings field (IndexedDB must never hold it): it rides this tab's
 // session storage instead, and every entry — typed or restored at boot —
+// arms the redaction strip via registerSecret().
 import { transition, type PersistEvent, type PersistState } from '$lib/settings/persist';
 import {
 	initPersistence,
@@ -255,6 +256,7 @@ class Settings {
 		clearSessionKey();
 		dirtyFields.clear();
 		bootBarrier = null;
+		this.hydrated = false;
 		this.#persist = { phase: 'idle' };
 		this.persistState = 'idle';
 	}

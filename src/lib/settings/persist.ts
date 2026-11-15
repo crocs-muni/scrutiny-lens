@@ -38,6 +38,11 @@ function unreachable(outcome: never): never {
  *   on a save whose debt is already spent stays failed (one retry only).
  */
 export function transition(state: PersistState, event: PersistEvent): PersistState {
+	// Outcomes belong to the save that produced them: after a reset() (idle)
+	// or an already-settled turn, a late write cannot repaint the phase —
+	// an in-flight save resolving after a wipe would otherwise claim
+	// "saved" for a tab that just dropped its state.
+	if (event.type === 'outcome' && state.phase !== 'saving') return state;
 	if (state.phase === 'unavailable') return state;
 	// Debt semantics: on `failed` it records "a retry was spent"; entering
 	// `saving` from `failed` means THIS attempt is that retry; only a

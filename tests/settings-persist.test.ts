@@ -24,12 +24,47 @@ const STATES: PersistState[] = [
 ];
 
 describe('transition — the full table', () => {
-	it('every (state, event) pair is total and returns a PersistState', () => {
-		for (const state of STATES) {
-			for (const event of EVENTS) {
-				expect(transition(state, event)).toBeDefined();
-			}
+	it('the full table: every (state, event) pair lands where the laws say', () => {
+		// Rows are the exact expected next state for each pairing; anything
+		// that drifts from this table is a behaviour change.
+		const S = (phase: 'idle') => ({ phase });
+		const sav = (retried: boolean) => ({ phase: 'saving', retried });
+		const fl = (retried: boolean) => ({ phase: 'failed', retried });
+		const table: [PersistState, PersistEvent, PersistState][] = [
+			[S('idle'), { type: 'save' }, sav(false)],
+			[S('idle'), { type: 'outcome', outcome: 'saved' }, S('idle')],
+			[S('idle'), { type: 'outcome', outcome: 'failed' }, S('idle')],
+			[S('idle'), { type: 'outcome', outcome: 'unavailable' }, S('idle')],
+			[sav(false), { type: 'save' }, sav(false)],
+			[sav(false), { type: 'outcome', outcome: 'saved' }, { phase: 'saved' }],
+			[sav(false), { type: 'outcome', outcome: 'failed' }, fl(false)],
+			[sav(false), { type: 'outcome', outcome: 'unavailable' }, { phase: 'unavailable' }],
+			[sav(true), { type: 'save' }, sav(true)],
+			[sav(true), { type: 'outcome', outcome: 'saved' }, { phase: 'saved' }],
+			[sav(true), { type: 'outcome', outcome: 'failed' }, fl(true)],
+			[sav(true), { type: 'outcome', outcome: 'unavailable' }, { phase: 'unavailable' }],
+			[{ phase: 'saved' }, { type: 'save' }, sav(false)],
+			[{ phase: 'saved' }, { type: 'outcome', outcome: 'saved' }, { phase: 'saved' }],
+			[{ phase: 'saved' }, { type: 'outcome', outcome: 'failed' }, { phase: 'saved' }],
+			[{ phase: 'saved' }, { type: 'outcome', outcome: 'unavailable' }, { phase: 'saved' }],
+			[fl(false), { type: 'save' }, sav(true)],
+			[fl(false), { type: 'outcome', outcome: 'saved' }, fl(false)],
+			[fl(false), { type: 'outcome', outcome: 'failed' }, fl(false)],
+			[fl(false), { type: 'outcome', outcome: 'unavailable' }, fl(false)],
+			[fl(true), { type: 'save' }, sav(true)],
+			[fl(true), { type: 'outcome', outcome: 'saved' }, fl(true)],
+			[fl(true), { type: 'outcome', outcome: 'failed' }, fl(true)],
+			[fl(true), { type: 'outcome', outcome: 'unavailable' }, fl(true)],
+			[{ phase: 'unavailable' }, { type: 'save' }, { phase: 'unavailable' }],
+			[{ phase: 'unavailable' }, { type: 'outcome', outcome: 'saved' }, { phase: 'unavailable' }],
+			[{ phase: 'unavailable' }, { type: 'outcome', outcome: 'failed' }, { phase: 'unavailable' }],
+			[{ phase: 'unavailable' }, { type: 'outcome', outcome: 'unavailable' }, { phase: 'unavailable' }]
+		];
+		for (const [state, event, expected] of table) {
+			expect(transition(state, event)).toEqual(expected);
 		}
+		// The table is exhaustive: 7 states × 4 events.
+		expect(table).toHaveLength(STATES.length * EVENTS.length);
 	});
 
 	it('save enters saving, carrying the retry debt of the current state', () => {
