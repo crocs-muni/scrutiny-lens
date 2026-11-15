@@ -64,6 +64,7 @@ import {
   type FacetGroup,
   type ProductCard,
 } from "$lib/pipeline/cards";
+import { mergeSettledCards, paintCard } from "$lib/pipeline/card-fill";
 import { settings } from "$lib/settings.svelte";
 import { shell } from "$lib/shell.svelte";
 import { aggregatePerRelay, type RelayReceipt } from "$lib/relay-readout";
@@ -629,36 +630,18 @@ class Investigation {
         // 'Nothing matched'. Read the settled set from the proxy field.
         const settled = this.result;
         if (settled === null) return;
-        // Final assembly with merge-over (issue #118): the fill lanes
-        // write by claimed POSITION (runPass's indexOf), so the merge
-        // keeps every pre-context card's slot stable — live entries that
-        // advanced (interpreted, or pending mid-pass) win their slot and
-        // keep their paint and drafts; untouched raw cards take the
-        // fresh assembly (context arrivals can grow a card's
-        // bound-metadata/files counts — the fuller truth); amber cards
-        // are neither pending nor interpreted, so they take the fresh
-        // raw entry and keep their amber face via the failed set —
-        // never re-asked. Context arrivals append in assembly order.
+        // Final assembly (issue #118): the context-grown admitted set is
+        // the only truth for a card's COMPUTED fields — bound metadata,
+        // files, updates, retraction — while a lane's AI paint already on a
+        // card survives (pipeline/card-fill.ts owns that split). Keeping a
+        // whole pre-context card for a claimed/painted slot is what let the
+        // footer read "0 metadata" under the header's "3 metadata"
+        // (tests/settle-merge-counts.test.ts). Arrivals append in order.
         const fresh = assembleCards(
           resolveGraph(settled.admitted),
           settled.admitted,
         );
-        const freshById = new Map<string, ProductCard>(
-          fresh.map((card): [string, ProductCard] => [card.id, card]),
-        );
-        const liveIds = new Set(this.cards.map((card) => card.id));
-        const mergedCards = this.cards.map((live) => {
-          const candidate = freshById.get(live.id);
-          return candidate !== undefined &&
-            !live.interpreted &&
-            !this.pending.has(live.id)
-            ? candidate
-            : live;
-        });
-        for (const card of fresh) {
-          if (!liveIds.has(card.id)) mergedCards.push(card);
-        }
-        this.cards = mergedCards;
+        this.cards = mergeSettledCards(this.cards, fresh);
         this.facetGroups = computeFacets(settled.admitted);
         // First pin (issue #83): AFTER the merged final assembly, so the
         // pinned frontier carries the context arrivals — a crash mid-fill
@@ -831,9 +814,14 @@ class Investigation {
       const shared = this.result;
       void this.refreshSessionContext().then(() => {
         if (this.result !== shared || shared === null) return;
-        this.cards = assembleCards(
-          resolveGraph(shared.admitted),
-          shared.admitted,
+        // Same merge contract as start()'s settle: a cached interpretation
+        // can paint the root before the sweep lands, so the fresh assembly
+        // must not overwrite the paint (and the banner counts painted
+        // cards — a raw wipe leaves them "0 of N filled" with the lane
+        // already drained).
+        this.cards = mergeSettledCards(
+          this.cards,
+          assembleCards(resolveGraph(shared.admitted), shared.admitted)
         );
         this.facetGroups = computeFacets(shared.admitted);
         // Pin (issue #83, review L8): AFTER the context sweep so the row
@@ -1802,7 +1790,10 @@ clearFacets(): void {
           onPaint: (card, i) => {
             if (this.controller !== controller) return;
             const merged = this.cards.slice();
-            merged[indexOf(card, i)] = card;
+            const at = indexOf(card, i);
+            // Paint onto the freshest facts: a stream that finishes after
+            // the traversal merge must not restore pre-context counts.
+            merged[at] = paintCard(merged[at], card);
             this.cards = merged;
             // Live denominator (issue #118): the post-context merge can
             // append arrivals mid-leg, so the banner counts against the
@@ -1902,7 +1893,10 @@ clearFacets(): void {
         // advanced truth (issue #104: painted cards never revert to raw;
         // the re-issue only asks for the still-unfilled remainder).
         if (live !== undefined && live.interpreted && !filled[i].interpreted) continue;
-        merged[at] = filled[i];
+        // Paint onto the freshest facts, never this pass's own snapshot:
+        // the traversal merge may have refreshed the live card while the
+        // pass was mid-flight (tests/settle-merge-counts.test.ts).
+        merged[at] = paintCard(live, filled[i]);
         if (filled[i].interpreted) failedSet.delete(filled[i].id);
         else failedSet.add(filled[i].id);
       }

@@ -26,6 +26,9 @@ vite.config.ts.timestamp-*
 # Smoke harness corpus (issue #54) — local raw-response dumps
 .smoke/
 
+# Screenshot harness output (screenshots, run facts, noise floor) — local only
+.harness/
+
 # local design + research material (not published)
 research/
 docs/*.html

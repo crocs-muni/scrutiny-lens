@@ -10,6 +10,7 @@
 // re-reads the persisted relay pool (refresh(), wired by watchForeground),
 // because IndexedDB is last-write-wins and nothing pushes between tabs.
 
+import { transition, type PersistEvent, type PersistState } from '$lib/settings/persist';
 import {
 	initPersistence,
 	loadSettings,
@@ -175,8 +176,18 @@ class Settings {
 	/** Boot truth for awaiting surfaces: true once the one hydrate ran. */
 	hydrated = $state(false);
 	/** Persistence truth for the settings UI (spec §2 never-lie): what the
-	 * last save actually did, never an optimistic "saved". */
+	 * last save actually did, never an optimistic "saved". The mirror of the
+	 * machine state below — every write goes through transition() so the
+	 * one-retry and terminal-unavailable laws are structural. */
 	persistState = $state<'idle' | 'saving' | 'saved' | 'failed' | 'unavailable'>('idle');
+	#persist: PersistState = { phase: 'idle' };
+
+	/** Fold one persistence event and mirror the phase onto persistState. */
+	#fold(event: PersistEvent): PersistState {
+		this.#persist = transition(this.#persist, event);
+		this.persistState = this.#persist.phase;
+		return this.#persist;
+	}
 
 	/** Monotone count of writes this tab issued (issue #151): a foreground
 	 * read that STARTED before a newer local write must not apply its stale
@@ -235,11 +246,12 @@ class Settings {
 	 * Guards, in order:
 	 *  - nothing read yet → boot's hydrate() owns the first read (a refresh
 	 *    here would race it with the same record).
-	 *  - a save in flight, or a failed save → this tab holds unsaved truth the
-	 *    record does not carry; adopting the record would silently discard
-	 *    the user's edit. 'failed' is sticky until the user edits again
-	 *    (persistState is the UI's truth), and that is the intent: a pool
-	 *    that did not persist keeps showing here.
+	 *  - the machine says a save is in flight or has failed → this tab holds
+	 *    unsaved truth the record does not carry; adopting the record would
+	 *    silently discard the user's edit. 'failed' stays until the user edits
+	 *    again (the machine is the UI's truth), and that is the intent: a pool
+	 *    that did not persist keeps showing here. The machine is consulted
+	 *    directly — `persistState` is only its mirror.
 	 *  - a write landed while the read was in flight (#writes) → that write
 	 *    is fresher than the record this read saw.
 	 *
@@ -249,6 +261,11 @@ class Settings {
 	 * a reload (every query snapshots it), which is what #151 reports. */
 	async refresh(): Promise<void> {
 		if (!this.hydrated) return;
+		// Both the machine (truth) and its mirror (what the settings footer
+		// last told the user). 'failed' means "your pool did not persist":
+		// adopting the record would silently drop that edit, and contradicting
+		// a footer that already said "failed" is its own lie (spec §2).
+		if (this.#persist.phase === 'saving' || this.#persist.phase === 'failed') return;
 		if (this.persistState === 'saving' || this.persistState === 'failed') return;
 		const seq = this.#writes;
 		const persisted = await loadSettings();
@@ -261,9 +278,9 @@ class Settings {
 	 * §2): the state carries the truth the settings UI renders. */
 	async #save(patch: Partial<PersistedSettings>): Promise<SaveOutcome> {
 		this.#writes += 1;
-		this.persistState = 'saving';
+		this.#fold({ type: 'save' });
 		const outcome = await saveSettings(patch);
-		this.persistState = outcome;
+		this.#fold({ type: 'outcome', outcome });
 		return outcome;
 	}
 
@@ -308,10 +325,10 @@ class Settings {
 		dirtyFields.add('relays');
 		// Same epoch bump as #save (this path retries its own save, issue #131).
 		this.#writes += 1;
-		this.persistState = 'saving';
+		this.#fold({ type: 'save' });
 		let outcome = await saveSettings({ relays: canonical.urls });
 		if (outcome === 'failed') outcome = await saveSettings({ relays: canonical.urls });
-		this.persistState = outcome;
+		this.#fold({ type: 'outcome', outcome });
 		return outcome;
 	}
 
@@ -339,6 +356,7 @@ class Settings {
 		bootBarrier = null;
 		this.#writes = 0;
 		this.hydrated = false;
+		this.#persist = { phase: 'idle' };
 		this.persistState = 'idle';
 	}
 }

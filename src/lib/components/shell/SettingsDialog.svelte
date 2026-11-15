@@ -67,7 +67,19 @@
 		if (returnFocusTo === null) returnFocusTo = document.activeElement;
 		endpointEl?.focus();
 		return () => {
-			(returnFocusTo as HTMLElement | null)?.focus?.();
+			// The unmount races the shell's [inert] lift (+page.svelte):
+			// in Chromium a focus() onto an element whose ancestor still
+			// carries inert silently fails, leaving focus on <body> (WCAG
+			// 2.4.3, APG dialog-modal's "focus returns to the invoker").
+			// Svelte flushes the whole reactive batch — including the inert
+			// attribute removal — in the same microtask this cleanup runs
+			// in, so ONE deferral sees the final DOM. A retry loop here
+			// would freeze the tab if inert never lifts (the rail can stay
+			// inert-gated). bits-ui's FocusScope has the same race, so this
+			// stays hand-rolled on purpose.
+			const to = returnFocusTo as HTMLElement | null;
+			if (to === null || to.isConnected === false) return;
+			queueMicrotask(() => to.focus?.());
 		};
 	});
 
