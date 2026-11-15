@@ -64,18 +64,15 @@
 			// in Chromium a focus() onto an element whose ancestor still
 			// carries inert silently fails, leaving focus on <body> (WCAG
 			// 2.4.3, APG dialog-modal's "focus returns to the invoker").
-			// Defer past the attribute write, and only claim focus when the
-			// target is actually focusable.
+			// Svelte flushes the whole reactive batch — including the inert
+			// attribute removal — in the same microtask this cleanup runs
+			// in, so ONE deferral sees the final DOM. A retry loop here
+			// would freeze the tab if inert never lifts (the rail can stay
+			// inert-gated). bits-ui's FocusScope has the same race, so this
+			// stays hand-rolled on purpose.
 			const to = returnFocusTo as HTMLElement | null;
-			const restore = () => {
-				if (to === null || to.isConnected === false) return;
-				if (to.closest('[inert]') !== null) {
-					queueMicrotask(restore);
-					return;
-				}
-				to.focus?.();
-			};
-			queueMicrotask(restore);
+			if (to === null || to.isConnected === false) return;
+			queueMicrotask(() => to.focus?.());
 		};
 	});
 
