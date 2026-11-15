@@ -19,7 +19,7 @@ AI writes only the prose layer. Every counter, status pill, facet, and date comp
 
 ## Develop
 
-Prerequisites: Node >=22.12, pnpm, and two sibling checkouts next to this repository. `@scrutiny-fabric/core` and `beautiful-ui-svelte` are `file:` dependencies, so both repositories must be present at build time, and the SDK's `packages/core` must be built (`pnpm install && pnpm build` inside it).
+Prerequisites: Node >=22.13, pnpm, and two sibling checkouts next to this repository. `@scrutiny-fabric/core` and `beautiful-ui-svelte` are `file:` dependencies, so both repositories must be present at build time, and the SDK's `packages/core` must be built (`pnpm install && pnpm build` inside it).
 
 ```sh
 pnpm install
@@ -38,7 +38,7 @@ Two environment variables seed the first-run defaults: `PUBLIC_RELAY_URLS` (comm
 ## Documentation
 
 - [`docs/spec.md`](docs/spec.md) is the single source of truth for the build cycle. Code that disagrees with the spec is wrong, and the spec changes through its own edit ritual.
-- [`AGENTS.md`](AGENTS.md) states the rules for contributors and coding agents; [`CONTEXT.md`](CONTEXT.md) fixes the domain vocabulary that issues, code, and comments use.
+- [`AGENTS.md`](AGENTS.md) states the rules for contributors and coding agents; [`CONTEXT.md`](CONTEXT.md) fixes the domain vocabulary that issues, code, and comments use; [`docs/ui-rules.md`](docs/ui-rules.md) covers the UI; [`docs/vision/agentic-harness.md`](docs/vision/agentic-harness.md) collects ideas that are not planned.
 
 ## License
 

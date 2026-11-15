@@ -1,82 +1,39 @@
-# Deploying to GitHub Pages (issue #16)
+# Deploying to GitHub Pages
 
-dump. The dashboard lives at this repo's **project site** —
-`https://crocs-muni.github.io/scrutiny-lens` — root-of-repo, no extra account
-or repo, no secrets. Ruled 2026-09-16 (supersedes the user-site idea from
-earlier the same day, rejected to avoid a second GitHub account).
-
-The production hostname is the custom domain `https://lens.scrutiny.cloud`
-(CNAME → `crocs-muni.github.io`, configured in Settings → Pages → Custom
-domain); the `github.io` URL keeps working and redirects to it.
-
-Deep links mount under the path prefix the same way as at a root mount:
-`…/event/nevent1…` resolves through the same SPA fallback
-(`kit.paths.base` strips any prefix for the router). Paste-sharing works
-identically; only the URL text is longer on the legacy `github.io` host.
+The dashboard is a static SPA on this repo's GitHub Pages, served from the
+custom domain `https://lens.scrutiny.cloud` (CNAME → `crocs-muni.github.io`,
+set in Settings → Pages). The domain serves from the site root, so no
+`BASE_PATH` is baked into the build; the legacy `github.io` URL redirects to
+it. Deep links (`…/event/nevent1…`) resolve through the SPA fallback.
 
 ## Architecture
 
-Two workflows, one shared recipe:
-
-- `.github/actions/prepare` — composite action that reproduces the local `file:`
-  dependency layout in CI: checks out `crocs-muni/scrutiny-fabric-tools` and
-  `aykoooo/beautiful-ui-svelte` at **pinned SHAs** into the sibling paths the
-  lens lockfile expects, builds `@scrutiny-fabric/core` (`tsc → dist`), installs
-  Node 22 + pnpm 10 + lens deps. Bump the two SHAs deliberately; never float
-  `main` — a fabric-tools drift must not silently break a lens deploy.
-- `.github/workflows/ci.yml` — PR + main-push gate: recipe → `pnpm check` →
-  `pnpm test`.
-- `.github/workflows/pages.yml` — on every push to `main` (plus manual
-  *Run workflow*), two jobs: `gate-and-build` (recipe → check → test →
-  `vite build` with the baked relay pool →
-  `upload-pages-artifact`) then `deploy` (`deploy-pages` into the
-  `github-pages` environment, authenticated by the built-in `GITHUB_TOKEN`
-  with `pages: write` + `id-token: write` — no secrets configured at all).
-  The build ships `404.html` (SPA fallback for deep links) and `.nojekyll`
-  (lets `_app/` through Jekyll-less).
-
-Deploys queue (`concurrency: pages`, no cancel-in-progress).
-
-## One-time setup (owner, one click + one dispatch)
-
-1. `crocs-muni/scrutiny-lens` → Settings → Pages → Build and deployment →
-   Source = **GitHub Actions**. (Equivalent API call from anywhere with an
-   admin token: `gh api repos/crocs-muni/scrutiny-lens/pages -X POST -f build_type=workflow`.)
-2. Actions → **pages** → *Run workflow*.
-
-The site is live at `https://crocs-muni.github.io/scrutiny-lens` one deploy
-later. After that, every green push to `main` redeploys itself.
+`.github/workflows/pages.yml` runs on every push to `main` and on manual *Run
+workflow*. `gate-and-build` applies the shared `.github/actions/prepare` recipe
+(pinned `scrutiny-fabric-tools` and `beautiful-ui-svelte` siblings, core build,
+Node 22 + pnpm 10), then `pnpm check`, `pnpm test`, `pnpm build` and
+`upload-pages-artifact` of `lens/build`; `deploy` runs `deploy-pages` into the
+`github-pages` environment via the built-in `GITHUB_TOKEN` (`pages: write`,
+`id-token: write`). No deployment secrets exist — the app is secretless by
+design (spec §6). Deploys queue (`concurrency: pages`, no cancel-in-progress).
+`.github/workflows/ci.yml` runs the same recipe on PRs without deploying.
 
 ## Configuration baked at build
 
-- `PUBLIC_RELAY_URLS` — the first-run relay pool (spec: 1–4, user-editable in
-  Settings afterwards). Currently
-  `wss://relay.scrutiny.cloud,wss://relay.damus.io,wss://nos.lol` —
-  `wss` only, because an HTTPS page cannot open `ws://`. Our production
-  relay leads, so a fresh visitor lands on scrutiny data; the public pair
-  follows as fallback. The variable is set on the build step only: at job
-  level it leaks into `pnpm test`, where `DEFAULT_RELAYS` must equal the
-  in-source spec pool. To retarget, change the one line in `pages.yml` and
-  re-run the workflow.
-- `PUBLIC_LLM_ENDPOINT` — unset; falls back to the spec §5 default.
+`PUBLIC_RELAY_URLS`, step-scoped to the build only:
+`wss://relay.scrutiny.cloud,wss://relay.damus.io,wss://nos.lol` (`wss` only —
+an HTTPS page cannot open `ws://`). Our production relay leads so a fresh
+visitor lands on scrutiny data; the public pair follows as fallback. At job
+level it leaks into `pnpm test`, where `DEFAULT_RELAYS` must equal the
+in-source spec pool. To retarget, change that one line in `pages.yml` and
+re-run the workflow. `PUBLIC_LLM_ENDPOINT` is unset, so the spec §5 default
+applies.
 
-No deployment secrets exist at all; the app itself is secretless by design
-(API keys live in the user's browser memory, spec §6).
+## Caching and SPA fallback
 
-## Retargeting
-
-- **Custom domain at a root mount** (done: `lens.scrutiny.cloud`): add the
-  domain's CNAME in Settings → Pages and leave `BASE_PATH` unset in
-  `pages.yml` — nothing else changes. Pasted links from the path-mounted era
-  need the `github.io` redirect, so mount changes belong to feature
-  boundaries, not casual edits.
-- **User-site repo (pretty URL without a domain):** requires a separate
-  account/org plus a `contents: write` PAT the workflow pushes with — ruled
-  out (no second account wanted, no secrets wanted).
-
-## Verification duty
-
-`pages.yml` never deploys a red build: check + test run first in the same
-run. The first deploy is verified by loading the deployed URL, running one
-search against the baked relay pool, and confirming a deep link (e.g. a
-`/scrutiny-lens/smoke` refresh) boots via `404.html`.
+The artifact ships `404.html`, which Pages serves for unknown paths so deep
+links boot the router, plus `.nojekyll` so `_app/` is served Jekyll-less.
+Content-addressed `_app/immutable/` assets are safe to cache indefinitely;
+`404.html` and `index.html` follow Pages' short default cache, so a new deploy
+is picked up on the next load. Any non-Pages host reproduces the fallback with
+`try_files $uri $uri/ /404.html;`.
