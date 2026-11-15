@@ -119,6 +119,76 @@ const JUNK: ScriptedResponse = {
   },
 };
 
+/* ------------------------------------------------------------------ *
+ * Node lane (the graph's record interpretation)
+ * ------------------------------------------------------------------ */
+
+/** Metadata kinds the node schema accepts, and the icon token each carries
+ * (an IconToken the enum lacks would silently degrade the node to `unknown`). */
+const NODE_META: Array<[string, string]> = [
+  ["report", "report"],
+  ["target", "target"],
+  ["maintenance", "maintenance"],
+  ["sbom", "document"],
+  ["advisory", "report"],
+];
+
+function nodeMetaOf(tags: unknown): [string, string] {
+  if (!Array.isArray(tags)) return ["unknown", "document"];
+  for (const tag of tags) {
+    if (!Array.isArray(tag) || tag[0] !== "m" || typeof tag[1] !== "string") continue;
+    const hit = NODE_META.find(([meta]) => meta === tag[1]);
+    if (hit !== undefined) return hit;
+  }
+  return ["unknown", "document"];
+}
+
+/**
+ * One KV record per event of the node lane's embedded payload — the fields
+ * `finalizeNode` needs per kind. The lane's prompt carries the payload as a
+ * JSON line, so the card lane's bare-array echo can never serve it; without
+ * this every graph record answered empty and the record-interpretation
+ * grammar stayed untestable against a fake endpoint.
+ */
+function nodeKv(prompt: string): string {
+  const at = prompt.indexOf('{"graphContext"');
+  if (at < 0) return "";
+  const end = prompt.indexOf("\nEmit one record", at);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(prompt.slice(at, end < 0 ? undefined : end).trim());
+  } catch {
+    return "";
+  }
+  const events = (payload as { events?: unknown }).events;
+  if (!Array.isArray(events)) return "";
+  return events
+    .map((raw, i) => {
+      const e = raw as { entityId?: unknown; kind?: unknown; tags?: unknown; content?: unknown };
+      const id = typeof e.entityId === "string" ? e.entityId : "";
+      if (id === "") return "";
+      const base = `entityId: ${id}\ntitle: Smoke-interpreted node ${i + 1}`;
+      switch (e.kind) {
+        case "product":
+          return `${base}\ntypeToken: software\nscheme: Smoke`;
+        case "vulnerability":
+          return `${base}\ntypeToken: vulnerability\nidentifier: CVE-2026-0001\nidentifierKind: cve`;
+        case "metadata": {
+          const [meta, token] = nodeMetaOf(e.tags);
+          return `${base}\ntypeToken: ${token}\nmetaType: ${meta}\nlabel: Smoke-interpreted record label`;
+        }
+        default: {
+          // A quote-gated kind: the summary is a slice of the event's own text.
+          const text =
+            typeof e.content === "string" ? e.content.slice(0, 60).replace(/\s+/g, " ").trim() : "";
+          return `${base}\ntypeToken: generic\nsummary: ${text}`;
+        }
+      }
+    })
+    .filter((record) => record !== "")
+    .join("\n\n");
+}
+
 /** Scripted sequences, keyed by model name; consumed in order, last repeats. */
 const BUCKETS: Record<string, ScriptedResponse[]> = {
   // Translate lane: one 429 first (the AI SDK's retry clears it), then KV.
@@ -187,9 +257,6 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
   // throttle happened (issue #54: the "429 retried away" lane must be able
   // to fail if the 429 never fired). Resettable via DELETE /smoke/status.
   const served429: Array<{ model: string; at: number }> = [];
-  /** smoke-ui lanes: first call = translate, later calls = fill chunks —
-   * tracked per model so repeat UI sessions can suffix a nonce. */
-  const uiCursors = new Map<string, number>();
   return (req, res, next) => {
     const url =
       (req as { originalUrl?: string; url?: string }).originalUrl ??
@@ -232,14 +299,15 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
       const model = body.model ?? "";
       // UI-visual lanes (issue #82): drive the REAL app UI against this
       // gateway so the fill grammar is browser-verified, not just unit-tested.
-      // `smoke-ui`: first call translates (a tag search guaranteed to hit the
-      // seeded corpus); later calls are fill chunks answered by ECHOING the
-      // requested ids as KV records — delayed ~1.2s so the pending sweep is
-      // visible — streamed as SSE when the lane asks for streamText.
-      // `smoke-ui-fail`: same translate, then 500 on fills (the amber lane).
+      // `smoke-ui` answers by PROMPT SHAPE, never by call order — a probe or a
+      // model-list fetch must not consume a lane's slot: a bare JSON array is a
+      // card fill (echo the requested ids), a prompt embedding the
+      // `{"graphContext"…}` payload is a node fill (one record per event), and
+      // anything else is the translate lane (one seeded-corpus tag search).
+      // Fills are delayed ~1.2s so the pending sweep reads on screen, and are
+      // streamed as SSE when the lane asks for streamText.
+      // `smoke-ui-fail`: 500 on every call (the amber lane).
       if (model.startsWith("smoke-ui")) {
-        const n = uiCursors.get(model) ?? 0;
-        uiCursors.set(model, n + 1);
         // The request's last user message (narrowed, never cast at access).
         let lastUser = "";
         if (
@@ -253,10 +321,43 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
             lastUser = String(last.content);
           }
         }
-        if (n === 0) {
-          // Translate: one seeded-corpus tag search + the question itself as
-          // a NIP-50 free-text search (echo, clipped — the smoke MUST see
-          // results even if only one route answers).
+        // The node lane's prompt embeds its payload as a JSON line, the card
+        // lane posts a bare array. Answering only the array left every graph
+        // record empty, so the record-interpretation grammar (#188's whole
+        // failure class) could never be exercised against a fake endpoint.
+        let kv = nodeKv(lastUser);
+        if (kv === "") {
+          let asked: Array<{ id: string }> = [];
+          try {
+            const parsed = JSON.parse(lastUser) as unknown;
+            if (Array.isArray(parsed)) asked = parsed as Array<{ id: string }>;
+          } catch {
+            // Neither shape — the translate lane below answers it.
+          }
+          kv = asked
+            .map(
+              (a, i) =>
+                `id: ${a.id}\ntitle: Smoke-interpreted card ${i + 1}\nsnippet: The fake gateway's whole-record interpretation for visual grammar verification — read, summarized, and painted as one record.`,
+            )
+            .join("\n\n");
+        }
+        // `smoke-ui-fail` keeps answering the translate lane and fails only the
+        // fills, so a run exercises the §4 degradation banner in isolation.
+        if (model.startsWith("smoke-ui-fail") && kv !== "") {
+          res.statusCode = 500;
+          res.setHeader("content-type", "application/json");
+          res.end(
+            JSON.stringify({
+              error: { message: "smoke-ui-fail: scripted gateway failure", type: "server_error", code: 500 },
+            }),
+          );
+          return;
+        }
+        if (kv === "") {
+          // Neither payload shape → the translate lane, whose prompt ends with
+          // the question. Classifying by shape (not by call order) keeps a
+          // reasoning-effort probe or a model-list fetch from eating the
+          // translate slot and silently degrading the whole run.
           const question =
             lastUser
               .split("\n")
@@ -277,30 +378,6 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
           );
           return;
         }
-        if (model.startsWith("smoke-ui-fail")) {
-          res.statusCode = 500;
-          res.setHeader("content-type", "application/json");
-          res.end(
-            JSON.stringify({
-              error: { message: "smoke-ui-fail: scripted gateway failure", type: "server_error", code: 500 },
-            }),
-          );
-          return;
-        }
-        let asked: Array<{ id: string }> = [];
-        try {
-          const parsed = JSON.parse(lastUser) as unknown;
-          if (Array.isArray(parsed)) asked = parsed as Array<{ id: string }>;
-        } catch {
-          // node-fill lanes send a different prompt shape — the echo reads
-          // nothing; an empty KV answer is the honest failure for that call.
-        }
-        const kv = asked
-          .map(
-            (a, i) =>
-              `id: ${a.id}\ntitle: Smoke-interpreted card ${i + 1}\nsnippet: The fake gateway's whole-record interpretation for visual grammar verification — read, summarized, and painted as one record.`,
-          )
-          .join("\n\n");
         const wantsStream =
           body !== null && typeof body === "object" && "stream" in body && body.stream === true;
         // A beat of latency per fill chunk so the pending sweep reads on screen.
