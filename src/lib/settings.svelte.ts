@@ -5,7 +5,7 @@
 // PersistedSettings field (IndexedDB must never hold it): it rides this tab's
 // session storage instead, and every entry — typed or restored at boot —
 // arms the redaction strip via registerSecret().
-
+import { transition, type PersistEvent, type PersistState } from '$lib/settings/persist';
 import {
 	initPersistence,
 	loadSettings,
@@ -122,8 +122,18 @@ class Settings {
 	/** Boot truth for awaiting surfaces: true once the one hydrate ran. */
 	hydrated = $state(false);
 	/** Persistence truth for the settings UI (spec §2 never-lie): what the
-	 * last save actually did, never an optimistic "saved". */
+	 * last save actually did, never an optimistic "saved". The mirror of the
+	 * machine state below — every write goes through transition() so the
+	 * one-retry and terminal-unavailable laws are structural. */
 	persistState = $state<'idle' | 'saving' | 'saved' | 'failed' | 'unavailable'>('idle');
+	#persist: PersistState = { phase: 'idle' };
+
+	/** Fold one persistence event and mirror the phase onto persistState. */
+	#fold(event: PersistEvent): PersistState {
+		this.#persist = transition(this.#persist, event);
+		this.persistState = this.#persist.phase;
+		return this.#persist;
+	}
 
 	/** Single-flight boot barrier: awaits initPersistence() + the one
 	 * hydrate(). Memoized so layout, search start, share resolve and profile
@@ -172,9 +182,9 @@ class Settings {
 	/** One save, folded into persistState. Save failures never throw (spec
 	 * §2): the state carries the truth the settings UI renders. */
 	async #save(patch: Partial<PersistedSettings>): Promise<SaveOutcome> {
-		this.persistState = 'saving';
+		this.#fold({ type: 'save' });
 		const outcome = await saveSettings(patch);
-		this.persistState = outcome;
+		this.#fold({ type: 'outcome', outcome });
 		return outcome;
 	}
 
@@ -217,10 +227,10 @@ class Settings {
 			);
 		this.relays = canonical.urls;
 		dirtyFields.add('relays');
-		this.persistState = 'saving';
+		this.#fold({ type: 'save' });
 		let outcome = await saveSettings({ relays: canonical.urls });
 		if (outcome === 'failed') outcome = await saveSettings({ relays: canonical.urls });
-		this.persistState = outcome;
+		this.#fold({ type: 'outcome', outcome });
 		return outcome;
 	}
 
@@ -247,6 +257,7 @@ class Settings {
 		dirtyFields.clear();
 		bootBarrier = null;
 		this.hydrated = false;
+		this.#persist = { phase: 'idle' };
 		this.persistState = 'idle';
 	}
 }
