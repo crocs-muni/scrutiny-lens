@@ -641,7 +641,7 @@ class Investigation {
           resolveGraph(settled.admitted),
           settled.admitted,
         );
-        this.cards = mergeSettledCards(this.cards, fresh, this.pending);
+        this.cards = mergeSettledCards(this.cards, fresh);
         this.facetGroups = computeFacets(settled.admitted);
         // First pin (issue #83): AFTER the merged final assembly, so the
         // pinned frontier carries the context arrivals — a crash mid-fill
@@ -821,8 +821,7 @@ class Investigation {
         // already drained).
         this.cards = mergeSettledCards(
           this.cards,
-          assembleCards(resolveGraph(shared.admitted), shared.admitted),
-          this.pending
+          assembleCards(resolveGraph(shared.admitted), shared.admitted)
         );
         this.facetGroups = computeFacets(shared.admitted);
         // Pin (issue #83, review L8): AFTER the context sweep so the row

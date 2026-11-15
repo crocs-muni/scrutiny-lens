@@ -1,16 +1,9 @@
-// Transition table for the card-fill state machine (src/lib/pipeline/card-fill.ts)
-// plus a reproducible randomized invariant over random live/fresh sets: the
-// computed facts always come from the fresh assembly, the AI paint only
-// survives from an interpreted live card, and no card can vanish.
+// The card-fill merge seam (src/lib/pipeline/card-fill.ts): computed facts
+// always come from the fresh assembly, AI paint only survives from an
+// interpreted card, and no live card can vanish.
 
 import { describe, expect, it } from 'vitest';
-import {
-	cardFillOf,
-	mergeSettledCards,
-	paintCard,
-	settleCard,
-	type CardFill
-} from '../src/lib/pipeline/card-fill';
+import { cardFillOf, mergeSettledCards, paintCard } from '../src/lib/pipeline/card-fill';
 import type { ProductCard } from '../src/lib/pipeline/cards';
 
 function card(id: string, overrides: Partial<ProductCard> = {}): ProductCard {
@@ -31,138 +24,46 @@ function card(id: string, overrides: Partial<ProductCard> = {}): ProductCard {
 	};
 }
 
-const interpreted = (title: string, snippet?: string): CardFill => ({
-	kind: 'interpreted',
-	title,
-	snippet
-});
-
 describe('cardFillOf — the live state is read from fields, not guessed', () => {
-	it('raw when the card is neither claimed nor painted', () => {
-		expect(cardFillOf(card('a'), new Set())).toEqual({ kind: 'raw' });
+	it('raw when nothing has painted', () => {
+		expect(cardFillOf(card('a'))).toEqual({ kind: 'raw' });
 	});
-	it('pending when a lane claimed it but nothing painted', () => {
-		expect(cardFillOf(card('a'), new Set(['a']))).toEqual({ kind: 'pending' });
-	});
-	it('interpreted wins over pending (streamed paint is the more advanced truth)', () => {
-		expect(
-			cardFillOf(card('a', { interpreted: true, title: 'AI', snippet: 'S' }), new Set(['a']))
-		).toEqual({ kind: 'interpreted', title: 'AI', snippet: 'S' });
-	});
-});
-
-describe('settleCard — the transition table', () => {
-	const fresh = card('a', { boundMetadata: 3, files: 2, updates: 1, title: 'fallback a' });
-
-	it('candidate absent → the live card survives, for every fill kind', () => {
-		const live = card('a', { interpreted: true, title: 'AI' });
-		for (const fill of [{ kind: 'raw' }, { kind: 'pending' }, interpreted('AI')] as const) {
-			expect(settleCard(live, fill, undefined)).toBe(live);
-		}
-	});
-
-	it('raw + fresh → every fresh field, including counts and title', () => {
-		expect(settleCard(card('a'), { kind: 'raw' }, fresh)).toEqual(fresh);
-	});
-
-	it('pending + fresh → fresh facts (a pending card holds no paint of its own)', () => {
-		const merged = settleCard(card('a'), { kind: 'pending' }, fresh);
-		expect(merged.boundMetadata).toBe(3);
-		expect(merged.files).toBe(2);
-		expect(merged.updates).toBe(1);
-		expect(merged.interpreted).toBe(false);
-	});
-
-	it('interpreted + fresh → fresh facts, live paint, interpreted kept', () => {
-		const merged = settleCard(card('a', { interpreted: true }), interpreted('AI title', 'AI snip'), fresh);
-		expect(merged).toMatchObject({
-			title: 'AI title',
-			snippet: 'AI snip',
-			interpreted: true,
-			boundMetadata: 3,
-			files: 2,
-			updates: 1
+	it('interpreted when the card says so', () => {
+		expect(cardFillOf(card('a', { interpreted: true, title: 'AI', snippet: 'S' }))).toEqual({
+			kind: 'interpreted',
+			title: 'AI',
+			snippet: 'S'
 		});
 	});
-
-	it('the computed fields never come from the live side when fresh exists', () => {
-		const live = card('a', { boundMetadata: 99, files: 99, updates: 99 });
-		expect(settleCard(live, interpreted('AI'), fresh).boundMetadata).toBe(3);
-	});
 });
 
-describe('mergeSettledCards — slot order and arrivals', () => {
-	it('keeps live slot order, appends context arrivals at the end', () => {
-		const live = [card('a'), card('b')];
-		const fresh = [card('b'), card('a'), card('c')];
-		expect(mergeSettledCards(live, fresh, new Set()).map((c) => c.id)).toEqual(['a', 'b', 'c']);
+describe('mergeSettledCards — the settle merge', () => {
+	it('a raw live card takes the fresh assembly wholesale (the bug this fixes)', () => {
+		const live = card('a', { boundMetadata: 0, files: 0, updates: 0 });
+		const fresh = card('a', { boundMetadata: 3, files: 2, updates: 1, title: 'fallback a' });
+		expect(mergeSettledCards([live], [fresh])).toEqual([fresh]);
 	});
 
-	it('a mixed matrix: raw painted, pending and interpreted all refresh their counts', () => {
-		const live = [
-			card('a'),
-			card('b'),
-			card('c', { interpreted: true, title: 'AI c', snippet: 'S' })
-		];
-		const fresh = [
-			card('a', { boundMetadata: 1 }),
-			card('b', { boundMetadata: 2 }),
-			card('c', { boundMetadata: 3 })
-		];
-		const merged = mergeSettledCards(live, fresh, new Set(['b']));
-		expect(merged.map((c) => c.boundMetadata)).toEqual([1, 2, 3]);
-		expect(merged[2]).toMatchObject({ title: 'AI c', snippet: 'S', interpreted: true });
-	});
-});
-
-/** Reproducible PRNG so a fuzz failure is replayable from a fixed seed. */
-function mulberry32(seed: number): () => number {
-	let a = seed;
-	return () => {
-		a |= 0;
-		a = (a + 0x6d2b79f5) | 0;
-		let t = Math.imul(a ^ (a >>> 15), 1 | a);
-		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-	};
-}
-
-describe('mergeSettledCards — invariant over random live/fresh sets', () => {
-	it('100 seeds: computed facts come from fresh, ids stay unique, no live card lost', () => {
-		for (let seed = 1; seed <= 100; seed++) {
-			const rnd = mulberry32(seed);
-			const ids = ['a', 'b', 'c', 'd', 'e'];
-			const live = ids
-				.filter(() => rnd() > 0.4)
-				.map((id) => card(id, { interpreted: rnd() > 0.5, title: `AI ${id}` }));
-			const fresh = ids
-				.filter(() => rnd() > 0.4)
-				.map((id) => card(id, { boundMetadata: Math.floor(rnd() * 5) }));
-			const pending = new Set(live.filter((c) => rnd() > 0.5).map((c) => c.id));
-
-			const merged = mergeSettledCards(live, fresh, pending);
-			const mergedIds = merged.map((c) => c.id);
-			expect(new Set(mergedIds).size).toBe(mergedIds.length);
-
-			for (const card of fresh) expect(mergedIds).toContain(card.id);
-			for (const card of merged) {
-				const f = fresh.find((x) => x.id === card.id);
-				if (f === undefined) continue;
-				// Computed truth: always the fresh assembly's values.
-				expect(card.boundMetadata).toBe(f.boundMetadata);
-				expect(card.files).toBe(f.files);
-				expect(card.updates).toBe(f.updates);
-				expect(card.retracted).toBe(f.retracted);
-			}
-			// No live card is allowed to disappear while it still exists in fresh.
-			for (const l of live) {
-				if (fresh.some((f) => f.id === l.id)) {
-					expect(merged.find((m) => m.id === l.id)).toBeDefined();
-				}
-			}
-		}
+	it('an interpreted live card keeps its paint and gains the fresh counts', () => {
+		const live = card('a', { interpreted: true, title: 'AI title', snippet: 'AI snip' });
+		const fresh = card('a', { boundMetadata: 3, files: 2, updates: 1 });
+		expect(mergeSettledCards([live], [fresh])).toEqual([
+			{ ...fresh, title: 'AI title', snippet: 'AI snip', interpreted: true }
+		]);
 	});
 
+	it('a card the fresh set dropped stays live ("the card I am looking at" wins)', () => {
+		const live = card('a', { interpreted: true, title: 'AI' });
+		expect(mergeSettledCards([live], [card('b')])).toEqual([live]);
+	});
+
+	it('keeps live slot order and appends context arrivals at the end', () => {
+		const merged = mergeSettledCards(
+			[card('a'), card('b')],
+			[card('b'), card('a'), card('c')]
+		);
+		expect(merged.map((c) => c.id)).toEqual(['a', 'b', 'c']);
+	});
 });
 
 describe('paintCard — a fill pass paints onto the freshest facts', () => {
@@ -193,5 +94,56 @@ describe('paintCard — a fill pass paints onto the freshest facts', () => {
 			snippet: 'AI snippet',
 			interpreted: true
 		});
+	});
+});
+
+/** Reproducible PRNG so a failure replays from the printed seed. */
+function mulberry32(seed: number): () => number {
+	let a = seed;
+	return () => {
+		a |= 0;
+		a = (a + 0x6d2b79f5) | 0;
+		let t = Math.imul(a ^ (a >>> 15), 1 | a);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}
+
+describe('mergeSettledCards — invariants over random live/fresh sets', () => {
+	it('100 seeds: computed facts come from fresh, paint survives, no live card is lost', () => {
+		for (let seed = 1; seed <= 100; seed++) {
+			const rnd = mulberry32(seed);
+			const ids = ['a', 'b', 'c', 'd', 'e'];
+			const live = ids
+				.filter(() => rnd() > 0.4)
+				.map((id) => card(id, { interpreted: rnd() > 0.5, title: `AI ${id}`, snippet: `S ${id}` }));
+			const fresh = ids
+				.filter(() => rnd() > 0.4)
+				.map((id) => card(id, { boundMetadata: Math.floor(rnd() * 5) }));
+
+			const merged = mergeSettledCards(live, fresh);
+			const mergedIds = merged.map((c) => c.id);
+
+			// No duplicate and no lost card, on either side.
+			expect(new Set(mergedIds).size).toBe(mergedIds.length);
+			for (const card of fresh) expect(mergedIds).toContain(card.id);
+			for (const l of live) expect(mergedIds).toContain(l.id);
+
+			for (const card of merged) {
+				const f = fresh.find((x) => x.id === card.id);
+				if (f === undefined) continue;
+				// Computed truth: always the fresh assembly's values.
+				expect(card.boundMetadata).toBe(f.boundMetadata);
+				expect(card.files).toBe(f.files);
+				expect(card.updates).toBe(f.updates);
+				expect(card.retracted).toBe(f.retracted);
+				// Paint: an interpreted live card keeps its AI text.
+				const wasInterpreted = live.find((x) => x.id === card.id)?.interpreted ?? false;
+				if (wasInterpreted) {
+					expect(card.interpreted).toBe(true);
+					expect(card.title).toBe(`AI ${card.id}`);
+				}
+			}
+		}
 	});
 });
