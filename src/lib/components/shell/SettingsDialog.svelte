@@ -60,7 +60,22 @@
 		if (returnFocusTo === null) returnFocusTo = document.activeElement;
 		endpointEl?.focus();
 		return () => {
-			(returnFocusTo as HTMLElement | null)?.focus?.();
+			// The unmount races the shell's [inert] lift (+page.svelte):
+			// in Chromium a focus() onto an element whose ancestor still
+			// carries inert silently fails, leaving focus on <body> (WCAG
+			// 2.4.3, APG dialog-modal's "focus returns to the invoker").
+			// Defer past the attribute write, and only claim focus when the
+			// target is actually focusable.
+			const to = returnFocusTo as HTMLElement | null;
+			const restore = () => {
+				if (to === null || to.isConnected === false) return;
+				if (to.closest('[inert]') !== null) {
+					queueMicrotask(restore);
+					return;
+				}
+				to.focus?.();
+			};
+			queueMicrotask(restore);
 		};
 	});
 
