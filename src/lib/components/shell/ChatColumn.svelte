@@ -148,9 +148,9 @@
 					<div class="qrow"><span class="qmark">›</span><span class="qtext">{message.content}</span></div>
 				{:else if message.kind === 'ungrounded'}
 					<div class="ungrounded">
-						Can’t answer that from this session — it contains: <span class="ungrounded-ctx"
+						I can only answer from this session, which contains <span class="ungrounded-ctx"
 							>{message.availableContext}</span
-						>
+						>.
 					</div>
 				{:else}
 					<ChatTurn {message} grounding={chat.grounding} {onOpenDossier} />
