@@ -27,9 +27,9 @@ describe('transition — the full table', () => {
 	it('the full table: every (state, event) pair lands where the laws say', () => {
 		// Rows are the exact expected next state for each pairing; anything
 		// that drifts from this table is a behaviour change.
-		const S = (phase: 'idle') => ({ phase });
-		const sav = (retried: boolean) => ({ phase: 'saving', retried });
-		const fl = (retried: boolean) => ({ phase: 'failed', retried });
+		const S = (phase: 'idle'): PersistState => ({ phase });
+		const sav = (retried: boolean): PersistState => ({ phase: 'saving', retried });
+		const fl = (retried: boolean): PersistState => ({ phase: 'failed', retried });
 		const table: [PersistState, PersistEvent, PersistState][] = [
 			[S('idle'), { type: 'save' }, sav(false)],
 			[S('idle'), { type: 'outcome', outcome: 'saved' }, S('idle')],
