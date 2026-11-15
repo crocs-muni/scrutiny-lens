@@ -27,6 +27,7 @@ import { generateRecords } from "../records";
 import { writeDeadLetter } from "../deadLetter";
 import { bestIdentifier, projectSkeleton, tagValues } from "../projector";
 import { extractedGate } from "../verifier";
+import { canonicalContentOf } from "../canonical";
 import { resolveGraph, type GraphView, type NostrEvent } from "../../fabric";
 import type { ProviderOverrideInput } from "../provider";
 import { buildSystemPrompt, DEFAULT_PROFILE } from "../prompts/vocabCcd";
@@ -405,6 +406,7 @@ function finalizeNode(
   det: Deterministic,
   draft: NodeDraft | undefined,
   ctx: DeadLetterCtx,
+  canonical: ReadonlyMap<string, string>,
 ): { vm: NodeVM; fromDraft: boolean } {
   const base = {
     entityId: det.entityId,
@@ -461,9 +463,14 @@ function finalizeNode(
       schema = MetadataNodeVMSchema;
       break;
     case "unknown": {
+      // #163: everything this branch renders comes from ONE text — the
+      // resolved content. Gating against canonical while feeding the model
+      // (and falling back to) raw text made a patched node dead-letter and
+      // then paint the stale pre-patch prose anyway.
+      const text = canonical.get(event.id) ?? event.content;
       let summary = clip(draftText(draft?.summary) ?? "", 140);
       if (summary) {
-        const gate = extractedGate(summary, event.content);
+        const gate = extractedGate(summary, text);
         if (gate.state === "extrapolatory") {
           // Quote verification failed: the summary cites nothing on the event.
           writeDeadLetter({
@@ -474,7 +481,7 @@ function finalizeNode(
             model: ctx.model,
             payload: { summary: draft?.summary },
             reason:
-              "summary extrapolatory (quote gate found no contiguous match in event content)",
+              "summary extrapolatory (quote gate found no contiguous match in the resolved content)",
           });
           summary = "";
         }
@@ -487,8 +494,7 @@ function finalizeNode(
         )
           ? (draft?.typeToken as "generic" | "document" | "unknown")
           : "unknown",
-        summary:
-          summary || clip(event.content, 140) || "No interpretable content.",
+        summary: summary || clip(text, 140) || "No interpretable content.",
       };
       schema = UnknownNodeVMSchema;
       break;
@@ -535,6 +541,16 @@ export async function batchNodeInterpret(
 
   const dets = events.map((e) => buildDeterministic(e, view, events));
 
+  // #163: resolve every event's canonical content ONCE per call, and give the
+  // same map to the payload the model reads, the quote gate, and the fallback
+  // — one text per node, so a gate failure can never be a raw/canonical
+  // mismatch. Also removes the per-node O(n) resolve() the first cut paid.
+  const canonical = new Map<string, string>();
+  for (const e of events) {
+    const text = canonicalContentOf(e.id, events);
+    if (text !== undefined) canonical.set(e.id, text);
+  }
+
   const nodes: NodeVM[] = [];
   // Model-backed records only — degraded skeletons stay out of this list,
   // so a consumer (the cache) can persist interpretations without ever
@@ -555,7 +571,10 @@ export async function batchNodeInterpret(
         // bytes leave the browser for the BYOK endpoint, so 400 chars is
         // the privacy + token ceiling (cards clip at 200; nodes keep a
         // little more because the title has to name the artifact).
-        content: clip(e.content, 400),
+        // Canonical (#163): the model must read the same bytes the gate
+        // verifies against, or a patched node is summarised from history and
+        // then rejected for not matching the present.
+        content: clip(canonical.get(e.id) ?? e.content, 400),
       })),
     });
 
@@ -621,6 +640,7 @@ export async function batchNodeInterpret(
         pageDets[j],
         drafts.get(pageEvents[j].id),
         ctx,
+        canonical,
       );
       nodes.push(vm);
       if (fromDraft) interpretedIds.push(vm.entityId);

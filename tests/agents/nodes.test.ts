@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { finalizeEvent, generateSecretKey } from "nostr-tools/pure";
+import { buildPatch } from "@scrutiny-fabric/core";
 import type { NostrEvent } from "$lib/fabric";
 import type { CallLLM, CallLLMArgs } from "$lib/ai/output";
 import { clearDeadLetters, deadLetters } from "$lib/ai/deadLetter";
@@ -498,6 +500,70 @@ describe("batchNodeInterpret — payload hygiene", () => {
     expect(wire).toContain("BSI-DSZ-CC-1185-2023");
     expect(wire).not.toContain("BEYOND-MARKER-MUST-NOT-APPEAR");
     expect(res.ok && res.result.interpretedIds).toEqual([prod.id]);
+  });
+  it("feeds the model RESOLVED content, so a patched node is summarised from the present (#163)", async () => {
+    // The model must read the same bytes the quote gate verifies against: a
+    // pre-patch payload made the summary dead-letter, and the fallback then
+    // painted the stale text anyway.
+    const key = generateSecretKey();
+    const before = "title: legacy\nAttack the old way.\n";
+    const after = "title: current\nAttack the new way.\n";
+    const root = finalizeEvent(
+      {
+        kind: 1,
+        created_at: 1_700_000_000,
+        content: before,
+        tags: [
+          ["t", "scrutiny-fabric"],
+          ["t", "scrutiny-v0.8.1"],
+          ["t", "scrutiny-product"],
+          ["i", "cve:CVE-2024-9001"],
+          ["k", "cve"],
+        ],
+      },
+      key,
+    ) as unknown as NostrEvent;
+    const { template } = buildPatch({
+      root: { id: root.id, relay: "", authorHint: root.pubkey },
+      reply: { id: root.id, relay: "", authorHint: root.pubkey },
+      before,
+      after,
+      createdAt: 1_700_000_100,
+    });
+    const patchEvent = finalizeEvent(
+      {
+        kind: 1,
+        created_at: 1_700_000_100,
+        content: template.content,
+        tags: template.tags.map((tag) => [...tag]),
+      },
+      key,
+    ) as unknown as NostrEvent;
+
+    const { call, calls } = fakeLLM(
+      [`entityId: ${root.id}`, "title: Current product", "typeToken: smartcard"].join("\n"),
+    );
+    const res = await batchNodeInterpret({
+      events: [root, patchEvent],
+      graphContext: CTX,
+      provider: PROVIDER,
+      callLLM: call,
+    });
+    expect(res.ok).toBe(true);
+    // Scope to the ROOT's own payload entry: the patch event legitimately
+    // carries both texts inside its diff, so a wire-wide search would pass
+    // for the wrong reason.
+    const wire = String(calls[0].messages[0].content);
+    // The payload line is followed by instruction lines; take the line that
+    // starts the object rather than slicing to the end of the message.
+    const payloadLine = wire.split("\n").find((l) => l.startsWith('{"graphContext"'));
+    if (payloadLine === undefined) throw new Error("payload line not found");
+    const payload = JSON.parse(payloadLine) as {
+      events: { entityId: string; content: string }[];
+    };
+    const rootEntry = payload.events.find((e) => e.entityId === root.id);
+    expect(rootEntry?.content).toContain("Attack the new way.");
+    expect(rootEntry?.content).not.toContain("Attack the old way.");
   });
 });
 

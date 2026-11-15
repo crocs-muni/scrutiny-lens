@@ -33,6 +33,7 @@ import { z } from 'zod';
 import { streamLLM } from '../gateway';
 import type { CallLLMArgs, LLMMessage } from '../output';
 import { extractedGate, type ExtractionState } from '../verifier';
+import { canonicalContentOf } from '../canonical';
 import {
 	CITATION_SLOTS,
 	createCitationRegistry,
@@ -282,7 +283,15 @@ function resolveFinal(
 				const event = events.find((e) => e.id === payload.data.eventId);
 				const res = registry.resolve(payload.data.eventId, events, payload.data.quote, event ? nodeTitleOf(event) : undefined);
 				if (res.ok && event) {
-					const gate = extractedGate(payload.data.quote, event.content);
+					// #163: the quote is checked against the RESOLVED content — a
+					// root-author patch makes the raw content history (spec §2;
+					// rework decisions §5). Unresolvable canonical content leaves
+					// the citation unverified rather than falling back to raw text.
+					const canonical = canonicalContentOf(event.id, events);
+					const gate =
+						canonical === undefined
+							? { state: 'extrapolatory' as const, span: undefined }
+							: extractedGate(payload.data.quote, canonical);
 					resolvedCitation = {
 						...res.citation,
 						support: gate.state,
