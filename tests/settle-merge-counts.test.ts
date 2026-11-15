@@ -5,9 +5,6 @@
 // assembly and rendered "0 metadata" while the session header said "3
 // metadata". These tests drive the REAL start(), with the same transport /
 // gateway gates as settle-early-fill.test.ts.
-//
-// Expected to be RED until the merge keeps fresh deterministic fields under
-// mid-flight AI paint.
 
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

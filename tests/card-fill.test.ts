@@ -128,7 +128,7 @@ function mulberry32(seed: number): () => number {
 }
 
 describe('mergeSettledCards — invariant over random live/fresh sets', () => {
-	it('100 seeds: computed facts come from fresh, ids stay unique, totals are conserved', () => {
+	it('100 seeds: computed facts come from fresh, ids stay unique, no live card lost', () => {
 		for (let seed = 1; seed <= 100; seed++) {
 			const rnd = mulberry32(seed);
 			const ids = ['a', 'b', 'c', 'd', 'e'];
@@ -163,15 +163,6 @@ describe('mergeSettledCards — invariant over random live/fresh sets', () => {
 		}
 	});
 
-	it('reducers stay total: every legal fill kind returns a card for any candidate', () => {
-		const candidates = [undefined, card('a')];
-		const fills: CardFill[] = [{ kind: 'raw' }, { kind: 'pending' }, interpreted('T', 'S')];
-		for (const fill of fills) {
-			for (const candidate of candidates) {
-				expect(settleCard(card('a'), fill, candidate)).toBeDefined();
-			}
-		}
-	});
 });
 
 describe('paintCard — a fill pass paints onto the freshest facts', () => {

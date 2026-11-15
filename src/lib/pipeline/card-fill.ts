@@ -22,9 +22,9 @@ import type { ProductCard } from './cards';
  * - `interpreted`: a record has painted — the AI-written title/snippet that
  *   must survive any deterministic re-assembly.
  *
- * `pending` and `interpreted` can be true simultaneously in the input fields
- * (streaming paints mid-pass); `interpreted` wins because it is strictly more
- * advanced truth, matching the lane's own "never revert to raw" rule.
+ * The INPUT fields can hold both pending and interpreted at once (a
+ * streamed paint lands while the chunk is still claimed); the classifier
+ * takes the advanced one, so the union itself never carries the overlap.
  */
 export type CardFill =
 	| { kind: 'raw' }

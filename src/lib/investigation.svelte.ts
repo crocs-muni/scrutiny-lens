@@ -814,9 +814,15 @@ class Investigation {
       const shared = this.result;
       void this.refreshSessionContext().then(() => {
         if (this.result !== shared || shared === null) return;
-        this.cards = assembleCards(
-          resolveGraph(shared.admitted),
-          shared.admitted,
+        // Same merge contract as start()'s settle: a cached interpretation
+        // can paint the root before the sweep lands, so the fresh assembly
+        // must not overwrite the paint (and the banner counts painted
+        // cards — a raw wipe leaves them "0 of N filled" with the lane
+        // already drained).
+        this.cards = mergeSettledCards(
+          this.cards,
+          assembleCards(resolveGraph(shared.admitted), shared.admitted),
+          this.pending
         );
         this.facetGroups = computeFacets(shared.admitted);
         // Pin (issue #83, review L8): AFTER the context sweep so the row
