@@ -281,10 +281,13 @@ describe("translateQuestion — zero-AI fallback ladder (issue #164, spec §2 ru
       provider: PROVIDER,
       callLLM: throwing("ECONNREFUSED"),
     });
+    // The identifier keeps its tag leg; the prose degrades to a rare single
+    // then a generic solo — never the pair, which would AND the rare term's
+    // hits away.
     expect(res.ok && res.result.searches).toEqual([
       { kind: "tag", value: "cve:CVE-2017-15361", source: "identifier" },
       { kind: "text", value: "infineon", source: "fallback" },
-      { kind: "text", value: "infineon chips", source: "fallback" },
+      { kind: "text", value: "chips", source: "fallback" },
     ]);
   });
 
@@ -297,18 +300,19 @@ describe("translateQuestion — zero-AI fallback ladder (issue #164, spec §2 ru
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     const probes = res.result.searches.filter((s) => s.source === "fallback");
-    // "dossier"/"card" are generic (excluded from pairs), so the ladder is
-    // the rare pair, then the rarest single, then the widening prefixes of
-    // the full ranking — measured live (issue #164): infineon sle78 → 51
-    // batch-valid on relay.scrutiny.cloud.
+    // Rare pair, then rare singles rarest-first — "dossier" is generic and
+    // must never pair with "infineon": the pair ANDs away the rare term's
+    // hits, and "sle78" alone is the corpus vocabulary the pair was riding.
+    // Measured live (issue #164): "infineon sle78" → 51 batch-valid on
+    // relay.scrutiny.cloud, so "sle78" alone returns at least those.
     expect(probes.map((p) => p.value)).toEqual([
       "infineon sle78",
       "infineon",
-      "infineon dossier",
+      "sle78",
     ]);
   });
 
-  it("a question of only generic words still gets three widening probes (never nothing)", async () => {
+  it("a question of only generic words still gets solo probes (never nothing)", async () => {
     const res = await translateQuestion({
       question: "which cards are affected?",
       provider: undefined,
@@ -316,9 +320,23 @@ describe("translateQuestion — zero-AI fallback ladder (issue #164, spec §2 ru
     });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.result.searches.map((s) => s.value)).toEqual([
-      "affected",
-      "affected cards",
+    // Generics are solo only: paired they AND each other's hits away.
+    expect(res.result.searches.map((s) => s.value)).toEqual(["affected", "cards"]);
+  });
+
+  it("a question with no usable token still probes its head — never zero searches", async () => {
+    const res = await translateQuestion({
+      question: "what is it?",
+      provider: undefined,
+      callLLM: throwing("unused"),
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // Every token is a stopword, so the ladder would be empty: the question
+    // head (three words at most) is the honest last resort. Zero searches
+    // would leave the run empty AND the §4 notice claiming identifier-only.
+    expect(res.result.searches).toEqual([
+      { kind: "text", value: "what is it?", source: "fallback" },
     ]);
   });
 

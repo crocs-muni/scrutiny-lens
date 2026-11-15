@@ -230,9 +230,11 @@ type FallbackProbe = { kind: "text"; value: string; source: "fallback" };
 /** Short rare-term text probes, longest tokens first (issue #164): the
  * longest surviving token is the rarest discriminator — "ecdsa" /
  * "sle78" / "infineon" are corpus vocabulary where "card" is noise. The
- * ladder narrows first (rarest pair), widening to single terms, so one
- * matching leg is enough for non-zero results; a generic word only
- * carries a probe when nothing rare survived. */
+ * ladder narrows first (rarest pair), then spends its legs on rare SINGLES:
+ * a generic word is only ever SOLO, because paired with a rare term it ANDs
+ * the rare term's hits away ("roca affected cards" 2 batch-valid vs "roca"
+ * 9, measured live 2026-11-07 on relay.scrutiny.cloud) — so "infineon
+ * dossier" must never outrank "sle78". */
 function rareTermProbes(prose: string, max = 3): FallbackProbe[] {
   const tokens = (prose.toLowerCase().match(/[a-z0-9][a-z0-9-]*/g) ?? []).filter(
     (token) => STOPWORD[token] !== true,
@@ -240,12 +242,23 @@ function rareTermProbes(prose: string, max = 3): FallbackProbe[] {
   // Longest first; ties keep first-seen order so the ladder is deterministic.
   const ranked = [...new Set(tokens)].sort((a, b) => b.length - a.length);
   const rare = ranked.filter((token) => GENERIC[token] !== true);
-  // Ladder: rare pair → rarest single → widening prefixes of the full
-  // ranking (generic words may appear only here, alone or in pairs).
+  const generic = ranked.filter((token) => GENERIC[token] === true);
   const ladder: string[][] = [];
+  // Rarest pair first — the narrow probe most likely to return records.
   if (rare.length >= 2) ladder.push(rare.slice(0, 2));
-  else if (rare.length === 1) ladder.push(rare);
-  for (let n = 1; n <= ranked.length; n += 1) ladder.push(ranked.slice(0, n));
+  for (const token of rare) ladder.push([token]);
+  // Generics last, solo only (see the AND note above).
+  for (const token of generic) ladder.push([token]);
+  // A question with no surviving token — all stopwords, or a script this
+  // tokenizer does not read — still gets one honest head probe. The bug this
+  // ladder replaces was the WHOLE question; "no search at all" is worse: the
+  // run goes empty and the §4 notice claims identifier-only with no
+  // identifier in sight. Three words is bounded, and never the raw question
+  // unless the question IS three words.
+  if (ladder.length === 0) {
+    const head = prose.trim().split(/\s+/).slice(0, 3).join(" ");
+    if (head !== "") ladder.push([head]);
+  }
 
   const probes: FallbackProbe[] = [];
   for (const terms of ladder) {
