@@ -213,7 +213,7 @@ function classify(call: { system: string; messages: AiCall['messages'] }): AiLan
 	if (call.system.includes('Common Criteria vocabulary')) return 'nodes';
 	// Fail closed: an unclassified request is harness drift, and a silently
 	// plausible answer would let a scene screenshot a state it never built.
-	return 'probe';
+	throw new Error(`ai stub: unclassified request (system: ${call.system.slice(0, 60)}…)`);
 }
 
 /** Translate from the question the app sent: one free-text search of the
@@ -376,8 +376,19 @@ export function createAiStub(script: AiScript): { handler: AiHandler; control: A
 			system: [body.system ?? '', ...systemMessages].filter((part) => part !== '').join('\n\n'),
 			messages
 		};
+		let lane: AiLane;
+		try {
+			lane = classify(base);
+		} catch (err) {
+			// Fail closed (classify's own comment): answer 500, never a
+			// plausible reply for a lane the harness does not know.
+			json(res, 500, {
+				error: { message: err instanceof Error ? err.message : String(err) }
+			});
+			return true;
+		}
 		const call: AiCall = {
-			lane: classify(base),
+			lane,
 			stream: body.stream === true,
 			model: body.model ?? '',
 			...base

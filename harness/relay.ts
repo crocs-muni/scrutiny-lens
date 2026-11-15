@@ -61,9 +61,10 @@ export class FakeRelay {
 	private select(filter: Filter): NostrEvent[] {
 		const search = this.chaos.lacksNip50 ? undefined : filter.search?.toLowerCase();
 		const omitted = new Set(this.chaos.omitKinds ?? []);
+		const structural: Filter = { ...filter, search: undefined };
 		let matched = this.events
 			.filter((event) => !omitted.has(event.kind))
-			.filter((event) => matchFilter({ ...filter, search: undefined }, event))
+			.filter((event) => matchFilter(structural, event))
 			.filter(
 				(event) =>
 					search === undefined ||

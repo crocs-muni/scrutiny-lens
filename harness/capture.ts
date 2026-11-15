@@ -192,6 +192,19 @@ export async function captureScenes(
 	const results: SceneResult[] = [];
 	try {
 		for (const scene of scenes) {
+		const stub = createAiStub(scene.ai ?? {});
+		const server = await serveApp({
+			buildDir: options.buildDir,
+			ai: scene.ai === undefined ? (options.ai ?? stub.handler) : stub.handler,
+			env: {
+				PUBLIC_RELAY_URLS: scene.relays.map((r) => `ws://${r.host}`).join(','),
+				PUBLIC_LLM_ENDPOINT: '{origin}/v1',
+				// Fixtures carry canonical tags only.
+				PUBLIC_INCLUDE_TEST_TAGS: '0',
+				...scene.env
+			}
+		});
+		try {
 			for (const theme of only?.theme ? [only.theme] : (scene.themes ?? ['light', 'dark'])) {
 				// Per-theme relays and stub: script cursors, held requests and
 				// recorded frames describe exactly the shot being taken.
@@ -204,18 +217,6 @@ export async function captureScenes(
 						new FakeRelay({ name: spec.host, events: spec.events, chaos: spec.chaos })
 					])
 				);
-				const stub = createAiStub(scene.ai ?? {});
-				const server = await serveApp({
-					buildDir: options.buildDir,
-					ai: scene.ai === undefined ? (options.ai ?? stub.handler) : stub.handler,
-					env: {
-						PUBLIC_RELAY_URLS: scene.relays.map((r) => `ws://${r.host}`).join(','),
-						PUBLIC_LLM_ENDPOINT: '{origin}/v1',
-						// Fixtures carry canonical tags only.
-						PUBLIC_INCLUDE_TEST_TAGS: '0',
-						...scene.env
-					}
-				});
 				let context: BrowserContext | null = null;
 				try {
 					context = await browser.newContext({
@@ -310,9 +311,11 @@ export async function captureScenes(
 					results.push(result);
 				} finally {
 					await context?.close();
-					await server.close();
 				}
 			}
+		} finally {
+			await server.close();
+		}
 		}
 	} finally {
 		await browser.close();
