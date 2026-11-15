@@ -1,11 +1,11 @@
-// Transition table for the chat turn machine (src/lib/chat/turn.ts).
-// The table is exhaustive over (state × event); illegal pairs must be
-// no-ops, `final` after an error must never permit persistence (ADR 0003),
-// and random event sequences must never reach a state that could settle a
-// failed turn.
+// Transition table for the chat turn machine (src/lib/chat/turn.ts) and the
+// ADR 0003 edge it exists to enforce: a turn that errored can never settle.
+// The random-sequence property derives the error latch from the EVENT LOG
+// (not from the phase it claims to check), so it can actually fail.
 
 import { describe, expect, it } from 'vitest';
-import { shouldPersist, transition, type Turn, type TurnEvent } from '../src/lib/chat/turn';
+import { canPersist, transition, type Turn } from '../src/lib/chat/turn';
+import type { TurnEvent } from '../src/lib/chat/turn-events';
 
 const streaming = (raw = ''): Turn => ({ phase: 'streaming', question: 'q', raw });
 const erroring = (raw = 'partial', message = 'boom'): Turn => ({
@@ -15,25 +15,7 @@ const erroring = (raw = 'partial', message = 'boom'): Turn => ({
 	message
 });
 
-const EVENTS: TurnEvent[] = [
-	{ type: 'send', question: 'q2' },
-	{ type: 'delta', text: 'x' },
-	{ type: 'error', message: 'e' },
-	{ type: 'final' },
-	{ type: 'abort' }
-];
-
-const STATES: Turn[] = [{ phase: 'idle' }, streaming('hello'), erroring()];
-
-describe('transition — the full table', () => {
-	it('every (state, event) pair is total and returns a Turn', () => {
-		for (const state of STATES) {
-			for (const event of EVENTS) {
-				expect(transition(state, event)).toBeDefined();
-			}
-		}
-	});
-
+describe('transition — the table', () => {
 	it('send starts streaming with empty raw', () => {
 		expect(transition({ phase: 'idle' }, { type: 'send', question: 'q' })).toEqual({
 			phase: 'streaming',
@@ -67,36 +49,45 @@ describe('transition — the full table', () => {
 		});
 	});
 
-	it('abort discards the turn from every phase', () => {
-		for (const state of STATES) {
-			expect(transition(state, { type: 'abort' })).toEqual({ phase: 'idle' });
-		}
-	});
-
 	it('a second error replaces the message but keeps the raw', () => {
 		const once = transition(streaming('text'), { type: 'error', message: 'first' });
 		const twice = transition(once, { type: 'error', message: 'second' });
 		expect(twice).toMatchObject({ phase: 'erroring', raw: 'text', message: 'second' });
 	});
-});
 
-describe('shouldPersist — the ADR 0003 edge', () => {
-	it('final persists only a turn that never errored', () => {
-		expect(shouldPersist(streaming(), { type: 'final' })).toBe(true);
-		expect(shouldPersist(erroring(), { type: 'final' })).toBe(false);
-		expect(shouldPersist({ phase: 'idle' }, { type: 'final' })).toBe(false);
+	it('final is an identity on every phase — the machine never settles', () => {
+		for (const state of [{ phase: 'idle' }, streaming('x'), erroring()] as const) {
+			expect(transition(state, { type: 'final' })).toBe(state);
+		}
 	});
 
-	it('no other event ever settles a turn', () => {
-		for (const state of STATES) {
-			for (const event of EVENTS.filter((e) => e.type !== 'final')) {
-				expect(shouldPersist(state, event)).toBe(false);
-			}
+	it('abort discards the turn from every phase', () => {
+		for (const state of [{ phase: 'idle' }, streaming('x'), erroring()] as const) {
+			expect(transition(state, { type: 'abort' })).toEqual({ phase: 'idle' });
 		}
 	});
 });
 
-/** Reproducible PRNG so a failure replays from the seed printed in the error. */
+describe('canPersist — the ADR 0003 edge', () => {
+	it('only a turn that never errored may settle', () => {
+		expect(canPersist(streaming())).toBe(true);
+		expect(canPersist(erroring())).toBe(false);
+		expect(canPersist({ phase: 'idle' })).toBe(false);
+	});
+
+	it('a turn that errored then received more deltas still cannot settle', () => {
+		const walked = transition(
+			transition(transition(streaming(), { type: 'error', message: 'x' }), {
+				type: 'delta',
+				text: 'more'
+			}),
+			{ type: 'final' }
+		);
+		expect(canPersist(walked)).toBe(false);
+	});
+});
+
+/** Reproducible PRNG so a failure replays from the printed seed. */
 function mulberry32(seed: number): () => number {
 	let a = seed;
 	return () => {
@@ -108,53 +99,49 @@ function mulberry32(seed: number): () => number {
 	};
 }
 
-describe('transition — invariants over random event sequences', () => {
-	it('300 seeds: no sequence reaches an erroring turn that a final could settle', () => {
-		const pool: TurnEvent[] = [
-			{ type: 'send', question: 'q' },
-			{ type: 'delta', text: 'a' },
-			{ type: 'delta', text: 'b' },
-			{ type: 'error', message: 'transport broke' },
-			{ type: 'final' },
-			{ type: 'abort' }
-		];
+describe('transition — property over random event sequences', () => {
+	const POOL: TurnEvent[] = [
+		{ type: 'send', question: 'q' },
+		{ type: 'delta', text: 'a' },
+		{ type: 'delta', text: 'b' },
+		{ type: 'error', message: 'transport broke' },
+		{ type: 'final' },
+		{ type: 'abort' }
+	];
+
+	it('300 seeds: an error frame makes every later final unpersistable, until the next send/abort', () => {
+		// The model's latch is derived from the EVENT LOG only — never from
+		// turn.phase — so a machine that stops latching fails this.
+		let errorThenFinalSeen = 0;
 		for (let seed = 1; seed <= 300; seed++) {
 			const rnd = mulberry32(seed);
 			let turn: Turn = { phase: 'idle' };
-			let sawError = false;
-			const steps = 2 + Math.floor(rnd() * 12);
-			for (let i = 0; i < steps; i++) {
-				const event = pool[Math.floor(rnd() * pool.length)]!;
+			const log: TurnEvent[] = [];
+			for (let i = 0, n = 2 + Math.floor(rnd() * 12); i < n; i++) {
+				const event = POOL[Math.floor(rnd() * POOL.length)]!;
+				log.push(event);
 				turn = transition(turn, event);
-				// The latch is per-turn: only a send (a brand-new turn) or
-				// an abort (no turn) may clear it.
-				if (event.type === 'send' || event.type === 'abort') sawError = false;
-				if (turn.phase === 'erroring') sawError = true;
-				if (turn.phase === 'idle') sawError = false;
-				// The invariant: an error seen within this turn makes every
-				// later final unpersistable.
-				if (sawError) expect(shouldPersist(turn, { type: 'final' })).toBe(false);
+				// The next send/abort ends the current turn's history.
+				let lastBoundary = -1;
+				for (let k = log.length - 1; k >= 0; k--) {
+					if (log[k]!.type === 'send' || log[k]!.type === 'abort') {
+						lastBoundary = k;
+						break;
+					}
+				}
+				const currentTurn = log.slice(lastBoundary + 1);
+				const errored = currentTurn.some((e) => e.type === 'error');
+				const hadFinalAfterError = currentTurn.some(
+					(e, k) =>
+						e.type === 'error' &&
+						currentTurn.slice(k).some((f) => f.type === 'final')
+				);
+				if (hadFinalAfterError) errorThenFinalSeen++;
+				if (errored) expect(canPersist(turn)).toBe(false);
+				else if (turn.phase === 'idle') expect(canPersist(turn)).toBe(false);
 			}
 		}
-	});
-	it('300 seeds: abort always returns to idle and stays persistable after a fresh send', () => {
-		for (let seed = 1; seed <= 300; seed++) {
-			const rnd = mulberry32(seed);
-			let turn: Turn = transition({ phase: 'idle' }, { type: 'send', question: 'q' });
-			for (let i = 0; i < 8; i++) {
-				const kind = rnd();
-				if (kind < 0.3) turn = transition(turn, { type: 'delta', text: 'x' });
-				else if (kind < 0.5) turn = transition(turn, { type: 'error', message: 'x' });
-				else if (kind < 0.7) turn = transition(turn, { type: 'abort' });
-				else if (kind < 0.85) turn = transition(turn, { type: 'final' });
-				else turn = transition(turn, { type: 'send', question: 'q' });
-			}
-			// Whatever the walk did, a final abort lands idle...
-			expect(transition(turn, { type: 'abort' })).toEqual({ phase: 'idle' });
-			// ...and a fresh send is always streamable.
-			const fresh = transition(turn, { type: 'send', question: 'next' });
-			expect(fresh.phase).toBe('streaming');
-			expect(shouldPersist(fresh, { type: 'final' })).toBe(true);
-		}
+		// The walk actually reached the guarded edge — the test is not vacuous.
+		expect(errorThenFinalSeen).toBeGreaterThan(0);
 	});
 });

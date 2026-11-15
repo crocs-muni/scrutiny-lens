@@ -18,7 +18,7 @@
 
 import { chatground, type ChatCitation, type ClaimsSummary, type StreamLLM } from '$lib/ai/agents/chat';
 import { createCitationRegistry, type CitationRegistry } from '$lib/ai/citationRegistry';
-import { shouldPersist, transition, type Turn } from '$lib/chat/turn';
+import { canPersist, transition, type Turn } from '$lib/chat/turn';
 import { scrubAnswer } from '$lib/chat/answer';
 import type { NostrEvent } from '$lib/fabric';
 import type { ProviderOverrideInput } from '$lib/ai/provider';
@@ -244,7 +244,7 @@ class Chat {
 				// transcript never holds an orphaned question). Only a turn
 				// that never errored may settle; a stray final after an
 				// error frame is dropped by the machine.
-				if (!shouldPersist(turn, { type: 'final' })) continue;
+				if (!canPersist(turn)) continue;
 				const userMessage: ChatMessage = {
 					id: userId,
 					sessionId,
