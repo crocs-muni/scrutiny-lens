@@ -17,7 +17,11 @@ pnpm check                               # svelte-check, must be 0 errors
 pnpm test                                # vitest: `lib` (node) and `dom` (jsdom) projects
 pnpm vitest run tests/<name>.test.ts     # one file; tests/dom/** runs under jsdom
 pnpm build                               # static bundle -> build/
+pnpm -s harness shots --label mine       # screenshot scenes -> .harness/runs/mine/ (needs build/)
+pnpm -s harness compare --base last      # diff a capture against the last one, or origin/main
 ```
+
+The screenshot harness (`.agents/skills/ui-harness`, code in `harness/`) is local only: output lives in the gitignored `.harness/`.
 
 `file:` deps need sibling checkouts: `../scrutiny-fabric-tools` (`packages/core` built) and `../scrutiny-design-system`. See the README.
 
@@ -62,4 +66,4 @@ pnpm build                               # static bundle -> build/
 
 ## Skills
 
-Repo skills are in `.agents/skills/`: the Emil Kowalski motion and gesture set, `break-ui`, `learn-taste`, `unslop`, `lens-workflow`. The motion grammar in `docs/ui-rules.md` overrides the motion skills, whose examples are React-flavored; apply the principles and add no dependency.
+Repo skills are in `.agents/skills/`: the Emil Kowalski motion and gesture set, `break-ui`, `learn-taste`, `unslop`, `lens-workflow`, `ui-harness`. The motion grammar in `docs/ui-rules.md` overrides the motion skills, whose examples are React-flavored; apply the principles and add no dependency.
