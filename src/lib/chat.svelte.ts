@@ -18,6 +18,7 @@
 
 import { chatground, type ChatCitation, type ClaimsSummary, type StreamLLM } from '$lib/ai/agents/chat';
 import { createCitationRegistry, type CitationRegistry } from '$lib/ai/citationRegistry';
+import { canPersist, transition, type Turn } from '$lib/chat/turn';
 import { scrubAnswer } from '$lib/chat/answer';
 import type { NostrEvent } from '$lib/fabric';
 import type { ProviderOverrideInput } from '$lib/ai/provider';
@@ -191,6 +192,12 @@ class Chat {
 		const controller = new AbortController();
 		this.abortCtl = controller;
 
+		// The turn machine (chat/turn.ts): the loop below only folds events
+		// and mirrors the machine's fields onto the reactive store — the
+		// illegal settle-after-error combination is structurally unreachable
+		// here, where the old three-field spread could not forbid it.
+		let turn: Turn = transition({ phase: 'idle' }, { type: 'send', question: trimmed });
+
 		const createdAt = Math.max(Date.now(), this.lastAt + 1);
 		const history = this.messages
 			.filter((m) => m.content !== '' || m.availableContext !== undefined)
@@ -220,10 +227,12 @@ class Chat {
 				// 0003: aborted turns persist nothing).
 				if (controller.signal.aborted) break;
 				if (f.type === 'delta') {
-					live.raw = `${live.raw}${f.text as string}`;
+					turn = transition(turn, { type: 'delta', text: String(f.text) });
+					live.raw = turn.phase === 'idle' ? live.raw : turn.raw;
 					continue;
 				}
 				if (f.type === 'error') {
+					turn = transition(turn, { type: 'error', message: String(f.message) });
 					this.error = {
 						question: trimmed,
 						message: String(f.message),
@@ -232,7 +241,10 @@ class Chat {
 					continue;
 				}
 				// final — settle, scrub, persist (user + answer together so a
-				// transcript never holds an orphaned question).
+				// transcript never holds an orphaned question). Only a turn
+				// that never errored may settle; a stray final after an
+				// error frame is dropped by the machine.
+				if (!canPersist(turn)) continue;
 				const userMessage: ChatMessage = {
 					id: userId,
 					sessionId,
