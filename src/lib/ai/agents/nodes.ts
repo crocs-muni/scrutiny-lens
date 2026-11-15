@@ -598,18 +598,26 @@ export async function batchNodeInterpret(
     /** Progressive paint: the closed record goes through the same
      * finalizeNode gate the settled list uses (affinity, per-kind schema,
      * quote gate), so a half-described or extrapolatory record never paints
-     * and nothing here can outrun the settled truth. */
-    const paintClosed = (onNode: (vm: NodeVM) => void) => (draft: NodeDraft): void => {
-      const j = pageEvents.findIndex((e) => e.id === draft.entityId);
-      if (j < 0) return; // foreign echo — the page's ids only
-      const { vm, fromDraft } = finalizeNode(
-        pageEvents[j],
-        pageDets[j],
-        draft,
-        deadLetterCtx(j),
-        canonical,
-      );
-      if (fromDraft) onNode(vm);
+     * and nothing here can outrun the settled truth. A repeat of an
+     * already-claimed id is dropped, exactly as the settled binder drops it —
+     * a model echoing one entityId twice must not paint twice or write two
+     * dead letters. */
+    const paintClosed = (onNode: (vm: NodeVM) => void) => {
+      const claimed = new Set<string>();
+      return (draft: NodeDraft): void => {
+        if (claimed.has(draft.entityId)) return; // repeat echo
+        const j = pageEvents.findIndex((e) => e.id === draft.entityId);
+        if (j < 0) return; // foreign echo — the page's ids only
+        claimed.add(draft.entityId);
+        const { vm, fromDraft } = finalizeNode(
+          pageEvents[j],
+          pageDets[j],
+          draft,
+          deadLetterCtx(j),
+          canonical,
+        );
+        if (fromDraft) onNode(vm);
+      };
     };
     const reader = {
       schema: NodeDraft,

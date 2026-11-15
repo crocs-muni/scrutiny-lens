@@ -116,14 +116,22 @@ const TERMINAL_NODE_FAILURES: ReadonlySet<AIKind> = new Set([
   "no_key",
 ]);
 
-/** The AI surface one interpreted node renders from — the same shape the
- * cache's bySurface.node row carries, so a painted tile and a restored one
- * cannot drift. */
-function nodeTileOf(vm: NodeVM): NodeTile {
+/** The AI surface a node renders from. One projection serves a fresh NodeVM
+ * and a cached `bySurface.node` row, so a painted tile and a restored one
+ * cannot drift field by field. */
+function nodeTileOf(source: {
+  title: string;
+  typeToken: string;
+  kind?: string;
+  metaType?: string;
+  label?: string;
+}): NodeTile {
+  const metadata =
+    source.kind === "metadata" || source.metaType !== undefined || source.label !== undefined;
   return {
-    title: vm.title,
-    typeToken: vm.typeToken as string,
-    ...(vm.kind === "metadata" ? { metaType: vm.metaType, label: vm.label } : {}),
+    title: source.title,
+    typeToken: source.typeToken,
+    ...(metadata ? { metaType: source.metaType, label: source.label } : {}),
   };
 }
 
@@ -1097,12 +1105,12 @@ class Investigation {
     const controller = this.controller;
     // The key arriving is the explicit retry signal for this lane (per #84's
     // notes a keyless pass drained the node queue permanently): release what
-    // is queued without spending an attempt, and clear the attempt/dead
-    // bookkeeping — the ids were never asked, or were asked against a
-    // provider that did not exist yet.
+    // is queued without spending an attempt and give the transient verdicts a
+    // fresh cap — they were asked against a provider that did not exist yet.
+    // Dead ids stay dead: schema-invalid and eventless ids would only burn
+    // another ask each.
     this.releaseNodeQueue();
     this.nodeAttempts.clear();
-    this.nodeDead.clear();
     this.nodeStream = stream ?? null;
     this.nodeFillFor(this.result.admitted.map((e) => e.id));
     if (this.cards.some((c) => !c.interpreted)) {
@@ -1126,15 +1134,9 @@ class Investigation {
         if (this.controller === controller) this.filling = false;
       }
     }
-    // Await the node drain so callers/tests observe a settled lane. Aborts
-    // and supersession must exit (runNodeFill leaves its queue on abort).
-    while (
-      this.controller === controller &&
-      !controller.signal.aborted &&
-      (this.nodeFillRunning || this.nodeQueue.length > 0)
-    ) {
-      await sleep(5, controller.signal);
-    }
+    // Await the lane's own completion signal: it settles every drained id and
+    // always returns, so there is nothing to poll (#201).
+    await this.awaitNodeLane();
   }
 
   /** Abort the in-flight run (spec §8) without clearing what it already
@@ -1312,8 +1314,8 @@ class Investigation {
    * The canvas reports its placed ids whenever the graph re-derives;
    * this lane pays the LLM for everything the CARD fill never touched
    * (linked records, related products). Cache-first: a revisited graph
-   * paints sans at t≈0 from bySurface.node. Single-flight, ≤12/batch
-   * (the nodes agent's contract), the worklist drains live so a related
+   * paints sans at t≈0 from bySurface.node. One page per turn (the
+   * nodes agent's BATCH_SIZE), the worklist drains live so a related
    * expansion just appends. Interpretation only ever UPGRADES a node —
    * anything unanswered stays rule-5 mono, which is true at render time
    * (spec §2), so there is no spinner/badge surface by design.
@@ -1322,12 +1324,11 @@ class Investigation {
    * reads this map on every derive; whole-map copies per paint (copy-on-
    * write, same reactivity rule as the card merge). */
   nodeTiles = $state<Map<string, NodeTile>>(new Map());
-  /** Single-flight guard + the live worklist (queued ids, in priority
-   * order — the canvas passes subject→records→related order). */
+  /** The live worklist (queued ids, in priority order — the canvas passes
+   * subject→records→related order). */
   private nodeQueue: string[] = [];
-  /** Queued or being asked right now. A settled id always leaves this set —
-   * leaving one behind was the poisoning class: the id was skipped by every
-   * later graph visit and could never fill again in that session. */
+  /** Queued or being asked right now: it holds the current page too, which
+   * `nodeTiles` cannot answer for, so a redraw cannot queue an id mid-ask. */
   private nodeInFlight = new Set<string>();
   /** Transient page deaths per id; the next graph visit is the backoff. */
   private nodeAttempts = new Map<string, number>();
@@ -1335,6 +1336,9 @@ class Investigation {
    * is the truth for them, spec §2 rule 5). */
   private nodeDead = new Set<string>();
   private nodeFillRunning = false;
+  /** The running lane's promise: the one completion signal a caller awaits,
+   * instead of polling the queue (#201). */
+  private nodeLane: Promise<void> | null = null;
   /** Stream seam for the progressive paint (`null` = batch path, used by the
    * test seams so an injected callLLM drives the wire). */
   private nodeStream: StreamLLM | null = streamLLM;
@@ -1349,7 +1353,18 @@ class Investigation {
       this.nodeQueue.push(id);
       added = true;
     }
-    if (added && !this.nodeFillRunning) void this.runNodeFill();
+    if (added && !this.nodeFillRunning) this.nodeLane = this.runNodeFill();
+  }
+
+  /** Await the running lane, including one that a redraw started while we
+   * waited. The lane always returns (every failure path is settled), so this
+   * cannot hang on its own (#201). */
+  private async awaitNodeLane(): Promise<void> {
+    while (this.nodeLane !== null) {
+      const lane = this.nodeLane;
+      await lane.catch(() => {});
+      if (this.nodeLane === lane) this.nodeLane = null;
+    }
   }
 
   /** Every drained id leaves a turn with a verdict (item-scoped outcomes, the
@@ -1396,26 +1411,68 @@ class Investigation {
     this.settleNodes(rest, "release");
   }
 
+  /** A page's verdict, minus the records that already painted: a mid-stream
+   * death does not un-paint them, and charging those an attempt would put an
+   * AI-titled node on the dead list. */
+  private settlePage(missing: readonly string[], verdict: "retry" | "dead" | "release"): void {
+    const painted = missing.filter((id) => this.nodeTiles.has(id));
+    if (painted.length > 0) this.settleNodes(painted, "tiled");
+    const rest = missing.filter((id) => !this.nodeTiles.has(id));
+    if (rest.length > 0) this.settleNodes(rest, verdict);
+  }
+
+  /** The run died under the lane (stop, supersede): settle what was asked,
+   * release the queue, and tell the caller to stop. */
+  private stopIfRunDead(alive: boolean, missing: readonly string[]): boolean {
+    if (alive) return false;
+    this.settlePage(missing, "release");
+    this.releaseNodeQueue();
+    return true;
+  }
+
   /** Why a page stayed raw, under `lens-debug` only: without this line the
    * symptom cannot be told from "no key" or "never queued" (#199). Gateway
    * messages are key-scrubbed (ADR-018); no payload is ever logged. */
-  private traceNodePage(kind: string, ids: number, model: string, detail: unknown): void {
+  private traceNodePage(
+    kind: string,
+    ids: readonly string[],
+    model: string,
+    detail: unknown,
+  ): void {
     if (!lensDebug()) return;
     const message = (detail instanceof Error ? detail.message : String(detail ?? "")).slice(0, 200);
     console.debug(
-      `[lens-trace] nodes: page failed kind=${kind} ids=${ids} model=${model} — ${message}`,
+      `[lens-trace] nodes: page failed kind=${kind} ids=${ids.length} model=${model} — ${message}`,
     );
   }
 
-  /** Paint one gated interpretation: copy-on-write tile + one save. Fire-and-
-   * forget is honest here — the tile is already painted truth; a lost row
-   * costs one re-interpretation on the next visit, never a wrong screen. */
-  private paintNodeTile(vm: NodeVM, model: string): void {
+  /** One page's transient failure: trace it, spend the asked ids' attempt,
+   * release the unasked tail without one, and await any progressive write
+   * already in flight. The next graph visit is the backoff. */
+  private async failNodePage(
+    kind: string,
+    detail: unknown,
+    missing: readonly string[],
+    model: string,
+    pending: readonly Promise<void>[],
+  ): Promise<void> {
+    this.traceNodePage(kind, missing, model, detail);
+    this.settlePage(missing, "retry");
+    this.releaseNodeQueue();
+    await Promise.allSettled(pending);
+  }
+
+  /** Paint one gated interpretation: copy-on-write tile now, row write
+   * returned so the lane can await it before it reports drained (an orphaned
+   * write landing after a wipe is the data-loss class the settled pass already
+   * guards against). A lost row costs one re-interpretation on the next visit,
+   * never a wrong screen. */
+  private paintNodeTile(vm: NodeVM, model: string): Promise<void> {
     const tile = nodeTileOf(vm);
     const next = new Map(this.nodeTiles);
     next.set(vm.entityId, tile);
     this.nodeTiles = next;
-    void saveInterpretation(vm.entityId, model, "node", tile).catch((err: unknown) => {
+    return saveInterpretation(vm.entityId, model, "node", tile).catch((err: unknown) => {
       if (lensDebug()) console.debug(`[lens-trace] nodes: save failed ${String(err)}`);
     });
   }
@@ -1459,29 +1516,35 @@ class Investigation {
             `[lens-trace] nodes: turn batch=${batch.length} queue=${this.nodeQueue.length} asked=${this.nodeAttempts.size} dead=${this.nodeDead.size}`,
           );
         }
-        // Cache pass — zero-cost paints (spec §6). bySurface merge means a
-        // node surface never stomps the card surface of the same event.
-        for (const id of batch) {
-          const hit = await getInterpretation(id, model);
-          const surface = hit?.bySurface.node as Partial<NodeTile> | undefined;
-          if (typeof surface?.title === "string" && typeof surface.typeToken === "string") {
-            const next = new Map(this.nodeTiles);
-            next.set(id, {
+        // Cache pass — zero-cost paints (spec §6), one read wave and one
+        // write: per-id awaits in a loop paid an IndexedDB round trip each
+        // and re-rendered the canvas once per hit.
+        const hits = await Promise.all(batch.map((id) => getInterpretation(id, model)));
+        const cached: Array<[string, NodeTile]> = [];
+        for (let i = 0; i < batch.length; i++) {
+          const surface = hits[i]?.bySurface.node as Partial<NodeTile> | undefined;
+          if (typeof surface?.title !== "string" || typeof surface.typeToken !== "string") continue;
+          cached.push([
+            batch[i] as string,
+            nodeTileOf({
               title: surface.title,
               typeToken: surface.typeToken,
               metaType: surface.metaType,
               label: surface.label,
-            });
-            this.nodeTiles = next;
-          }
+            }),
+          ]);
         }
-        const missing = batch.filter((id) => !this.nodeTiles.has(id));
-        if (missing.length < batch.length) {
+        if (cached.length > 0) {
+          const withCached = new Map(this.nodeTiles);
+          for (const [id, tile] of cached) withCached.set(id, tile);
+          this.nodeTiles = withCached;
           this.settleNodes(
-            batch.filter((id) => !missing.includes(id)),
+            cached.map(([id]) => id),
             "tiled",
           );
         }
+        const cachedIds = new Set(cached.map(([id]) => id));
+        const missing = batch.filter((id) => !cachedIds.has(id));
         // No provider, no call — the honest fallback stays painted and NO
         // attempt is spent (the key may still arrive this session; #84).
         if (missing.length === 0 || settings.apiKey === "" || model === "") {
@@ -1490,22 +1553,21 @@ class Investigation {
         }
         const admitted = this.result?.admitted;
         if (admitted === undefined) {
+          this.settlePage(missing, "release");
           this.releaseNodeQueue();
           return;
         }
-        const events = admitted.filter((e) => missing.includes(e.id));
-        if (events.length === 0) {
-          // A placed id the session cannot see has no event to interpret:
-          // no retry can ever succeed.
-          this.settleNodes(missing, "dead");
-          continue;
-        }
-        if (!alive()) {
-          this.settleNodes(missing, "release");
-          this.releaseNodeQueue();
-          return;
-        }
-        const paintedNow = new Set<string>();
+        const want = new Set(missing);
+        const events = admitted.filter((e) => want.has(e.id));
+        // Only an id with an admitted event can be asked — or ever succeed:
+        // the rest are dead here instead of spending attempts on every visit.
+        const askable = new Set(events.map((e) => e.id));
+        const page = missing.filter((id) => askable.has(id));
+        const unseen = missing.filter((id) => !askable.has(id));
+        if (unseen.length > 0) this.settleNodes(unseen, "dead");
+        if (page.length === 0) continue;
+        if (this.stopIfRunDead(alive(), page)) return;
+        const pendingSaves: Promise<void>[] = [];
         let res: Awaited<ReturnType<typeof batchNodeInterpret>>;
         try {
           res = await batchNodeInterpret({
@@ -1528,8 +1590,7 @@ class Investigation {
               : {
                   streamLLM: this.nodeStream,
                   onNode: (vm: NodeVM) => {
-                    paintedNow.add(vm.entityId);
-                    this.paintNodeTile(vm, model);
+                    pendingSaves.push(this.paintNodeTile(vm, model));
                   },
                 }),
           });
@@ -1539,68 +1600,54 @@ class Investigation {
           // is alive that is a PAGE failure, not a lane death: letting it
           // escape killed the rest of the queue and spun the late-key
           // drain-wait (measured — tests/nodeFill.test.ts).
-          if (!alive()) {
-            this.settleNodes(missing, "release");
-            this.releaseNodeQueue();
+          if (this.stopIfRunDead(alive(), page)) {
+            await Promise.allSettled(pendingSaves);
             return;
           }
-          this.traceNodePage("throw", missing.length, model, err);
-          this.settleNodes(missing, "retry");
-          // The tail was never asked: release it WITHOUT an attempt. Burning
-          // one for every queued id made a single dead-endpoint visit use up
-          // half the cap on a 60-node graph.
-          this.releaseNodeQueue();
+          await this.failNodePage("throw", err, page, model, pendingSaves);
           return; // stop asking: the next graph visit is the backoff
         }
-        if (!alive()) {
-          this.settleNodes(missing, "release");
-          this.releaseNodeQueue();
+        if (this.stopIfRunDead(alive(), page)) {
+          await Promise.allSettled(pendingSaves);
           return;
         }
         if (!res.ok) {
-          this.traceNodePage(res.kind, missing.length, model, res.message);
+          this.traceNodePage(res.kind, page, model, res.message);
           // Terminal classes retry nothing — a second identical ask only
           // burns tokens. Transport classes stop the lane: a throttled or
           // dead endpoint must not be hammered mid-run, and the next visit
           // is the backoff.
           if (TERMINAL_NODE_FAILURES.has(res.kind)) {
-            this.settleNodes(missing, "dead");
+            this.settlePage(page, "dead");
+            await Promise.allSettled(pendingSaves);
             continue;
           }
-          this.settleNodes(missing, "retry");
-          this.releaseNodeQueue();
+          await this.failNodePage(res.kind, res.message, page, model, pendingSaves);
           return;
         }
         const vms = res.result.nodes;
         const interpreted = new Set(res.result.interpretedIds);
         const next = new Map(this.nodeTiles);
-        // Saves are awaited with the batch, not void-fired: an orphaned write
-        // committing AFTER the lane reported drained would let a staler
-        // fallback-era read race a later wipe (data-loss class). A record
-        // already painted progressively has its row written; the settled pass
-        // is the authority for the rest.
+        // Every write is awaited before the lane reports drained: an orphaned
+        // save committing after a wipe would let a staler fallback-era read
+        // race it (data-loss class). A record painted progressively already
+        // has its write in `pendingSaves`; the settled pass owns the rest.
         const saves: Promise<void>[] = [];
         for (const vm of vms) {
           if (!interpreted.has(vm.entityId)) continue; // skeleton — never persisted (spec §2)
           const tile = nodeTileOf(vm);
           next.set(vm.entityId, tile);
-          if (!paintedNow.has(vm.entityId)) {
+          if (!this.nodeTiles.has(vm.entityId)) {
             saves.push(saveInterpretation(vm.entityId, model, "node", tile));
           }
         }
-        await Promise.all(
-          saves.map((save) =>
-            save.catch((err: unknown) => {
-              if (lensDebug()) console.debug(`[lens-trace] nodes: save failed ${String(err)}`);
-            }),
-          ),
-        );
+        await Promise.allSettled([...pendingSaves, ...saves]);
         this.nodeTiles = next;
         this.settleNodes([...interpreted], "tiled");
         // A successful page whose model dropped a record — or whose echo the
         // affinity gate refused — leaves those ids retryable, never queued
         // forever: the routine KV-partial case needs no transport failure.
-        const dropped = missing.filter((id) => !interpreted.has(id));
+        const dropped = page.filter((id) => !interpreted.has(id));
         if (dropped.length > 0) this.settleNodes(dropped, "retry");
       }
     } finally {
@@ -1640,6 +1687,10 @@ class Investigation {
     this.nodeInFlight = new Set();
     this.nodeAttempts = new Map();
     this.nodeDead = new Set();
+    this.nodeLane = null;
+    // A seam a test injected must not outlive the reset; production always
+    // paints progressively through the gateway.
+    this.nodeStream = streamLLM;
   }
 
   /** @internal — test seam for the node trickle (same spirit as
@@ -1656,9 +1707,7 @@ class Investigation {
     this.result = { admitted } as SearchSession;
     this.nodeStream = stream ?? null;
     this.nodeFillFor(ids);
-    while (this.nodeFillRunning || this.nodeQueue.length > 0) {
-      await sleep(5, this.controller.signal);
-    }
+    await this.awaitNodeLane();
   }
 
   /** Traversal-failure visibility (lens #68, spec §4 honesty lane): the
