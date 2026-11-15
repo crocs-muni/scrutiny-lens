@@ -57,6 +57,12 @@ const inflight = new Map<string, Promise<ProfileLookup>>();
 const PROFILE_TIMEOUT_MS = 3_000;
 /** How long a "no profile" miss is trusted before retrying. */
 const MISS_TTL_MS = 120_000;
+/** How long a device snapshot is treated as current (issue #135). NIP-01
+ * kind-0 is replaceable, so a row is what the author published when we last
+ * looked — never "the author's current name". Past this window the row still
+ * paints (never a blank chip) but the relays are asked again, so a rename
+ * reaches the reader instead of sticking until "Clear all local data". */
+const PROFILE_ROW_TTL_MS = 24 * 60 * 60 * 1000;
 
 /* ×4-pubkey parallelism cap: N interpreted cards mounting together would
  * otherwise open N pools × up to 4 relay websockets at once and trip the
@@ -119,39 +125,57 @@ export async function getProfile(pubkey: string): Promise<ProfileLookup> {
  * device's stored snapshot (issue #135), the short-lived miss table, or one
  * shared fresh query.
  */
-function queryProfile(pubkey: string, pool: readonly string[]): Promise<ProfileLookup> {
+async function queryProfile(pubkey: string, pool: readonly string[]): Promise<ProfileLookup> {
 	if (pool.length === 0) return Promise.resolve(undefined);
 
 	const key = lookupKey(pool, pubkey);
 	const hit = cache.get(key);
-	if (hit !== undefined) return Promise.resolve(hit);
+	if (hit !== undefined) return hit;
+
+	// Device snapshot BEFORE any pool-scoped gate (issue #135): restoring a
+	// session mounts a card per admitted product at once, and a relaunch has no
+	// memo to answer them. A row is a fact about the AUTHOR, while a miss is a
+	// fact about the relays — so the row is read before the miss window, and a
+	// pool the user edited away and back cannot shadow it.
+	const stored = await loadProfile(pubkey);
+	// A row with neither field carries nothing worth surfacing — same rule
+	// parseProfile applies to a relay read, so a stored blank can never make
+	// the chip claim 'found' over an empty cell (spec §2 never-lie).
+	const storedProfile: PublisherProfile | null =
+		stored !== null && (stored.name !== null || stored.picture !== null)
+			? { name: stored.name, picture: stored.picture }
+			: null;
+	const current =
+		storedProfile !== null && stored !== null && Date.now() - stored.at < PROFILE_ROW_TTL_MS;
+	if (current) {
+		cache.set(key, storedProfile);
+		return storedProfile;
+	}
+
 	const missedAt = misses.get(key);
-	if (missedAt !== undefined && Date.now() - missedAt < MISS_TTL_MS) return Promise.resolve(null);
+	if (missedAt !== undefined && Date.now() - missedAt < MISS_TTL_MS) {
+		// A recent miss under this pool answers — but a stale device row paints
+		// rather than leaving the chip blank.
+		if (storedProfile !== null) cache.set(key, storedProfile);
+		return storedProfile;
+	}
 
 	const pending = inflight.get(key);
 	if (pending) return pending;
 
 	const fetch = (async () => {
-		// Device snapshot BEFORE the relays (issue #135): restoring a session
-		// mounts a card per admitted product at once, and a relaunch has no
-		// memo to answer them — this row is what keeps every already-resolved
-		// publisher's avatar and name on screen instead of a burst of
-		// identical kind-0 queries against the same small relay pool.
-		const stored = await loadProfile(pubkey);
-		// A row with neither field carries nothing worth surfacing — same rule
-		// parseProfile applies to a relay read, so a stored blank can never
-		// make the chip claim 'found' over an empty cell (spec §2 never-lie).
-		if (stored !== null && (stored.name !== null || stored.picture !== null)) {
-			const profile: PublisherProfile = { name: stored.name, picture: stored.picture };
-			cache.set(key, profile);
-			return profile;
-		}
-
 		await acquire();
 		try {
 			const profile = await fetchProfile(pubkey, pool);
-			if (profile === null) misses.set(key, Date.now());
-			else {
+			if (profile === null) {
+				misses.set(key, Date.now());
+				// A relay that has forgotten the author does not erase what this
+				// device saw: paint the stale snapshot, still ask again later.
+				if (storedProfile !== null) {
+					cache.set(key, storedProfile);
+					return storedProfile;
+				}
+			} else {
 				cache.set(key, profile);
 				misses.delete(key);
 				// Fire-and-forget, like every write-through in this app: the

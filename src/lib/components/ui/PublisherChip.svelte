@@ -4,7 +4,8 @@
 	 * pubkey's kind-0 profile (name + picture) when one exists on the
 	 * configured relays, else an honest deterministic inline identicon +
 	 * npub token. spec §1 forbids third-party image hosts, so the fallback
-	 * is drawn in-component from the pubkey — no external service ever.
+	 * is derived in $lib/publisher from the pubkey — no external service
+	 * ever, and the "never blank" contract is unit-testable outside the DOM.
 	 *
 	 * Writing rule (spec §9): a profile's own name is human prose → sans;
 	 * the npub fallback is a machine-made value → mono.
@@ -43,11 +44,12 @@
 	/** Full npub for the tooltip; the fallback derivations live in
 	 * $lib/publisher so "deterministic, never blank" is unit-testable. */
 	const npub = $derived(publisherNpub(pubkey));
-	/** label token: bech32 npub's first 8 chars + trailing 4 (mono, machine-made). */
-	const labelToken = $derived(publisherToken(pubkey));
+	/** label token: bech32 npub's first 8 chars + trailing 4 (mono, machine-made) —
+	 * sliced from the npub derived above, so one card pays one bech32 encode. */
+	const labelToken = $derived(publisherToken(npub));
 
 	const hue = $derived(publisherHue(pubkey));
-	const cells = $derived(identiconCells(pubkey));
+	const cells = $derived(identiconCells(hue));
 
 	/** What the settled lookup licenses this chip to claim. */
 	const claim = $derived(profileClaim(profile));

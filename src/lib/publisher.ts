@@ -24,9 +24,9 @@ export function publisherNpub(pubkey: string): string {
 
 /** The mono label token: the npub's first 8 chars + trailing 4. Always
  * derived, so a card can never render an empty identity cell — the worst
- * case for a malformed key is the raw key sliced the same way. */
-export function publisherToken(pubkey: string): string {
-	const npub = publisherNpub(pubkey);
+ * case for a malformed key is the raw key sliced the same way. Takes the
+ * ALREADY-DERIVED npub so a card pays one bech32 encode, not two. */
+export function publisherToken(npub: string): string {
 	return `${npub.slice(0, 8)}…${npub.slice(-4)}`;
 }
 
@@ -42,12 +42,12 @@ export function publisherHue(pubkey: string): number {
 	return hash >>> 0;
 }
 
-/** Deterministic 5×5 two-tone pattern from the pubkey: the left-top 3×3
+/** Deterministic 5×5 two-tone pattern from the hue seed: the left-top 3×3
  * region is mirrored both ways so the icon reads symmetric at 16px. Bit i
  * of a per-cell keyed mix picks each cell's tone — no random state, so one
- * author wears the same icon on every surface, every load, cached or fresh. */
-export function identiconCells(pubkey: string): boolean[][] {
-	const seed = publisherHue(pubkey);
+ * author wears the same icon on every surface, every load, cached or fresh.
+ * Takes the seed the chip already derived, so one card pays one hash pass. */
+export function identiconCells(seed: number): boolean[][] {
 	const grid: boolean[][] = [];
 	for (let y = 0; y < 5; y++) {
 		const row: boolean[] = [];
