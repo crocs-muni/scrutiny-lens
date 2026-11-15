@@ -8,25 +8,35 @@
 
 	interface Props {
 		filtered: boolean;
+		/** #164: zero searches were asked — the question carried no term a
+		 * relay can match, so this pane must not talk about matches at all. */
+		noTerms?: boolean;
 		relayCount: number;
 		onClearFilters?(): void;
 		onAskDifferently(): void;
 	}
 
-	let { filtered, relayCount, onClearFilters, onAskDifferently }: Props = $props();
+	let { filtered, noTerms = false, relayCount, onClearFilters, onAskDifferently }: Props = $props();
 </script>
 
 <div class="flex w-full justify-center">
 	<div class="flex max-w-[420px] flex-col items-center gap-1.5 rounded-[10px] bg-surface p-6 text-center shadow-card">
 		<h3 class="font-sans text-[15px] font-semibold text-ink">
 			{/* honesty (spec §4): a filtered-out set is the filter's doing,
-				not the relays' — never blame the sources */ ''}
-			{filtered ? 'Nothing matched your filters' : 'Nothing matched on your relays'}
+				not the relays' — never blame the sources. #164: zero searches
+				means nothing was asked, so this is not a match verdict at all. */ ''}
+			{noTerms
+				? 'Nothing to search for'
+				: filtered
+					? 'Nothing matched your filters'
+					: 'Nothing matched on your relays'}
 		</h3>
 		<p class="text-[12.5px] leading-relaxed text-ink-2">
-			{filtered
-				? 'Relax the selection to see the rest of the result set.'
-				: 'Try a different spelling or identifier, or add more relays in Settings (Ctrl+,).'}
+			{noTerms
+				? 'That question has no word a relay can match. Use a product name, an identifier (CVE, cert id, package URL), or a term from the record you mean.'
+				: filtered
+					? 'Relax the selection to see the rest of the result set.'
+					: 'Try a different spelling or identifier, or add more relays in Settings (Ctrl+,).'}
 		</p>
 
 		<div class="mt-2 flex flex-wrap items-center justify-center gap-2">
@@ -52,9 +62,11 @@
 			{/* #131: the count is the run's own recorded pool, so 0 means "not
 				recorded" (legacy restored row), never "searched nobody" — state
 				the action alone rather than invent a tally (spec §2/§4). */ ''}
-			{relayCount > 0
-				? `Searched ${relayCount} relays · widen the relay list in Settings (Ctrl+,)`
-				: 'Widen the relay list in Settings (Ctrl+,)'}
+			{noTerms
+				? 'No query was sent to any relay'
+				: relayCount > 0
+					? `Searched ${relayCount} relays · widen the relay list in Settings (Ctrl+,)`
+					: 'Widen the relay list in Settings (Ctrl+,)'}
 		</p>
 	</div>
 </div>

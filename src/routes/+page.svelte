@@ -534,10 +534,20 @@
 	// §4 edge states: done with zero surfaced cards — either nothing matched
 	// at all (relays confirmed searchable → honest "nothing matched") or the
 	// facet selection narrowed everything away (filtered chip variant).
+	// #164 acceptance: a question with no searchable terms yields zero
+	// searches. The pane must name that, not blame the relays: zero searches
+	// means nothing was asked, so "Nothing matched" would be a false claim
+	// about the corpus (spec §2).
+	const noTerms = $derived(
+		investigation.result !== null &&
+			investigation.error === null &&
+			investigation.running === false &&
+			investigation.searches.length === 0
+	);
 	const emptyDone = $derived(
 		investigation.result !== null &&
 			investigation.error === null &&
-			investigation.searches.length > 0 &&
+			(investigation.searches.length > 0 || noTerms) &&
 			// The settle traversal (refreshSessionContext) runs while `running`
 			// and can turn 0 cards into N: 'Nothing matched' must wait for the
 			// honest end of the run, not paint mid-settle (#82 acceptance:
@@ -925,6 +935,7 @@
 										<!-- spec §4: relays confirmed searchable, zero matched -->
 										<ResultsEmpty
 											filtered={Object.keys(investigation.selections).length > 0}
+											{noTerms}
 											relayCount={investigation.runRelays.length}
 											onClearFilters={() => investigation.clearFacets()}
 											onAskDifferently={() => shell.home()}

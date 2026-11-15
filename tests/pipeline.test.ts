@@ -301,6 +301,26 @@ describe('runSearch — translate degradation notices (spec §4)', () => {
 		expect(notice?.message).toContain("falling back to a plain-text search of your question's terms");
 	});
 
+	it('a question with no searchable terms says so, and asks for a name (issue #164)', async () => {
+		const transport = new FakeTransport({ 'wss://a': { events: [] } });
+		const session = await runSearch({
+			question: 'what is it?',
+			relays: ['wss://a'],
+			provider: PROVIDER,
+			callLLM: llmPlan('garbage not json'),
+			transport,
+			admit: () => ({ ok: true })
+		});
+		// Zero probes: nothing a relay could match, and the notice must not
+		// blame the corpus or claim identifier-only.
+		expect(session.searches).toEqual([]);
+		const notice = session.notices.find(
+			(n) => n.kind === 'capability' && n.message.includes('AI translate degraded')
+		);
+		expect(notice?.message).toContain('no searchable terms in your question');
+		expect(notice?.message).not.toContain('identifier-only');
+	});
+
 	it('a one-token question degrades to one probe and a singular notice (issue #164)', async () => {
 		const transport = new FakeTransport({ 'wss://a': { events: [] } });
 		const session = await runSearch({

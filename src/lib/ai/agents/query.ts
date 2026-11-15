@@ -210,6 +210,11 @@ const STOPWORD: Record<string, true> = {
   their: true, them: true, there: true, these: true, this: true,
   to: true, was: true, were: true, what: true, which: true, who: true,
   why: true, with: true, you: true, your: true,
+  // Decision clauses (spec §3: "still certified" becomes a post-filter on
+  // the result set, never an extra search) — these words are in no event's
+  // word index and would spend a leg the discriminator needs.
+  still: true, yet: true, currently: true, now: true, anymore: true,
+  already: true, also: true,
 };
 
 /** Domain wrapper words appearing in thousands of record texts ("card",
@@ -225,6 +230,15 @@ const GENERIC: Record<string, true> = {
   platform: true, product: true, smartcard: true, vulnerability: true,
 };
 
+/** A plural domain noun is the same wrapper word: "which certificates and
+ * products are affected by ROCA?" would otherwise rank both plurals as RARE
+ * and spend all three legs before "roca" is ever asked (review finding). */
+function isGeneric(token: string): boolean {
+  if (GENERIC[token] === true) return true;
+  const singular = token.replace(/ies$/, "y").replace(/s$/, "");
+  return singular !== token && GENERIC[singular] === true;
+}
+
 type FallbackProbe = { kind: "text"; value: string; source: "fallback" };
 
 /** Short rare-term text probes, longest tokens first (issue #164): the
@@ -234,31 +248,25 @@ type FallbackProbe = { kind: "text"; value: string; source: "fallback" };
  * a generic word is only ever SOLO, because paired with a rare term it ANDs
  * the rare term's hits away ("roca affected cards" 2 batch-valid vs "roca"
  * 9, measured live 2026-11-07 on relay.scrutiny.cloud) — so "infineon
- * dossier" must never outrank "sle78". */
+ * dossier" must never outrank "sle78".
+ *
+ * A question with no searchable token returns NO probes: #164's acceptance
+ * asks for an honest no-search state naming the problem, not a raw-question
+ * probe (the very bug this ladder replaced). */
 function rareTermProbes(prose: string, max = 3): FallbackProbe[] {
   const tokens = (prose.toLowerCase().match(/[a-z0-9][a-z0-9-]*/g) ?? []).filter(
     (token) => STOPWORD[token] !== true,
   );
   // Longest first; ties keep first-seen order so the ladder is deterministic.
   const ranked = [...new Set(tokens)].sort((a, b) => b.length - a.length);
-  const rare = ranked.filter((token) => GENERIC[token] !== true);
-  const generic = ranked.filter((token) => GENERIC[token] === true);
+  const rare = ranked.filter((token) => !isGeneric(token));
+  const generic = ranked.filter((token) => isGeneric(token));
   const ladder: string[][] = [];
   // Rarest pair first — the narrow probe most likely to return records.
   if (rare.length >= 2) ladder.push(rare.slice(0, 2));
   for (const token of rare) ladder.push([token]);
   // Generics last, solo only (see the AND note above).
   for (const token of generic) ladder.push([token]);
-  // A question with no surviving token — all stopwords, or a script this
-  // tokenizer does not read — still gets one honest head probe. The bug this
-  // ladder replaces was the WHOLE question; "no search at all" is worse: the
-  // run goes empty and the §4 notice claims identifier-only with no
-  // identifier in sight. Three words is bounded, and never the raw question
-  // unless the question IS three words.
-  if (ladder.length === 0) {
-    const head = prose.trim().split(/\s+/).slice(0, 3).join(" ");
-    if (head !== "") ladder.push([head]);
-  }
 
   const probes: FallbackProbe[] = [];
   for (const terms of ladder) {

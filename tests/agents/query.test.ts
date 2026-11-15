@@ -325,21 +325,45 @@ describe("translateQuestion — zero-AI fallback ladder (issue #164, spec §2 ru
     expect(res.result.searches.map((s) => s.value)).toEqual(["affected", "cards"]);
   });
 
-  it("a question with no usable token still probes its head — never zero searches", async () => {
-    const res = await translateQuestion({
-      question: "what is it?",
-      provider: undefined,
-      callLLM: throwing("unused"),
-    });
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    // Every token is a stopword, so the ladder would be empty: the question
-    // head (three words at most) is the honest last resort. Zero searches
-    // would leave the run empty AND the §4 notice claiming identifier-only.
-    expect(res.result.searches).toEqual([
-      { kind: "text", value: "what is it?", source: "fallback" },
-    ]);
-  });
+	it('a question with no searchable term yields zero probes, never the raw question', async () => {
+		const res = await translateQuestion({
+			question: "what is it?",
+			provider: undefined,
+			callLLM: throwing("unused"),
+		});
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		// #164 acceptance: zero probes + an honest no-search state, not a
+		// raw-question probe (the bug the ladder replaced).
+		expect(res.result.searches).toEqual([]);
+	});
+
+	it('plural domain nouns are wrappers too, so the rare term keeps a leg', async () => {
+		const res = await translateQuestion({
+			question: "which certificates and products are affected by ROCA?",
+			provider: undefined,
+			callLLM: throwing("unused"),
+		});
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		const probes = res.result.searches.map((s) => s.value);
+		// "certificates"/"products"/"affected" are wrapper words; "roca" is
+		// the discriminator and must be probed first.
+		expect(probes[0]).toBe("roca");
+	});
+
+	it('decision-clause words never become probes (spec §3)', async () => {
+		const res = await translateQuestion({
+			question: "which cards are still certified?",
+			provider: undefined,
+			callLLM: throwing("unused"),
+		});
+		expect(res.ok).toBe(true);
+		if (!res.ok) return;
+		const probes = res.result.searches.map((s) => s.value);
+		expect(probes.some((p) => /\bstill\b/.test(p))).toBe(false);
+		expect(probes[0]).toBe("certified");
+	});
 
   it("an empty prose remainder after identifier extraction is not searched again", async () => {
     const { calls, call } = fakeLLM("[]");

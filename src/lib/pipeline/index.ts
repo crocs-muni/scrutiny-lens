@@ -239,6 +239,7 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 	if (plan.ok && plan.result.degradation !== undefined) {
 		const d = plan.result.degradation;
 		const fallbackSearches = searches.filter((s) => s.source === 'fallback').length;
+		const identifierSearches = searches.filter((s) => s.source === 'identifier').length;
 		// §2: name the failure AND its reason — a bare (invalid_request) hides
 		// config-vs-transport truths (e.g. 'model required' vs 404). d.message
 		// comes from provider-validation issues / error text; provider.ts
@@ -249,7 +250,11 @@ export async function runSearch(opts: RunSearchOptions): Promise<SearchSession> 
 			message:
 				fallbackSearches > 0
 					? `AI translate degraded (${d.kind}: ${reason}) — falling back to ${fallbackSearches === 1 ? 'a plain-text search' : 'plain-text searches'} of your question's terms`
-					: `AI translate degraded (${d.kind}: ${reason}) — identifier-only searches`
+					: identifierSearches > 0
+						? `AI translate degraded (${d.kind}: ${reason}) — identifier-only searches`
+						: // #164 acceptance: a question with no searchable terms says so
+							// and asks for a name, instead of blaming the relays.
+							`AI translate degraded (${d.kind}: ${reason}) — no searchable terms in your question; add a product name or an identifier`
 		};
 		notices.push(notice);
 		emitNotice(notice);
