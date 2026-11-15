@@ -54,7 +54,10 @@ describe('mergeSettledCards — the settle merge', () => {
 
 	it('a card the fresh set dropped stays live ("the card I am looking at" wins)', () => {
 		const live = card('a', { interpreted: true, title: 'AI' });
-		expect(mergeSettledCards([live], [card('b')])).toEqual([live]);
+		const merged = mergeSettledCards([live], [card('b')]);
+		// The dropped card stays in its slot; the arrival appends.
+		expect(merged[0]).toBe(live);
+		expect(merged.map((c) => c.id)).toEqual(['a', 'b']);
 	});
 
 	it('keeps live slot order and appends context arrivals at the end', () => {
