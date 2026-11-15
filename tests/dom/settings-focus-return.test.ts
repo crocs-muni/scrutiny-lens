@@ -73,7 +73,7 @@ describe('settings dialog focus return (APG dialog-modal, WCAG 2.4.3)', () => {
 		closeButton.click();
 		// Force the branch: re-inert the wrapper the trigger lives in.
 		const wrapper = document.getElementById('settings-trigger')?.parentElement;
-		if (wrapper === null) throw new Error('wrapper not found');
+		if (wrapper === null || wrapper === undefined) throw new Error('wrapper not found');
 		wrapper.setAttribute('inert', '');
 
 		// The cleanup ran; nothing hung. Focus is wherever the DOM put it.
