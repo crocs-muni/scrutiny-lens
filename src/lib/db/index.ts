@@ -49,7 +49,11 @@ export const DB_NAME = 'scrutiny-lens';
 // The PersistedSessionRun.relays field (issue #131) deliberately did NOT
 // bump past 7: sessionRuns stores opaque values with no index over that
 // shape, so the addition is type-only — a new store/index WOULD need one.
-export const DB_VERSION = 7;
+//
+// v8 (issue #135) adds profiles, the device's kind-0 snapshots. Same no-op
+// store-set change as v4..v7 — the bump is what makes the guarded create
+// fire for every live db at ≤ 7.
+export const DB_VERSION = 8;
 const SETTINGS_KEY = 'app';
 
 /** Ring size for the dead-letter store; deadLetter.ts imports this so the
@@ -129,6 +133,23 @@ export interface CachedEvent extends NostrEvent {
 	ttags: string[];
 }
 
+/** One publisher's kind-0 identity as this device last resolved it (issue
+ * #135, spec §6). Keyed by the hex author id the cards already carry, so a
+ * cache-restored card asks the local row before it asks a relay.
+ *
+ * A kind-0 is a REPLACEABLE event (NIP-01): the row is a snapshot of what the
+ * author published when we last looked, never "the author's current name".
+ * `at` records when we looked, so a later surface could qualify staleness;
+ * today nothing hides a row on age (see profiles.ts for why re-asking every
+ * restore is the worse truth). */
+export interface PersistedProfile {
+	pubkey: string;
+	name: string | null;
+	picture: string | null;
+	/** Epoch ms of the relay read that produced this snapshot. */
+	at: number;
+}
+
 interface LensDB extends DBSchema {
 	settings: { key: string; value: { key: string; value: Partial<PersistedSettings> } };
 	interpretations: { key: [string, string]; value: PersistedInterpretation };
@@ -152,6 +173,9 @@ interface LensDB extends DBSchema {
 	// v7 (issue #83): one settled run per session — the restore seam's
 	// frontier. Keyed by session id so a session yields at most one row.
 	sessionRuns: { key: string; value: PersistedSessionRun };
+	// v8 (issue #135): one kind-0 snapshot per publisher, keyed by the hex
+	// author id a card carries (never an npub — the card hands us hex).
+	profiles: { key: string; value: PersistedProfile };
 }
 
 let conn: IDBPDatabase<LensDB> | undefined;
@@ -272,6 +296,11 @@ async function open(): Promise<void> {
 					// v7 (issue #83): the session→run mapping. Same guard shape
 					// as every store above.
 					db.createObjectStore('sessionRuns', { keyPath: 'sessionId' });
+				}
+				if (!db.objectStoreNames.contains('profiles')) {
+					// v8 (issue #135): the device's kind-0 snapshots. Same guard
+					// shape as every store above; no index — keyed reads only.
+					db.createObjectStore('profiles', { keyPath: 'pubkey' });
 				}
 			}
 		});
@@ -648,6 +677,24 @@ export async function listEvents(): Promise<CachedEvent[]> {
 			return signed === row ? row : { ...signed, ttags: tTags(signed) };
 		});
 	}, []);
+}
+
+/** Records the kind-0 snapshot a relay read just produced (issue #135,
+ * spec §6). Upsert-by-pubkey: a newer snapshot replaces the older one —
+ * NIP-01 kind-0 is replaceable, so last-observed wins. Best-effort like
+ * every write here: a failed put simply leaves the previous row (or none). */
+export async function saveProfile(profile: PersistedProfile): Promise<void> {
+	await attempt(async (d) => {
+		await d.put('profiles', normalize(profile));
+	}, undefined);
+}
+
+/** The kind-0 snapshot this device last stored for an author, or null when
+ * it never resolved one (issue #135). Silent-degrade contract (spec §6): a
+ * memory-only tab answers null, which the profiles seam reads as "nothing
+ * local" and asks the relays exactly as before. */
+export async function loadProfile(pubkey: string): Promise<PersistedProfile | null> {
+	return attempt(async (d) => (await d.get('profiles', pubkey)) ?? null, null);
 }
 
 /** "Clear all local data" (spec §6). Records are cleared through our own

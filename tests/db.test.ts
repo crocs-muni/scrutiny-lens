@@ -18,6 +18,7 @@ import {
 	listEvents,
 	listSessions,
 	loadDeadLetters,
+	loadProfile,
 	loadSettings,
 	putChatMessage,
 	putChatPins,
@@ -26,8 +27,10 @@ import {
 	putSessionRun,
 	getSessionRun,
 	saveInterpretation,
+	saveProfile,
 	saveSettings,
 	type PersistedChatMessage,
+	type PersistedProfile,
 	type PersistedSessionRun,
 	type PersistedSettings
 } from '$lib/db';
@@ -239,6 +242,36 @@ describe('sessionRuns store (issue #83, v7)', () => {
 		await clearAllLocalData();
 		expect(await getSessionRun('s1')).toBeNull();
 		expect((await dumpAllForTests()).sessionRuns).toEqual([]);
+	});
+});
+
+describe('profiles store (issue #135, v8)', () => {
+	const alice: PersistedProfile = {
+		pubkey: 'ab'.repeat(32),
+		name: 'Alice',
+		picture: 'https://img.example/x.png',
+		at: 1_700_000_000_000
+	};
+
+	it('round-trips one kind-0 snapshot per author, last write winning', async () => {
+		await saveProfile(alice);
+		expect(await loadProfile(alice.pubkey)).toEqual(alice);
+
+		// NIP-01 kind-0 is replaceable: a newer read replaces the snapshot.
+		await saveProfile({ ...alice, name: 'Alice B.', at: alice.at + 60_000 });
+		expect((await loadProfile(alice.pubkey))?.name).toBe('Alice B.');
+		expect((await dumpAllForTests()).profiles).toHaveLength(1);
+	});
+
+	it('answers null for an author this device never resolved', async () => {
+		expect(await loadProfile('cd'.repeat(32))).toBeNull();
+	});
+
+	it('clear-all covers the profile store', async () => {
+		await saveProfile(alice);
+		await clearAllLocalData();
+		expect(await loadProfile(alice.pubkey)).toBeNull();
+		expect((await dumpAllForTests()).profiles).toEqual([]);
 	});
 });
 
@@ -628,6 +661,40 @@ describe('schema upgrade (v1 → v2 convergence)', () => {
 		});
 		expect((await getSessionRun('s-old'))?.admittedIds).toEqual(['a1']);
 		expect(await listSessions()).toEqual([{ id: 's-old', title: 'pre-v7 run', createdAt: 123 }]);
+		await clearAllLocalData();
+	});
+
+	it('a live v7 database gains the profiles store without losing rows (issue #135)', async () => {
+		// Same lesson as v4..v7: the guarded create is inert unless the
+		// requested version exceeds the live one, so the bump to 8 is what
+		// makes a returning user's device start answering publisher identity
+		// locally instead of re-asking relays on every restore.
+		await seedLegacy(
+			(db) => {
+				db.createObjectStore('settings', { keyPath: 'key' });
+				db.createObjectStore('interpretations', { keyPath: ['eventId', 'model'] });
+				const sessions = db.createObjectStore('sessions', { keyPath: 'id' });
+				sessions.createIndex('createdAt', 'createdAt');
+				db.createObjectStore('deadLetters', { keyPath: 'id', autoIncrement: true });
+				const events = db.createObjectStore('events', { keyPath: 'id' });
+				events.createIndex('ttags', 'ttags', { multiEntry: true });
+				events.createIndex('created_at', 'created_at');
+				const chatMessages = db.createObjectStore('chatMessages', { keyPath: 'id' });
+				chatMessages.createIndex('sessionId', 'sessionId');
+				db.createObjectStore('chatPins', { keyPath: 'sessionId' });
+				db.createObjectStore('relayHints', { keyPath: 'eventId' });
+				db.createObjectStore('sessionRuns', { keyPath: 'sessionId' });
+			},
+			async (db) => {
+				await db.put('sessions', { id: 's-v7', title: 'pre-v8 run', createdAt: 123 });
+			},
+			7
+		);
+		// Post-upgrade the new store works and the old rows ride along.
+		expect(await loadProfile('ab'.repeat(32))).toBeNull();
+		await saveProfile({ pubkey: 'ab'.repeat(32), name: 'Alice', picture: null, at: 1 });
+		expect((await loadProfile('ab'.repeat(32)))?.name).toBe('Alice');
+		expect(await listSessions()).toEqual([{ id: 's-v7', title: 'pre-v8 run', createdAt: 123 }]);
 		await clearAllLocalData();
 	});
 
