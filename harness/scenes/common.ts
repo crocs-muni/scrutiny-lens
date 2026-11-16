@@ -15,7 +15,7 @@ export const MASK_ELAPSED = [{ pattern: / · \d+\.\ds\b/, replacement: ' · 0.0s
 /** Ask from the hero composer the way a person does. */
 export async function ask(page: Page, url: string, question: string): Promise<void> {
 	if (!page.url().startsWith(url)) await page.goto(`${url}/`);
-	const composer = page.getByLabel('Question');
+	const composer = page.getByLabel('Search');
 	await composer.fill(question);
 	await composer.press('Enter');
 }

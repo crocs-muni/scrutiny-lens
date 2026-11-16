@@ -53,6 +53,21 @@ describe('hero composer — search affordance (#139)', () => {
 		expect(on_submit).toHaveBeenCalledWith('what can you do?');
 	});
 
+	it('a bare ? shows guidance and runs no search (#139 acceptance)', async () => {
+		const { on_submit, field } = mount();
+		await typeInto(field, '?');
+		await fireEvent.keyDown(field, { key: 'Enter' });
+		expect(on_submit).not.toHaveBeenCalled();
+		expect(screen.getByText(/A search needs a product name/)).toBeTruthy();
+	});
+
+	it('a content question that sounds meta still searches (never a false guard)', async () => {
+		const { on_submit, field } = mount();
+		await typeInto(field, 'what do you know about ROCA');
+		await fireEvent.keyDown(field, { key: 'Enter' });
+		expect(on_submit).toHaveBeenCalledWith('what do you know about ROCA');
+	});
+
 	it('treats an identifier question as a search, never as meta', async () => {
 		const { on_submit, field } = mount();
 		await typeInto(field, 'what can you tell me about CVE-2017-15361');
