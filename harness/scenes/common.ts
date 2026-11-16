@@ -15,7 +15,10 @@ export const MASK_ELAPSED = [{ pattern: / · \d+\.\ds\b/, replacement: ' · 0.0s
 /** Ask from the hero composer the way a person does. */
 export async function ask(page: Page, url: string, question: string): Promise<void> {
 	if (!page.url().startsWith(url)) await page.goto(`${url}/`);
-	const composer = page.getByLabel('Search');
+	// Exact, role-scoped: 'Search' also prefixes the recents rail's
+	// "Search sessions" field and the submit tooltip, and Playwright's label
+	// match is a substring by default.
+	const composer = page.getByRole('textbox', { name: 'Search', exact: true });
 	await composer.fill(question);
 	await composer.press('Enter');
 }
