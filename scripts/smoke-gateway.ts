@@ -276,7 +276,7 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
       res.end(
         JSON.stringify({
           object: "list",
-          data: [...Object.keys(BUCKETS), "smoke-ui", "smoke-ui-fail"].map((id) => ({ id })),
+          data: [...Object.keys(BUCKETS), "smoke-ui", "smoke-ui-slow", "smoke-ui-fail"].map((id) => ({ id })),
         }),
       );
       return;
@@ -365,17 +365,23 @@ export function smokeGatewayMiddleware(): Connect.NextHandleFunction {
               .at(-1)
               ?.slice(0, 60) ?? "";
           const answer = `kind: tag\nvalue: cc:LENS29-ROCA\n\nkind: text\nvalue: ${question}`;
-          recordCorpus(model, {
-            status: 200,
-            body: { choices: [{ message: { role: "assistant", content: answer } }] },
-          });
-          res.statusCode = 200;
-          res.setHeader("content-type", "application/json");
-          res.end(
-            JSON.stringify({
-              choices: [{ message: { role: "assistant", content: answer } }],
-            }),
-          );
+          // `smoke-ui-slow` holds the translate answer for 12s so the
+          // translate-stage waiting block (#91) can be seen and captured —
+          // the one stage with nothing else on screen.
+          const delay = model.startsWith("smoke-ui-slow") ? 12_000 : 0;
+          setTimeout(() => {
+            recordCorpus(model, {
+              status: 200,
+              body: { choices: [{ message: { role: "assistant", content: answer } }] },
+            });
+            res.statusCode = 200;
+            res.setHeader("content-type", "application/json");
+            res.end(
+              JSON.stringify({
+                choices: [{ message: { role: "assistant", content: answer } }],
+              }),
+            );
+          }, delay);
           return;
         }
         const wantsStream =

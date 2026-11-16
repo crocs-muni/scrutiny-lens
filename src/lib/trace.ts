@@ -62,6 +62,13 @@ const LABELS: Record<PhaseRow['id'], string> = {
 	decouple: 'Decoupling and filling the cards'
 };
 
+/** The one name a stage has in this viewport: the trace row renders it and
+ * the translate waiting block (#91) reuses it, so the reader never reads two
+ * labels for the same stage at once. */
+export function phaseLabel(id: PhaseRow['id']): string {
+	return LABELS[id];
+}
+
 /** What the literal layer calls a relay: host + path, 'local cache' for the
  * cache leg, and the raw url when it does not parse (never invent a host —
  * spec §2). The path is part of the label because tick identity is the text
@@ -108,6 +115,15 @@ function searchTicks(searches: SearchRequest[]): TraceTick[] {
 export function searchTallyLabel(searches: readonly SearchRequest[]): string {
 	if (searches.length === 0) return '';
 	return ` via ${searches.length} ${searches.length === 1 ? 'search' : 'searches'}`;
+}
+
+/** #91: the waiting block covers the two stages that have nothing in the rail
+ * — translate (one model round trip) and fetch before the first slice admits
+ * an event (the issue's "before the first relay slice"). From the first
+ * admitted event on, the real skeleton cards are the signal; a settled run
+ * has no business claiming it is working. */
+export function showsStageWait(phase: Phase | 'idle', running: boolean, skeletons: number): boolean {
+	return running && skeletons === 0 && (phase === 'translate' || phase === 'fetch');
 }
 
 export function derivePhaseRows(input: TraceInput): PhaseRow[] {

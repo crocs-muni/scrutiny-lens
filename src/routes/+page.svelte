@@ -23,6 +23,7 @@
 	import ResultCard from '$lib/components/ui/ResultCard.svelte';
 	import FacetRail from '$lib/components/ui/FacetRail.svelte';
 	import NoticeBanner from '$lib/components/ui/NoticeBanner.svelte';
+	import TranslateWait from '$lib/components/ui/TranslateWait.svelte';
 	import ResultsEmpty from '$lib/components/ui/ResultsEmpty.svelte';
 	import ResultsError from '$lib/components/ui/ResultsError.svelte';
 	import { applyFacets, cohortLine } from '$lib/pipeline/cards';
@@ -44,7 +45,7 @@
 	import type { ProviderOverrideInput } from '$lib/ai/provider';
 	import { bestIdentifier } from '$lib/ai/projector';
 	import { subjectGrounding, type NostrEvent } from '$lib/fabric';
-	import { searchTallyLabel } from '$lib/trace';
+	import { searchTallyLabel, showsStageWait } from '$lib/trace';
 
 	let centerHeight = $state(0);
 	/** The bar persists across the results↔session hop; the focus target
@@ -561,6 +562,13 @@
 			(investigation.restoredEvicted === null || investigation.restoredEvicted === 0) &&
 			viewCards.length === 0
 	);
+	// #91: the two stages with nothing to show — translate (one model round
+	// trip, 30–60s cold) and fetch before the first slice admits an event.
+	// The real skeleton cards take over from the first admitted event, so the
+	// block never paints over them, and never on a settled run.
+	const stageWait = $derived(
+		showsStageWait(investigation.phase, investigation.running, investigation.skeletons.length)
+	);
 	const anyRelayOk = $derived(
 		investigation.slices.some((s) => s.status === 'ok') || investigation.result !== null
 	);
@@ -931,6 +939,15 @@
 									<div class="w-full max-w-[760px] shrink-0">
 										<TaskTrace />
 									</div>
+									{#if stageWait}
+										<!-- #91: translate, then fetch until the first admitted
+											event paints the real skeleton cards. -->
+										<div class="w-full max-w-[760px] shrink-0">
+											<TranslateWait
+												stage={investigation.phase === 'fetch' ? 'fetch' : 'translate'}
+											/>
+										</div>
+									{/if}
 									{#if emptyDone}
 										<!-- spec §4: relays confirmed searchable, zero matched -->
 										<ResultsEmpty
