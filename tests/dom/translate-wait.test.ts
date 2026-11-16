@@ -27,7 +27,7 @@ describe('translate waiting block (#91)', () => {
 		expect(grid ?? container.querySelector('.grid')?.closest('[aria-hidden="true"]')).toBeTruthy();
 	});
 
-	it('ticks without re-announcing, then says once that a cold call is slow', async () => {
+	it('ticks without re-announcing and keeps one stable label (#91: no new status text)', async () => {
 		vi.useFakeTimers();
 		render(TranslateWait, { stage: 'translate' });
 
@@ -35,15 +35,16 @@ describe('translate waiting block (#91)', () => {
 		expect(screen.getByRole('status').textContent?.trim()).toBe('Translating query…');
 		expect(screen.getByText('3s')).toBeTruthy();
 
-		// The one update in the whole wait, at 30s.
+		// The timer moves; the announced label never does.
 		await vi.advanceTimersByTimeAsync(28_000);
-		expect(screen.getByRole('status').textContent).toContain('Still working');
+		expect(screen.getByRole('status').textContent?.trim()).toBe('Translating query…');
 		expect(screen.getByText('31s')).toBeTruthy();
+	});
 
-		// Nothing further changes: the label is stable from here on.
-		await vi.advanceTimersByTimeAsync(10_000);
-		expect(screen.getByRole('status').textContent).toContain('Still working');
-		expect(screen.getByText('41s')).toBeTruthy();
+	it('names the fetch stage when the run has already searched', () => {
+		vi.useFakeTimers();
+		render(TranslateWait, { stage: 'fetch' });
+		expect(screen.getByRole('status').textContent?.trim()).toBe('Querying sources…');
 	});
 
 	it('formats a minute and beyond', async () => {

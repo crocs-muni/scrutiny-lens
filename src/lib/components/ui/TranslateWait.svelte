@@ -49,12 +49,11 @@
 	const elapsed = $derived(
 		seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 	);
-	/** One announcement, never a stream of them (#91's a11y finding). */
-	const label = $derived(
-		seconds < 30
-			? `${phaseLabel(stage === 'translate' ? 'interpret' : 'sources')}…`
-			: 'Still working — a cold endpoint or a slow relay can take a minute.'
-	);
+	/** One stable string, announced once on mount: #91 asks for prominence and
+	 * placement during the slow phases, "not new status text". The elapsed
+	 * timer carries progress; the label never guesses a cause (a 429, a
+	 * backoff and a cold endpoint are indistinguishable from here). */
+	const label = $derived(`${phaseLabel(stage === 'translate' ? 'interpret' : 'sources')}…`);
 </script>
 
 <div class="flex w-full items-center gap-2.5 rounded-[10px] border border-line bg-surface px-4 py-3">
