@@ -23,6 +23,7 @@
 	import { fetchModels } from '$lib/ai/models';
 	import { settings } from '$lib/settings.svelte';
 	import { isCapabilityQuestion } from '$lib/chat/capability';
+	import { detectIdentifiers } from '$lib/ai/agents/query';
 	import KeyHint from '../shell/KeyHint.svelte';
 
 	interface Props {
@@ -36,7 +37,8 @@
 
 	let draft = $state('');
 	let modelOpen = $state(false);
-	let metaNote = $state(false);
+	/** Why the draft was held instead of searched (#139's guidance). */
+	let guard = $state<'meta' | 'trivial' | null>(null);
 	let inputEl: HTMLInputElement | null = null;
 
 	let models = $state<string[]>([]);
@@ -47,18 +49,25 @@
 	function submit(question: string): void {
 		onSubmit(question);
 		draft = '';
-		metaNote = false;
+		guard = null;
 		modelOpen = false;
 	}
+
+	/** A draft with no searchable content at all — `?`, `…`, punctuation. */
+	const TRIVIAL = /^[\s?!.…]*$/;
 
 	function send(): void {
 		if (!canSend) return;
 		const question = draft.trim();
-		// #139: a meta question ("what can you do?") searches no relay and
-		// matches no event (#164's class). The reader is told once, and may
-		// still search it — guidance, never a block.
-		if (isCapabilityQuestion(question)) {
-			metaNote = true;
+		// #139 acceptance: a bare `?` shows guidance and runs NO search.
+		if (TRIVIAL.test(question)) {
+			guard = 'trivial';
+			return;
+		}
+		// A question that names an identifier is a content question: it routes
+		// to a tag search (spec §1) and never enters the meta lane.
+		if (detectIdentifiers(question).length === 0 && isCapabilityQuestion(question)) {
+			guard = 'meta';
 			return;
 		}
 		submit(question);
@@ -75,8 +84,8 @@
 			modelOpen = false;
 			return;
 		}
-		if (event.key === 'Escape' && metaNote) {
-			metaNote = false;
+		if (event.key === 'Escape' && guard !== null) {
+			guard = null;
 			return;
 		}
 		if (event.key === 'Enter' && !event.isComposing) {
@@ -138,12 +147,12 @@
 			id="hero-search"
 			bind:this={inputEl}
 			bind:value={draft}
+			oninput={() => (guard = null)}
 			{onkeydown}
 			autofocus
 			type="text"
 			autocomplete="off"
 			spellcheck="false"
-			aria-label="Search"
 			placeholder="Product, identifier (CVE, cert id, package URL), or plain English"
 			class="min-w-0 flex-1 bg-transparent py-1.5 text-[14px] leading-5 text-ink outline-none placeholder:text-ink-2"
 		/>
@@ -220,7 +229,10 @@
 		</div>
 
 		<!-- send: a search glyph, not the chat up-arrow (the arrow was half of
-			what made this read as chat, #139). -->
+			what made this read as chat, #139). The tooltip carries the three
+			input shapes the placeholder only lists — one identifier, one prose
+			question, one prefix:value (#139's "placeholder + tooltip examples").
+			Native `title=` is banned here (tests/no-native-title.test.ts). -->
 		<KeyHint
 			label="Search"
 			keys="Enter"
@@ -228,6 +240,13 @@
 			class="flex size-8 shrink-0 items-center justify-center rounded-control transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94]"
 			onclick={send}
 		>
+			{#snippet content()}
+				<span class="flex flex-col gap-1 text-[11px] leading-tight">
+					<span class="font-mono">CVE-2017-15361</span>
+					<span class="text-ink-2">card dossier for Infineon SLE78</span>
+					<span class="font-mono">cc:ANSSI-CC-2015/12</span>
+				</span>
+			{/snippet}
 			<span
 				class="flex size-8 items-center justify-center rounded-control"
 				style:background={canSend ? 'var(--ink)' : 'var(--line-strong)'}
@@ -238,18 +257,24 @@
 		</KeyHint>
 	</div>
 
-	{#if metaNote}
-		<div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-ink-2">
-			<span>
-				That reads like a question about this app — a relay search usually matches nothing for it.
-			</span>
-			<button
-				type="button"
-				onclick={searchAnyway}
-				class="rounded-full border border-line-strong px-2.5 py-1 text-[11.5px] font-medium text-ink hover:bg-inset"
-			>
-				Search anyway
-			</button>
-		</div>
-	{/if}
+	<!-- Announce the guidance, not just paint it: focus stays in the field, so
+		a silent insertion reads as a broken button. One persistent region. -->
+	<div aria-live="polite">
+		{#if guard !== null}
+			<div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-ink-2">
+				<span>
+					{guard === 'trivial'
+						? 'A search needs a product name, an identifier, or a question — a bare symbol finds nothing.'
+						: 'That reads like a question about this app — a relay search usually matches nothing for it.'}
+				</span>
+				<button
+					type="button"
+					onclick={searchAnyway}
+					class="rounded-full border border-line-strong px-2.5 py-1 text-[11.5px] font-medium text-ink hover:bg-inset"
+				>
+					Search anyway
+				</button>
+			</div>
+		{/if}
+	</div>
 </div>

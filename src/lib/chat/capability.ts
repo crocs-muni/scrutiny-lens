@@ -32,7 +32,7 @@ export function sessionFacts(events: readonly NostrEvent[]): SessionFacts {
  * question that names an identifier is about a record, not about the
  * session, and must reach the grounded lane. */
 const META_QUESTION: readonly RegExp[] = [
-	/\bwhat (can|do) you (do|answer|know|see|have)\b/,
+	/\bwhat (can|do) you (do|answer)\b/,
 	/\bwhat (are|is) you\b/,
 	/\bwho are you\b/,
 	/\bwhat (does|is) this (app|tool|thing)\b/,
@@ -50,7 +50,7 @@ const META_QUESTION: readonly RegExp[] = [
 
 /** Identifier questions belong to the grounded lane even when they read like
  * meta questions ("what can you tell me about CVE-2017-15361"). */
-const IDENTIFIER = /\b(cve-\d{4}-\d+|ghsa-[a-z0-9]{4,})|purl:|cpe:|cc:|fips:|fcc-id:|swid:|gtin:|pp:|scheme:/i;
+const IDENTIFIER = /\b(cve-\d{4}-\d+|ghsa-[a-z0-9]{4,})|purl:|pkg:|cpe:|cc:|fips:|fcc-id:|swid:|gtin:|pp:|scheme:/i;
 
 export function isCapabilityQuestion(question: string): boolean {
 	const text = question.toLowerCase().trim();
