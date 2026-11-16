@@ -153,7 +153,6 @@
 			type="text"
 			autocomplete="off"
 			spellcheck="false"
-			title="Examples: CVE-2017-15361 · card dossier for Infineon SLE78 · cc:ANSSI-CC-2015/12"
 			placeholder="Product, identifier (CVE, cert id, package URL), or plain English"
 			class="min-w-0 flex-1 bg-transparent py-1.5 text-[14px] leading-5 text-ink outline-none placeholder:text-ink-2"
 		/>
@@ -230,7 +229,10 @@
 		</div>
 
 		<!-- send: a search glyph, not the chat up-arrow (the arrow was half of
-			what made this read as chat, #139). -->
+			what made this read as chat, #139). The tooltip carries the three
+			input shapes the placeholder only lists — one identifier, one prose
+			question, one prefix:value (#139's "placeholder + tooltip examples").
+			Native `title=` is banned here (tests/no-native-title.test.ts). -->
 		<KeyHint
 			label="Search"
 			keys="Enter"
@@ -238,6 +240,13 @@
 			class="flex size-8 shrink-0 items-center justify-center rounded-control transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94]"
 			onclick={send}
 		>
+			{#snippet content()}
+				<span class="flex flex-col gap-1 text-[11px] leading-tight">
+					<span class="font-mono">CVE-2017-15361</span>
+					<span class="text-ink-2">card dossier for Infineon SLE78</span>
+					<span class="font-mono">cc:ANSSI-CC-2015/12</span>
+				</span>
+			{/snippet}
 			<span
 				class="flex size-8 items-center justify-center rounded-control"
 				style:background={canSend ? 'var(--ink)' : 'var(--line-strong)'}
