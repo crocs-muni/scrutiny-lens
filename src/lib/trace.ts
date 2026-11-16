@@ -117,12 +117,13 @@ export function searchTallyLabel(searches: readonly SearchRequest[]): string {
 	return ` via ${searches.length} ${searches.length === 1 ? 'search' : 'searches'}`;
 }
 
-/** #91: the waiting block exists for exactly one stage — translate, while the
- * run is live. Fetch paints real skeletons at the first EOSE, so anything
- * later would double up on a signal the rail already carries; a settled run
+/** #91: the waiting block covers the two stages that have nothing in the rail
+ * — translate (one model round trip) and fetch before the first slice admits
+ * an event (the issue's "before the first relay slice"). From the first
+ * admitted event on, the real skeleton cards are the signal; a settled run
  * has no business claiming it is working. */
-export function showsTranslateWait(phase: Phase | 'idle', running: boolean): boolean {
-	return phase === 'translate' && running;
+export function showsStageWait(phase: Phase | 'idle', running: boolean, skeletons: number): boolean {
+	return running && skeletons === 0 && (phase === 'translate' || phase === 'fetch');
 }
 
 export function derivePhaseRows(input: TraceInput): PhaseRow[] {

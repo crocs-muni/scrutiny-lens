@@ -13,7 +13,7 @@ afterEach(() => {
 describe('translate waiting block (#91)', () => {
 	it('announces one stable label and keeps the timer out of the live region', () => {
 		vi.useFakeTimers();
-		const { container } = render(TranslateWait);
+		const { container } = render(TranslateWait, { stage: 'translate' });
 
 		const status = container.querySelector('[role="status"]');
 		expect(status?.textContent?.trim()).toBe('Translating query…');
@@ -29,7 +29,7 @@ describe('translate waiting block (#91)', () => {
 
 	it('ticks without re-announcing, then says once that a cold call is slow', async () => {
 		vi.useFakeTimers();
-		render(TranslateWait);
+		render(TranslateWait, { stage: 'translate' });
 
 		await vi.advanceTimersByTimeAsync(3000);
 		expect(screen.getByRole('status').textContent?.trim()).toBe('Translating query…');
@@ -37,18 +37,18 @@ describe('translate waiting block (#91)', () => {
 
 		// The one update in the whole wait, at 30s.
 		await vi.advanceTimersByTimeAsync(28_000);
-		expect(screen.getByRole('status').textContent).toContain('Still translating');
+		expect(screen.getByRole('status').textContent).toContain('Still working');
 		expect(screen.getByText('31s')).toBeTruthy();
 
 		// Nothing further changes: the label is stable from here on.
 		await vi.advanceTimersByTimeAsync(10_000);
-		expect(screen.getByRole('status').textContent).toContain('Still translating');
+		expect(screen.getByRole('status').textContent).toContain('Still working');
 		expect(screen.getByText('41s')).toBeTruthy();
 	});
 
 	it('formats a minute and beyond', async () => {
 		vi.useFakeTimers();
-		render(TranslateWait);
+		render(TranslateWait, { stage: 'translate' });
 		await vi.advanceTimersByTimeAsync(65_000);
 		expect(screen.getByText('1m 5s')).toBeTruthy();
 	});
