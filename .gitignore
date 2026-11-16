@@ -33,6 +33,8 @@ vite.config.ts.timestamp-*
 research/
 docs/*.html
 docs/pr-artifacts/
+# comparison pages / mockups kept local, never shipped (owner ruling)
+artifacts/
 fixtures/RELAY-NOTES.md
 .claude/
 screens.pen
