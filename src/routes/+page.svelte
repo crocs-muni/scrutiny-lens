@@ -23,6 +23,7 @@
 	import ResultCard from '$lib/components/ui/ResultCard.svelte';
 	import FacetRail from '$lib/components/ui/FacetRail.svelte';
 	import NoticeBanner from '$lib/components/ui/NoticeBanner.svelte';
+	import TranslateWait from '$lib/components/ui/TranslateWait.svelte';
 	import ResultsEmpty from '$lib/components/ui/ResultsEmpty.svelte';
 	import ResultsError from '$lib/components/ui/ResultsError.svelte';
 	import { applyFacets, cohortLine } from '$lib/pipeline/cards';
@@ -44,7 +45,7 @@
 	import type { ProviderOverrideInput } from '$lib/ai/provider';
 	import { bestIdentifier } from '$lib/ai/projector';
 	import { subjectGrounding, type NostrEvent } from '$lib/fabric';
-	import { searchTallyLabel } from '$lib/trace';
+	import { searchTallyLabel, showsTranslateWait } from '$lib/trace';
 
 	let centerHeight = $state(0);
 	/** The bar persists across the results↔session hop; the focus target
@@ -561,6 +562,12 @@
 			(investigation.restoredEvicted === null || investigation.restoredEvicted === 0) &&
 			viewCards.length === 0
 	);
+	// #91: the ONE stage with nothing to show. Translate is a single model
+	// round trip (30–60s cold, spec §4's slow-AI row) and the rail below the
+	// trace is empty until the first slice admits events and paints fetch
+	// skeletons. The block appears only in that gap — never over skeletons,
+	// never on a settled run.
+	const translateWait = $derived(showsTranslateWait(investigation.phase, investigation.running));
 	const anyRelayOk = $derived(
 		investigation.slices.some((s) => s.status === 'ok') || investigation.result !== null
 	);
@@ -931,6 +938,13 @@
 									<div class="w-full max-w-[760px] shrink-0">
 										<TaskTrace />
 									</div>
+									{#if translateWait}
+										<!-- #91: translate is the only stage with nothing to
+											show; the fetch skeletons take over at first EOSE. -->
+										<div class="w-full max-w-[760px] shrink-0">
+											<TranslateWait />
+										</div>
+									{/if}
 									{#if emptyDone}
 										<!-- spec §4: relays confirmed searchable, zero matched -->
 										<ResultsEmpty

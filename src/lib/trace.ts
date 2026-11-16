@@ -110,6 +110,14 @@ export function searchTallyLabel(searches: readonly SearchRequest[]): string {
 	return ` via ${searches.length} ${searches.length === 1 ? 'search' : 'searches'}`;
 }
 
+/** #91: the waiting block exists for exactly one stage — translate, while the
+ * run is live. Fetch paints real skeletons at the first EOSE, so anything
+ * later would double up on a signal the rail already carries; a settled run
+ * has no business claiming it is working. */
+export function showsTranslateWait(phase: Phase | 'idle', running: boolean): boolean {
+	return phase === 'translate' && running;
+}
+
 export function derivePhaseRows(input: TraceInput): PhaseRow[] {
 	const { phase, searches, slices, notices, relayCount, error } = input;
 	const done = phase === 'done';

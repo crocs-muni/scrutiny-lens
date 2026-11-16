@@ -10,7 +10,7 @@
 // literal layer folds to one line per relay (#132).
 
 import { describe, expect, it } from 'vitest';
-import { derivePhaseRows, doneLine, searchTallyLabel, type TraceInput } from '$lib/trace';
+import { derivePhaseRows, doneLine, searchTallyLabel, showsTranslateWait, type TraceInput } from '$lib/trace';
 import type { SearchRequest } from '$lib/ai/agents/query';
 import { aggregatePerRelay } from '$lib/relay-readout';
 
@@ -207,6 +207,15 @@ describe('derivePhaseRows — honesty cells', () => {
 		expect(searchTallyLabel([search('roca'), search('vulnerability'), search('ecdsa')])).toBe(
 			' via 3 searches'
 		);
+	});
+
+	it('the translate waiting block belongs to the translate stage only (issue #91)', () => {
+		// The one stage with nothing else on screen: one model round trip.
+		expect(showsTranslateWait('translate', true)).toBe(true);
+		// Fetch paints real skeletons at first EOSE; a settled run is not working.
+		expect(showsTranslateWait('fetch', true)).toBe(false);
+		expect(showsTranslateWait('translate', false)).toBe(false);
+		expect(showsTranslateWait('done', false)).toBe(false);
 	});
 
 	it('a notice duplicated in the input renders once in the row (each_key_duplicate guard)', () => {
