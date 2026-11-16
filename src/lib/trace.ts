@@ -62,6 +62,13 @@ const LABELS: Record<PhaseRow['id'], string> = {
 	decouple: 'Decoupling and filling the cards'
 };
 
+/** The one name a stage has in this viewport: the trace row renders it and
+ * the translate waiting block (#91) reuses it, so the reader never reads two
+ * labels for the same stage at once. */
+export function phaseLabel(id: PhaseRow['id']): string {
+	return LABELS[id];
+}
+
 /** What the literal layer calls a relay: host + path, 'local cache' for the
  * cache leg, and the raw url when it does not parse (never invent a host —
  * spec §2). The path is part of the label because tick identity is the text

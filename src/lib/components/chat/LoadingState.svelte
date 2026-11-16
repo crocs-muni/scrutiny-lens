@@ -8,7 +8,13 @@
 	 * Pixel-grid chevron loader + shimmering label + live elapsed timer in
 	 * mono tabular figures. The keyframes (`pixel-on`, `shimmer-text`) were
 	 * vendored alongside into src/app.css. Reduced motion: the global
-	 * kill-switch freezes the grid; the timer still ticks. */
+	 * kill-switch freezes the grid; the timer still ticks.
+	 *
+	 * The grid itself is shared with the results rail's translate wait
+	 * (`PixelGrid.svelte`): one copy of the wavefront timing, so the two
+	 * loaders cannot drift apart. */
+
+	import PixelGrid from '../ui/PixelGrid.svelte';
 
 	interface Props {
 		/** Shimmering status label. */
@@ -16,14 +22,6 @@
 	}
 
 	let { label = 'Thinking' }: Props = $props();
-
-	/* Chevron wavefront delays (col + |row-1|), 3×3 grid. */
-	const DELAYS = Array.from({ length: 9 }, (_, i) => {
-		const r = Math.floor(i / 3);
-		const c = i % 3;
-		return (c + Math.abs(r - 1)) * 90;
-	});
-	const DUR = 650;
 
 	// Live elapsed timer — deciseconds. Cleanup on destroy.
 	let ds = $state(0);
@@ -42,15 +40,7 @@
 
 <div role="status" class="flex w-fit flex-col items-start">
 	<div class="flex w-fit items-center gap-2.5">
-		<span aria-hidden="true" class="grid shrink-0 grid-cols-[repeat(3,4px)] gap-[1.5px]">
-			{#each DELAYS as delay, index (index)}
-				<span
-					class="size-[4px] rounded-[1px] bg-ink"
-					style:opacity="0.15"
-					style:animation={`pixel-on ${DUR}ms ease-in-out ${delay}ms infinite`}
-				></span>
-			{/each}
-		</span>
+		<PixelGrid />
 		<span
 			class="bg-clip-text text-[13px] font-medium text-transparent"
 			style:background-image="linear-gradient(90deg, var(--ink-3) 35%, var(--ink) 50%, var(--ink-3) 65%)"

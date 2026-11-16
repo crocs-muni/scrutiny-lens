@@ -16,7 +16,7 @@ describe('translate waiting block (#91)', () => {
 		const { container } = render(TranslateWait);
 
 		const status = container.querySelector('[role="status"]');
-		expect(status?.textContent?.trim()).toBe('Translating your question…');
+		expect(status?.textContent?.trim()).toBe('Translating query…');
 
 		// The ticking timer must never be announced: it re-renders every second.
 		const timer = [...container.querySelectorAll('span')].find((s) => /^\d+s$/.test(s.textContent?.trim() ?? ''));
@@ -32,7 +32,7 @@ describe('translate waiting block (#91)', () => {
 		render(TranslateWait);
 
 		await vi.advanceTimersByTimeAsync(3000);
-		expect(screen.getByRole('status').textContent?.trim()).toBe('Translating your question…');
+		expect(screen.getByRole('status').textContent?.trim()).toBe('Translating query…');
 		expect(screen.getByText('3s')).toBeTruthy();
 
 		// The one update in the whole wait, at 30s.
