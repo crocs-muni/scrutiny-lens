@@ -34,12 +34,12 @@ export const HOST_CONCURRENCY_CEILINGS: Record<string, number> = {
 	'llm.ai.e-infra.cz': 4
 };
 
-/** Spec §8 default relay pool (2026-09-17 test-corpus bootstrap: the user's
- * lens-demo relay (relay.tools/newlay) holds the full JCAlgTest + sec-certs
- * test corpora with NIP-50 search; Primal is the free public mirror that
- * accepted+retained first, verified live — other publish targets stay
- * addable through Settings; env overrides, not replaces). */
-const SPEC_RELAYS = ['wss://lens-demo.feeds.relay.tools', 'wss://relay.primal.net'];
+/** Spec §8 default relay pool: the production SCRUTINY relay, and nothing
+ * else. Owner ruling 2026-11-19 — the pilot's records live there, so a fresh
+ * visitor must land on scrutiny data and on no third-party mirror. The pool
+ * stays user-editable in Settings (1–4 entries); `PUBLIC_RELAY_URLS` still
+ * overrides these defaults at build time. */
+const SPEC_RELAYS = ['wss://relay.scrutiny.cloud'];
 
 /** Split/trim semantics stay here (comma list, blanks dropped); relay
  * identity and validation moved into the canonicalizer (issue #131) so a

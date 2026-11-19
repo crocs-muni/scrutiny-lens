@@ -64,10 +64,8 @@ describe('env defaults', () => {
 	});
 
 	it('DEFAULT_RELAYS ships the canonical spec §8 pool', () => {
-		// The test environment sets no PUBLIC_RELAY_URLS.
-		expect(DEFAULT_RELAYS).toEqual([
-			'wss://lens-demo.feeds.relay.tools',
-			'wss://relay.primal.net'
-		]);
+		// The test environment sets no PUBLIC_RELAY_URLS. One relay is a
+		// complete pool (spec §8: 1–4 entries).
+		expect(DEFAULT_RELAYS).toEqual(['wss://relay.scrutiny.cloud']);
 	});
 });
