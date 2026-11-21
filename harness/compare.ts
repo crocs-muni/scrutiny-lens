@@ -25,7 +25,7 @@ import {
 	writeFileSync
 } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { captureScenes, type Theme } from './capture.ts';
+import { captureScenes, type Scene, type Theme } from './capture.ts';
 import { diffPngs } from './diff.ts';
 import { NOISE_FILE } from './ledger.ts';
 import { renderCompareReport } from './report.ts';

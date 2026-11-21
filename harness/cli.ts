@@ -4,6 +4,10 @@
 //   list                      scene ids as JSON
 //   shots [--label L] [--scene ID] [--theme light|dark] [--build-dir DIR]
 //                             capture scenes into .harness/runs/<label>/
+//   a11y [--label L] [--scene ID] [--theme light|dark]
+//                             capture with axe (WCAG 2.0/2.1 A+AA); JSON
+//                             summary to stdout, exit 1 on any violation,
+//                             2 when a capture or the analysis failed
 //   ledger [--runs N]         capture N times, write .harness/noise.json
 //                             (the per-scene noise floor compare must clear)
 //   compare --base last|run:<label>|main [--head <label>] [--scene ID]
@@ -18,6 +22,7 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { summarizeA11y } from './a11y.ts';
 import { captureScenes, type Theme } from './capture.ts';
 import { runCompare } from './compare.ts';
 import { fixturePath } from './fixtures.ts';
@@ -63,6 +68,52 @@ if (command === 'seed') {
 		(r) => !r.stable || r.error !== null || r.pageErrors.length > 0 || r.missingText.length > 0
 	);
 	process.exit(bad.length === 0 ? 0 : 1);
+} else if (command === 'a11y') {
+	const label = flag(args, 'label') ?? 'a11y';
+	const sceneId = flag(args, 'scene');
+	const theme = flag(args, 'theme') as Theme | undefined;
+	if (theme !== undefined && theme !== 'light' && theme !== 'dark') {
+		console.error(`--theme must be light or dark, not "${theme}"`);
+		process.exit(2);
+	}
+	const scenes =
+		sceneId === undefined ? buildScenes() : buildScenes().filter((scene) => scene.id === sceneId);
+	if (scenes.length === 0) {
+		console.error(`no scene "${sceneId}"`);
+		process.exit(2);
+	}
+	const outDir = join('.harness', 'runs', label);
+	console.error(`a11y: capturing ${scenes.length} scene(s) into ${outDir}`);
+	const results = await captureScenes(
+		scenes,
+		{
+			buildDir: 'build',
+			outDir,
+			a11y: true,
+			onResult: (result) => {
+				const rules = result.a11yViolations ?? [];
+				const nodes = rules.reduce((total, rule) => total + rule.nodes.length, 0);
+				const failed =
+					result.a11yError === null || result.a11yError === undefined
+						? ''
+						: ` (analysis failed: ${result.a11yError})`;
+				console.error(
+					`a11y ${result.scene}.${result.theme}: ${rules.length} rule instance(s), ` +
+						`${nodes} node(s)${failed}`
+				);
+			}
+		},
+		{ theme }
+	);
+	await writeRunMeta({ label, outDir, buildDir: 'build', scenes: scenes.map((scene) => scene.id) });
+	const summary = summarizeA11y(results, label);
+	console.log(JSON.stringify(summary, null, 2));
+	console.error(
+		`a11y: ${summary.violations} rule instance(s), ${summary.nodes} node(s) across ` +
+			`${summary.rules} rule(s); ${summary.errors.length} analysis error(s)`
+	);
+	const broken = summary.errors.length > 0 || results.some((result) => result.error !== null);
+	process.exit(broken ? 2 : summary.violations > 0 ? 1 : 0);
 } else if (command === 'ledger') {
 	const floor = await runLedger(buildScenes(), 'build', Number(flag(args, 'runs') ?? 5));
 	console.log(JSON.stringify(floor, null, 2));
@@ -98,6 +149,7 @@ if (command === 'seed') {
 } else {
 	console.error(
 		'usage: harness seed | list | shots [--label L] [--scene ID] [--theme T] [--build-dir DIR] | ' +
+			'a11y [--label L] [--scene ID] [--theme T] | ' +
 			'ledger [--runs N] | compare --base last|run:<label>|main [--head L] [--scene ID] [--json=summary|full]'
 	);
 	process.exit(2);
