@@ -3,6 +3,7 @@ import { chaosScenes } from './chaos.ts';
 import { chatScenes } from './chat.ts';
 import { dossierScenes } from './dossier.ts';
 import { graphScenes } from './graph.ts';
+import { heroScenes } from './hero.ts';
 import { resultsScenes } from './results.ts';
 import { settingsScenes } from './settings.ts';
 import { shareScenes } from './share.ts';
@@ -11,6 +12,7 @@ import { shareScenes } from './share.ts';
  * plain result set runs first (it is the reference surface). */
 export function buildScenes(): readonly Scene[] {
 	return [
+		...heroScenes(),
 		...resultsScenes(),
 		...chaosScenes(),
 		...dossierScenes(),
