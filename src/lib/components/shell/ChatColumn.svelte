@@ -24,7 +24,7 @@
 	import { chat } from '$lib/chat.svelte';
 	import { chatAnnouncement } from './chat-live';
 	import { settings } from '$lib/settings.svelte';
-	import { parseChatStream } from '$lib/chat/streamParse';
+	import { streamParts, markerless, type ChatCitation } from '$lib/chat/settle';
 	import ChatRichText, { type RichPart } from '../chat/ChatRichText.svelte';
 
 	interface Props {
@@ -56,21 +56,16 @@
 		return null;
 	});
 
-	/** Eager number for a pending-shimmer pill: pinned only for events the
-	 * grounding set actually holds — a fabricated id must never consume a
-	 * number (ruling 4 + the registry's pinning contract). */
-	const pinShimmer = (eventId: string): number | null =>
-		chat.grounding.some((e) => e.id === eventId) ? chat.registry.next(eventId) : null;
-
-	/* Live parts = the same RichPart vocabulary as the settled path: prose
-	 * becomes markdown-able text runs, pending markers become shimmer. */
-	const liveParts: RichPart[] = $derived(
-		chat.live === null
-			? []
-			: parseChatStream(chat.live.raw, pinShimmer).map((s): RichPart =>
-					s.kind === 'prose' ? { kind: 'text', text: s.text, marks: [] } : { kind: 'pending', n: s.n }
-				)
-	);
+	/* Live parts run the transcript's OWN settle gate over the readable prefix
+	 * of the stream (#134): every closed claim is resolved through the same
+	 * registry and quote gate, so it carries its own pill — or no mark at all —
+	 * from the moment its marker closes. The unterminated tail stays plain
+	 * prose. Nothing is decided here that settle could decide differently:
+	 * the stream only appends, so a closed claim's verdict is final. */
+	const liveAnswer = $derived.by((): { parts: RichPart[]; citations: ChatCitation[] } => {
+		if (chat.live === null) return { parts: [], citations: [] };
+		return streamParts(chat.live.raw, chat.grounding, chat.registry);
+	});
 
 	let scrollEl = $state<HTMLDivElement | null>(null);
 	$effect(() => {
@@ -139,7 +134,18 @@
 			>
 		</header>
 
-		<div bind:this={scrollEl} class="chat-scroll flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-4">
+		<!-- The transcript is a scroll region with its own keyboard stop
+		 * (axe `scrollable-region-focusable`): when the column is collapsed
+		 * the copy is inert, so the region must hold the tab stop itself.
+		 * Named so the stop is announced as where it is. -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+		<div
+			bind:this={scrollEl}
+			class="chat-scroll flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-4"
+			role="region"
+			aria-label="Chat transcript"
+			tabindex="0"
+		>
 			{#each chat.messages as message (message.id)}
 				{#if message.role === 'user'}
 					<!-- #185: the question is a quiet row, not a bubble. A right-aligned
@@ -167,9 +173,10 @@
 						<LoadingState label="Thinking" />
 					{:else}
 						<!-- Same renderer as the settled path (chat-output T2): markdown
-							from the FIRST delta, pending shimmer for unverified markers.
-							No citations exist yet, so no register row can be open. -->
-						<ChatRichText parts={liveParts} />
+							from the FIRST delta, each closed claim carrying its own
+							verified pill (#134). No register row exists mid-stream, so
+							no citation can be open. -->
+						<ChatRichText parts={liveAnswer.parts} citations={liveAnswer.citations} />
 					{/if}
 				</div>
 			{/if}
@@ -184,10 +191,7 @@
 							plain text with markers suppressed, never styled as trust
 							(verification never ran on it). -->
 						<p class="error-partial">
-							{parseChatStream(chat.error.partial, () => null)
-								.filter((s) => s.kind === 'prose')
-								.map((s) => s.text)
-								.join('')}
+							{markerless(chat.error.partial)}
 						</p>
 					{/if}
 					<p class="error-line">Answer failed: {chat.error.message}</p>
@@ -347,6 +351,4 @@
 		background: none;
 		padding: 0;
 	}
-	/* The pending-shimmer pill's styles and keyframes live in ChatRichText
-	 * (chat-output T2 cutover — one renderer owns one vocabulary). */
 </style>

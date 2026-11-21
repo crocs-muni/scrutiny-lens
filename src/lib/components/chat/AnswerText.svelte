@@ -9,7 +9,7 @@
 	 * register row is open (`openN`), so this component only forwards it. */
 
 	import { layoutAnswer } from '$lib/chat/answer';
-	import ChatRichText, { type RichPart } from './ChatRichText.svelte';
+	import ChatRichText from './ChatRichText.svelte';
 	import type { PersistedChatCitation } from '$lib/db';
 
 	interface Props {
@@ -23,7 +23,7 @@
 
 	let { content, citations, openN, onToggle, idPrefix }: Props = $props();
 
-	const parts = $derived(layoutAnswer(content, citations) as RichPart[]);
+	const parts = $derived(layoutAnswer(content, citations));
 </script>
 
 <ChatRichText {parts} {citations} {openN} {onToggle} {idPrefix} />

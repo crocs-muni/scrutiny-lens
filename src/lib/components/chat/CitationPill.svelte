@@ -17,30 +17,46 @@
 	interface Props {
 		citation: PersistedChatCitation;
 		/** The turn owns which citation's register row is open. */
-		open: boolean;
-		onToggle: (n: number) => void;
+		open?: boolean;
+		/** Absent while the answer streams: the register row exists only once
+		 * the turn settles (#134), so the mark carries no control then. */
+		onToggle?: (n: number) => void;
 		/** Id of the register row this mark expands — aria-expanded alone
 		 * leaves a screen-reader user with no idea which region changed. */
 		controls?: string;
 	}
 
-	let { citation, open, onToggle, controls }: Props = $props();
+	let { citation, open = false, onToggle, controls }: Props = $props();
 </script>
 
-<button
-	type="button"
-	class="cite-mark"
-	class:lit={spotlight.lit([citation.n])}
-	style="--cite: var(--cite-{citation.colorIndex});"
-	aria-expanded={open}
-	aria-controls={controls}
-	aria-label="Citation {citation.n}: {citation.nodeTitle ?? 'cited event'}"
-	onmouseenter={() => spotlight.hover([citation.n])}
-	onmouseleave={() => spotlight.hover(null)}
-	onclick={() => onToggle(citation.n)}
->
-	{citation.n}
-</button>
+{#if onToggle === undefined}
+	<!-- Streaming (#134): the claim is verified and its number is final, but
+	 * there is no register row to open yet. A note, not a control — a button
+	 * with no action (and an aria-controls pointing at nothing) would lie. -->
+	<span
+		class="cite-mark inert"
+		style="--cite: var(--cite-{citation.colorIndex});"
+		role="note"
+		aria-label="Citation {citation.n}: {citation.nodeTitle ?? 'cited event'}"
+		onmouseenter={() => spotlight.hover([citation.n])}
+		onmouseleave={() => spotlight.hover(null)}>{citation.n}</span
+	>
+{:else}
+	<button
+		type="button"
+		class="cite-mark"
+		class:lit={spotlight.lit([citation.n])}
+		style="--cite: var(--cite-{citation.colorIndex});"
+		aria-expanded={open}
+		aria-controls={controls}
+		aria-label="Citation {citation.n}: {citation.nodeTitle ?? 'cited event'}"
+		onmouseenter={() => spotlight.hover([citation.n])}
+		onmouseleave={() => spotlight.hover(null)}
+		onclick={() => onToggle(citation.n)}
+	>
+		{citation.n}
+	</button>
+{/if}
 
 <style>
 	/* Global: the class rides a dynamic string through the renderer.
@@ -65,5 +81,9 @@
 	:global(.cite-mark.lit) {
 		text-decoration: underline;
 		text-underline-offset: 2px;
+	}
+	/* Streaming mark: readable, hoverable, not a control. */
+	:global(.cite-mark.inert) {
+		cursor: default;
 	}
 </style>

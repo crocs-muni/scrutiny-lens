@@ -155,7 +155,7 @@
 						{#each stage.relays as url (url)}
 							<li class="flex items-baseline gap-2 font-mono text-[11.5px]">
 								<span class="truncate text-ink">{url}</span>
-								<span class="ml-auto shrink-0 tabular-nums text-orange">failed</span>
+								<span class="ml-auto shrink-0 tabular-nums text-orange-ink">failed</span>
 							</li>
 						{/each}
 					</ul>

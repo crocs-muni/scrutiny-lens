@@ -32,7 +32,8 @@ describe('ChatRichText — block rendering', () => {
 		const content = 'First paragraph.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nSources: [1]';
 		const parts = layoutAnswer(content, [{ n: 1, verified: true }]);
 		const citations = [{ n: 1, eventId: 'e1', quote: 'q', colorIndex: 0 }];
-		render(ChatRichText, { parts, citations });
+		// The settled turn owns the register, so its marks are buttons.
+		render(ChatRichText, { parts, citations, onToggle: () => {} });
 		expect(screen.getByText('First paragraph.')).toBeTruthy();
 		expect(screen.getByRole('table')).toBeTruthy();
 		expect(screen.getByRole('button', { name: /Citation 1/ })).toBeTruthy();

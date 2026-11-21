@@ -248,7 +248,9 @@
 			>
 				{section.label}
 				{#if counts[section.key] !== undefined}
-					<span class="font-mono text-[11px] text-ink-3">· {counts[section.key]}</span>
+					<!-- ink-2, not ink-3: the pressed chip sits on --accent-tint,
+						where the muted gray cannot clear 4.5:1 (a11y fix). -->
+					<span class="font-mono text-[11px] text-ink-2">· {counts[section.key]}</span>
 				{/if}
 			</button>
 		{/each}
@@ -297,7 +299,14 @@
 
 	<!-- Body stays mounted while collapsed (citation-ring persistence, header
 	 * comment); the frame clips it and the copy fades ahead of the height. -->
-	<div id="drawer-region" class="drawer-copy min-h-0 flex-1 overflow-y-auto px-3 pt-1 pb-3">
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	<div
+		id="drawer-region"
+		class="drawer-copy min-h-0 flex-1 overflow-y-auto px-3 pt-1 pb-3"
+		role="region"
+		aria-label="Dossier content"
+		tabindex="0"
+	>
 		{#if hiddenByFilter}
 			<!-- ADR 0001: the subject outlives the filter, and says so. -->
 			<div
@@ -359,7 +368,7 @@
 					<!-- protocol kind-5, never presentational (spec §2 rule 2);
 						the drawer's pill matches the card's exactly (ruling 3). -->
 					<span
-						class="shrink-0 rounded-full border border-[oklch(0.93_0.04_20)] bg-red-tint px-2.5 py-0.5 font-mono text-[11px] font-medium text-red"
+						class="shrink-0 rounded-full border border-[oklch(0.93_0.04_20)] bg-red-tint px-2.5 py-0.5 font-mono text-[11px] font-medium text-red-ink"
 					>
 						retracted
 					</span>
@@ -444,7 +453,7 @@
 							</span>
 						{:else if row.state === 'retraction'}
 							<span
-								class="shrink-0 rounded-full border border-[oklch(0.93_0.04_20)] bg-red-tint px-2 py-px font-mono text-[10.5px] font-medium text-red"
+								class="shrink-0 rounded-full border border-[oklch(0.93_0.04_20)] bg-red-tint px-2 py-px font-mono text-[10.5px] font-medium text-red-ink"
 							>
 								retracted
 							</span>
@@ -452,7 +461,7 @@
 							<span
 								class="shrink-0 rounded-[6px] border border-line bg-inset px-2 py-px font-mono text-[10.5px] text-ink-2 {row.state ===
 									'overlay' && row.overlayState !== 'clean'
-									? 'border-orange/40 text-orange'
+									? 'border-orange/40 text-orange-ink'
 									: ''}"
 							>
 								{rowState(row)}

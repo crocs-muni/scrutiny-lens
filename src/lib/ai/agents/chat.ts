@@ -32,15 +32,7 @@
 import { z } from 'zod';
 import { streamLLM } from '../gateway';
 import type { CallLLMArgs, LLMMessage } from '../output';
-import { extractedGate, type ExtractionState } from '../verifier';
-import { canonicalContentOf } from '../canonical';
-import {
-	CITATION_SLOTS,
-	createCitationRegistry,
-	type Citation,
-	type CitationRegistry
-} from '../citationRegistry';
-import { bestIdentifier } from '../projector';
+import { createCitationRegistry, type CitationRegistry } from '../citationRegistry';
 import type { NostrEvent } from '../../fabric';
 import {
 	getProviderConfig,
@@ -49,8 +41,8 @@ import {
 	NO_KEY_MESSAGE
 } from '../provider';
 import { buildSystemPrompt, DEFAULT_PROFILE } from '../prompts/vocabCcd';
-import { scanMarkers } from '../../chat/markers';
 import { capabilityAnswer } from '../../chat/capability';
+import { resolveFinal, type ChatCitation, type ClaimsSummary } from '../../chat/settle';
 /** Injectable streaming transport — yields raw model text chunks as they arrive. Throws on transport failure. */
 export type StreamLLM = (args: CallLLMArgs) => AsyncIterable<string>;
 
@@ -151,22 +143,6 @@ export interface ChatGroundOptions {
 	streamLLM?: StreamLLM;
 }
 
-/** Resolved citation in a final chat frame (view-models.md §3.7). */
-export interface ChatCitation extends Citation {
-	/** Computed at resolve-time by the verifier — never model opinion. */
-	support: ExtractionState;
-	status: 'resolved';
-	/** Deterministic palette slot: (n - 1) % CITATION_PALETTE.length (registry I1). */
-	colorIndex: number;
-}
-
-export interface ClaimsSummary {
-	total: number;
-	verbatim: number;
-	partial: number;
-	extrapolatory: number;
-}
-
 /* ------------------------------------------------------------------ *
  * SSE helpers
  * ------------------------------------------------------------------ */
@@ -175,26 +151,6 @@ const encoder = new TextEncoder();
 
 function frame(payload: unknown): Uint8Array {
 	return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
-}
-
-/* ------------------------------------------------------------------ *
- * Marker protocol
- * ------------------------------------------------------------------ */
-
-/* Marker grammar's single owner is $lib/chat/markers.ts (scanMarkers —
- * balanced-brace, string-aware; 2026-09-17 rework). The flat `[^{}]*`
- * capture died when a live PQC answer nested braces inside a quote field
- * and the corrupt JSON rendered as prose. */
-
-const markerPayloadSchema = z.object({
-	eventId: z.string().min(1),
-	quote: z.string()
-});
-
-interface ResolvedMarker {
-	/** Full matched marker text (for replacement). */
-	raw: string;
-	citation: ChatCitation;
 }
 
 /* ------------------------------------------------------------------ *
@@ -227,118 +183,6 @@ const GROUNDING_INSTRUCTIONS = [
  * per-baseUrl cooldown with the non-streaming lanes. Structurally identical
  * to StreamLLM (yields raw model text chunks; throws on transport failure). */
 const defaultStreamLLM: StreamLLM = streamLLM;
-
-/* ------------------------------------------------------------------ *
- * Final parse: resolve markers through the registry + verifier
- * ------------------------------------------------------------------ */
-
-function nodeTitleOf(event: NostrEvent): string {
-	return (bestIdentifier(event) ?? event.content.split('\n')[0].trim()).slice(0, 80);
-}
-
-function resolveFinal(
-	fullText: string,
-	events: NostrEvent[],
-	registry: CitationRegistry
-): { content: string; citations: ChatCitation[]; claimsSummary?: ClaimsSummary } {
-	const citations: ChatCitation[] = [];
-	const summary: ClaimsSummary = { total: 0, verbatim: 0, partial: 0, extrapolatory: 0 };
-	/** One edit per scanned marker, applied by OFFSET — never by string
-	 * replacement. A marker's raw text is not unique (two claims can cite the
-	 * same event with the same payload), and a bare `[1]` strip would also
-	 * match the canonical `[1]` another edit inserts, so `split/join` could
-	 * rewrite a marker twice. Offsets make each scan touch exactly its span. */
-	const edits: Array<{ start: number; end: number; replacement: string }> = [];
-
-	/** Strip a marker run, swallowing one adjacent space so no orphan
-	 * whitespace remains; other whitespace is literal content (indent-preserved
-	 * blocks, hard breaks) and is never collapsed globally. */
-	const stripAt = (start: number, end: number): void => {
-		const precededBySpace = start > 0 && fullText[start - 1] === ' ';
-		edits.push({ start: precededBySpace ? start - 1 : start, end, replacement: '' });
-	};
-
-	for (const scan of scanMarkers(fullText)) {
-		// A bare canonical `[N]` carries no payload, so no verdict can belong to
-		// it (STRIP-uniform, ruling 2026-09-17). Strip it HERE, not in
-		// scrubAnswer: there the gate pairs markers with resolved citations by
-		// occurrence (#187), and a bare token would consume the verdict meant
-		// for the next citation of its number.
-		if (!scan.braced) {
-			stripAt(scan.start, scan.end);
-			continue;
-		}
-
-		let resolvedCitation: ChatCitation | undefined;
-		if (scan.objectText !== null) {
-			const payload = markerPayloadSchema.safeParse(
-				(() => {
-					try {
-						return JSON.parse(scan.objectText as string);
-					} catch {
-						return undefined;
-					}
-				})()
-			);
-			if (payload.success) {
-				const event = events.find((e) => e.id === payload.data.eventId);
-				const res = registry.resolve(payload.data.eventId, events, payload.data.quote, event ? nodeTitleOf(event) : undefined);
-				if (res.ok && event) {
-					// #163: the quote is checked against the RESOLVED content — a
-					// root-author patch makes the raw content history (spec §2
-					// rule 3; the canonical-content note in
-					// docs/vision/agentic-harness.md). Unresolvable canonical
-					// content leaves the citation unverified rather than falling
-					// back to raw text.
-					const canonical = canonicalContentOf(event.id, events);
-					const gate =
-						canonical === undefined
-							? { state: 'extrapolatory' as const, span: undefined }
-							: extractedGate(payload.data.quote, canonical);
-					resolvedCitation = {
-						...res.citation,
-						support: gate.state,
-						verified: gate.state !== 'extrapolatory',
-						status: 'resolved',
-						colorIndex: (res.citation.n - 1) % CITATION_SLOTS
-					};
-				}
-			}
-		}
-
-		if (resolvedCitation) {
-			citations.push(resolvedCitation);
-			summary.total += 1;
-			summary[resolvedCitation.support] += 1;
-			// Canonical renumber: the registry's stable [N], not the model's.
-			edits.push({
-				start: scan.start,
-				end: scan.end,
-				replacement: `[${resolvedCitation.n}]`
-			});
-		} else {
-			// Unresolvable OR malformed (parseless/unterminated braces): strip
-			// the whole marker — a failed/malformed citation must leave no
-			// trace on the settled surface (user ruling 2026-09-17 — the
-			// flat-capture predecessor leaked corrupt JSON into the PQC answer).
-			stripAt(scan.start, scan.end);
-		}
-	}
-
-	// Scans arrive in text order, so a single forward pass rebuilds content.
-	let content = '';
-	let cursor = 0;
-	for (const edit of edits) {
-		content += fullText.slice(cursor, edit.start) + edit.replacement;
-		cursor = edit.end;
-	}
-	content += fullText.slice(cursor);
-	return {
-		content,
-		citations,
-		claimsSummary: citations.length > 0 ? summary : undefined
-	};
-}
 
 /* ------------------------------------------------------------------ *
  * Ungrounded final frame

@@ -16,7 +16,8 @@
  *   persist nothing.
  */
 
-import { chatground, type ChatCitation, type ClaimsSummary, type StreamLLM } from '$lib/ai/agents/chat';
+import { chatground, type StreamLLM } from '$lib/ai/agents/chat';
+import type { ChatCitation, ClaimsSummary } from '$lib/chat/settle';
 import { createCitationRegistry, type CitationRegistry } from '$lib/ai/citationRegistry';
 import { canPersist, transition, type Turn } from '$lib/chat/turn';
 import { scrubAnswer } from '$lib/chat/answer';
@@ -43,8 +44,8 @@ interface LiveTurn {
 
 /** A settled transport failure (ADR 0003: never persisted). `partial` is
  * the raw streamed-so-far text — ruling 6: partial prose stays on screen
- * after a provider failure, marker-suppressed and unstyled (no shimmer, no
- * pill: verification never ran, so nothing may hint at trust). */
+ * after a provider failure, marker-suppressed and unstyled (no pill:
+ * verification never ran, so nothing may hint at trust). */
 export interface ChatError {
 	question: string;
 	message: string;
@@ -105,7 +106,7 @@ class Chat {
 	/** Set when content lands while the column may be collapsed; the page
 	 * clears it (unread dot on the stub, ChatColumn anatomy). */
 	unseen = $state(false);
-	/** The current send's grounding set — the shimmer pins eager citation
+	/** The current send's grounding set — the live settle pins citation
 	 * numbers against it, and ONLY against it (a fabricated id must never
 	 * consume a number). Cleared by hydrate/reset with the transcript. */
 	grounding = $state<NostrEvent[]>([]);

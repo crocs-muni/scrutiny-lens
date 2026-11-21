@@ -14,6 +14,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { deriveRunState } from '$lib/run-state';
 
 const SRC = join(process.cwd(), 'src', 'lib');
 
@@ -124,22 +125,42 @@ describe('relay truth conformance (issue #131)', () => {
 	it('the degrade surfaces count relays through the fold, never raw legs (issue #154)', () => {
 		// Issue #132 folded the trace row; #154 found the banner, footer and
 		// all-dead screen still reading per-LEG slices, so 3 dead relays asked
-		// by 3 searches printed "9 relays degraded". The page-level assertions
-		// below are what a revert of +page.svelte would trip.
+		// by 3 searches printed "9 relays degraded". The fold now lives in the
+		// pure run-state derivation; the page must consume its receipts.
 		const source = readFileSync(join(SRC, '..', 'routes/+page.svelte'), 'utf8');
-		expect(source, 'banner/footer/error screen must read the per-relay fold').toMatch(
-			/const relayReceipts = \$derived\(aggregatePerRelay\(investigation\.slices\)\)/
-		);
-		expect(source, 'the banner text must come from the folded receipts').toContain(
-			'degradedBannerText(relayReceipts)'
+		const state = deriveRunState({
+			phase: 'done',
+			running: false,
+			result: null,
+			error: null,
+			searches: [],
+			skeletons: [],
+			slices: [
+				{ url: 'wss://a', received: 0, route: 'search', rejected: 0, status: 'refused' },
+				{ url: 'wss://b', received: 0, route: 'search', rejected: 0, status: 'refused' },
+				{ url: 'wss://c', received: 0, route: 'search', rejected: 0, status: 'refused' }
+			],
+			restoredEvicted: null,
+			fillStats: { interpreted: 0, total: 0 },
+			fillFailure: null,
+			fillErrorMessage: null,
+			rateLimitedCount: 0,
+			failed: new Set(),
+			viewCards: [],
+			notices: []
+		});
+		expect(state.relayReceipts, 'the fold must keep one receipt per relay').toHaveLength(3);
+		expect(state.footerNotes).toContain('relay wss://a refused');
+		expect(source, 'the page must consume the folded receipts').toContain(
+			'runState.relayReceipts'
 		);
 		expect(source, 'ResultsError must receive folded receipts').toContain('relays={relayReceipts}');
 		// The regression shape itself: a filter over raw slices.
 		expect(source, 'no surface may filter raw slices for degraded legs').not.toMatch(
 			/investigation\.slices\.filter/
 		);
-		expect(source, 'the footer ledger must read folded receipts').toMatch(
-			/\.\.\.degradedRelays\.map\(/
+		expect(source, 'the footer must render the derived notes').toContain(
+			'footerNotes.join('
 		);
 	});
 

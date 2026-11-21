@@ -618,7 +618,7 @@
 		 * listener is imperative (attach zone, next to zoom): template-level
 		 * clicks on a static div fight the a11y linter for zero gain — Esc
 		 * stays the keyboard deselect (page-level), unaffected by the swap. -->
-		<div class="stage min-h-0 flex-1" aria-label="Session graph" bind:this={stage} {@attach setupStage}>
+		<div class="stage min-h-0 flex-1" role="region" aria-label="Session graph" bind:this={stage} {@attach setupStage}>
 			<div class="world" style="transform: translate({cam.x}px, {cam.y}px) scale({cam.k})">
 				<svg class="edges" aria-hidden="true">
 					<defs>
