@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { deriveRunState } from '$lib/run-state';
 import type { RunStateInput } from '$lib/run-state';
 
-// Helper to create minimal input
 function baseInput(): RunStateInput {
     return {
         phase: 'idle',
@@ -27,7 +26,6 @@ function baseInput(): RunStateInput {
     };
 }
 
-// Helper to create one relay leg slice
 function slice(url: string, status: 'ok' | 'timeout' | 'refused') {
     return { url, received: 0, route: 'search', rejected: 0, status };
 }

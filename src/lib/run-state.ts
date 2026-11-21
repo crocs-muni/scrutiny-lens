@@ -1,6 +1,5 @@
-// src/lib/run-state.ts
-// Pure derivation of run‑state flags for the results surface (spec §4).
-// Centralises the logic previously duplicated in src/routes/+page.svelte.
+// One pure derivation for the results surface's spec §4 edge states, so the
+// page and its tests cannot drift.
 
 import { showsStageWait } from '$lib/trace';
 import { aggregatePerRelay, degradedBannerText, type RelayReceipt } from '$lib/relay-readout';
@@ -66,7 +65,6 @@ function noticeRollup(notices: { kind: string; message: string }[], kind: string
     return `${items.length} ${plural} — details in the trace`;
 }
 
-/** Derive all run‑state flags required by the UI. */
 export function deriveRunState(input: RunStateInput): RunState {
     const {
         phase,
