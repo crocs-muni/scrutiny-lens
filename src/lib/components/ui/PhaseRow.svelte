@@ -135,7 +135,7 @@
 
 {#snippet completedPill()}
 	<span
-		class="inline-flex h-5.5 items-center gap-1.5 rounded-full bg-green-tint px-2 text-[11.5px] font-medium text-green"
+		class="inline-flex h-5.5 items-center gap-1.5 rounded-full bg-green-tint px-2 text-[11.5px] font-medium text-green-ink"
 		style:animation="fade-in 200ms ease-out both"
 	>
 		Completed
@@ -144,7 +144,7 @@
 
 {#snippet failedPill()}
 	<span
-		class="inline-flex h-5.5 items-center gap-1.5 rounded-full bg-red-tint px-2 text-[11.5px] font-medium text-red"
+		class="inline-flex h-5.5 items-center gap-1.5 rounded-full bg-red-tint px-2 text-[11.5px] font-medium text-red-ink"
 		style:animation="fade-in 200ms ease-out both"
 	>
 		Failed

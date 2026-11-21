@@ -207,7 +207,7 @@ const draftSnippet = $derived(draft !== null && draft.snippet !== '' ? draft.sni
 			{/if}
 		</h3>
 		{#if product?.retracted}
-			<span class="shrink-0 rounded-full border border-red-tint bg-red-tint px-2.5 py-0.5 font-mono text-[11px] font-medium text-red">
+			<span class="shrink-0 rounded-full border border-red-tint bg-red-tint px-2.5 py-0.5 font-mono text-[11px] font-medium text-red-ink">
 				retracted
 			</span>
 		{/if}
@@ -219,7 +219,7 @@ const draftSnippet = $derived(draft !== null && draft.snippet !== '' ? draft.sni
 				While a retry is in flight the surface sweeps badge-free. -->
 			<span
 				class="shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10.5px] {failed
-					? 'border-orange-line text-orange'
+					? 'border-orange-line text-orange-ink'
 					: 'border-line text-ink-3'}"
 			>
 				raw
@@ -251,7 +251,7 @@ const draftSnippet = $derived(draft !== null && draft.snippet !== '' ? draft.sni
 		<h3 class="min-w-0 flex-1 truncate text-[14.5px] font-semibold text-ink">{p.title}</h3>
 		{#if p.retracted}
 			<!-- spec §2 rule 2: status is protocol-computed, never AI -->
-			<span class="shrink-0 rounded-full border border-[oklch(0.93_0.04_20)] bg-red-tint px-2.5 py-0.5 font-mono text-[11px] font-medium text-red">
+			<span class="shrink-0 rounded-full border border-[oklch(0.93_0.04_20)] bg-red-tint px-2.5 py-0.5 font-mono text-[11px] font-medium text-red-ink">
 				retracted
 			</span>
 			<span class="shrink-0 font-mono text-[11px] text-ink-2">as relays returned</span>

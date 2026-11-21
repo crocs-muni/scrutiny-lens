@@ -33,7 +33,7 @@
 					{#each relays as r (r.url)}
 						<li class="flex items-baseline gap-2 font-mono text-[11.5px]">
 							<span class="truncate text-ink">{r.url}</span>
-							<span class="ml-auto shrink-0 tabular-nums {/^ok$/i.test(r.status) ? 'text-ink-3' : 'text-orange'}">
+							<span class="ml-auto shrink-0 tabular-nums {/^ok$/i.test(r.status) ? 'text-ink-3' : 'text-orange-ink'}">
 								{r.status}
 							</span>
 						</li>

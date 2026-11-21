@@ -32,10 +32,16 @@
   --hover: oklch(0.97 0.002 247.839);
   --hover-2: oklch(0.933 0.003 247.86);
 
-  /* ink ramp */
+  /* ink ramp — AA drift from canon: --ink-3 is a muted *text* tone, and
+   * canon's 0.695 measured 2.71:1 on --surface (facet headings, counts,
+   * 10–11.5px labels — all small text, so 4.5:1 applies). 0.56 keeps the
+   * cool hue and the ink > ink-2 > ink-3 order while reaching 4.65:1 on
+   * --surface. Text sitting on --accent-tint uses --ink-2 (5.21:1), never
+   * this tone: a muted gray cannot clear 4.5:1 on the blue tint without
+   * collapsing onto --ink-2. */
   --ink: oklch(0.247 0.006 258.361);
   --ink-2: oklch(0.506 0.01 264.477);
-  --ink-3: oklch(0.695 0.009 264.505);
+  --ink-3: oklch(0.56 0.009 264.505);
 
   /* borders — solid and crisp, not alpha */
   --line: oklch(0.946 0.003 264.542);
@@ -44,21 +50,31 @@
   --stripe: oklch(0.405 0 0 / 0.075);
   --stripe-bg: oklch(0.97 0 0);
 
-  /* accent */
+  /* accent — accent-ink is the text tone on accent-tint; canon's 0.556
+   * measured 4.30:1 there (selected drawer section, §4 chips), so it drops
+   * to 0.53 (4.79:1) — still 5.37:1 on --surface. */
   --accent: oklch(0.626 0.205 254.947);
-  --accent-ink: oklch(0.556 0.187 255.617);
+  --accent-ink: oklch(0.53 0.174 255.617);
   --accent-tint: oklch(0.96 0.019 252.878);
 
-  /* semantic */
+  /* semantic — the base tones stay the glyph/decoration hue; the *-ink
+   * tones are text-only and carry AA on their own tint (drift from canon:
+   * base --orange read 2.66:1 on --orange-tint, --red 3.48:1, --green
+   * 3.24:1). Ink values measure 4.60–4.81:1 on their tint and still clear
+   * 4.5:1 on plain --surface, so a tinted pill can drop to the surface
+   * without a second swap. */
   --green: oklch(0.603 0.155 150.883);
   --green-tint: oklch(0.958 0.017 159.118);
+  --green-ink: oklch(0.51 0.134 150.883);
   --orange: oklch(0.689 0.179 49.902);
   --orange-tint: oklch(0.964 0.021 67.581);
+  --orange-ink: oklch(0.55 0.141 49.902);
   /* amber banner hairline — light-mode solid; dark gets its own tone (owner
    * report 2026-09-11: the light value read as a white border in dark) */
   --orange-line: oklch(0.93 0.05 60);
   --red: oklch(0.621 0.192 23.042);
   --red-tint: oklch(0.956 0.017 17.462);
+  --red-ink: oklch(0.55 0.192 23.042);
 
   /* chart overlays — neutral system colors with enough contrast on either theme */
   --tooltip-bg: oklch(0.272 0.008 264.435);
@@ -97,9 +113,14 @@
   --hover: oklch(0.289 0.006 271.22);
   --hover-2: oklch(0.318 0.007 274.747);
 
+  /* ink ramp — AA drift from canon: canon's 0.541 measured 3.08:1 on the
+   * dark --surface. 0.66 reaches 5.0:1 there (and 4.18:1 on the semantic
+   * tints) while staying below --ink-2, so the ramp order holds. Muted text
+   * on --accent-tint uses --ink-2 (5.10:1): the tinted chip is lighter than
+   * the surface, and no distinct ink-3 step can clear 4.5:1 on it. */
   --ink: oklch(0.964 0.002 247.839);
   --ink-2: oklch(0.731 0.008 260.731);
-  --ink-3: oklch(0.541 0.01 264.484);
+  --ink-3: oklch(0.66 0.01 264.484);
 
   --line: oklch(0.308 0.006 258.354);
   --line-strong: oklch(0.356 0.007 264.474);
@@ -111,13 +132,21 @@
   --accent-ink: oklch(0.788 0.113 248.33);
   --accent-tint: oklch(0.68 0.173 253.301 / 0.16);
 
+  /* semantic — AA drift from canon: the base tones measure 3.9–4.2:1 on
+   * their 14%-alpha tints (red 3.93:1 on the retracted pill). The *-ink
+   * tones are text-only and reach 4.56:1 on the retracted card's
+   * double-tinted background (red-tint over red-tint) and 5.7–6.2:1 on
+   * the surface; bases keep the glyph hue. */
   --green: oklch(0.705 0.154 153.814);
   --green-tint: oklch(0.705 0.154 153.814 / 0.14);
+  --green-ink: oklch(0.7 0.154 153.814);
   --orange: oklch(0.746 0.156 55.642);
   --orange-tint: oklch(0.746 0.156 55.642 / 0.14);
+  --orange-ink: oklch(0.73 0.156 55.642);
   --orange-line: oklch(0.45 0.1 55);
   --red: oklch(0.666 0.18 21.433);
   --red-tint: oklch(0.666 0.18 21.433 / 0.14);
+  --red-ink: oklch(0.8 0.17 21.433);
 
   --tooltip-bg: oklch(0.182 0.004 264.459);
   --tooltip-fg: oklch(0.964 0.002 247.839);
@@ -159,11 +188,14 @@
   --color-accent-tint: var(--accent-tint);
   --color-green: var(--green);
   --color-green-tint: var(--green-tint);
+  --color-green-ink: var(--green-ink);
   --color-orange: var(--orange);
   --color-orange-tint: var(--orange-tint);
+  --color-orange-ink: var(--orange-ink);
   --color-orange-line: var(--orange-line);
   --color-red: var(--red);
   --color-red-tint: var(--red-tint);
+  --color-red-ink: var(--red-ink);
 
   /* shadows */
   --shadow-hairline: var(--shadow-hairline);

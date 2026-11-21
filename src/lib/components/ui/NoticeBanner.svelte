@@ -17,12 +17,12 @@
 </script>
 
 <div class="flex items-start gap-2 rounded-[8px] border border-orange-line bg-orange-tint px-3 py-2">
-	<IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-orange" />
-	<p class="flex-1 font-mono text-[12px] leading-relaxed text-orange">{message}</p>
+	<IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-orange-ink" />
+	<p class="flex-1 font-mono text-[12px] leading-relaxed text-orange-ink">{message}</p>
 	<KeyHint
 		label="Dismiss"
 		side="left"
-		class="shrink-0 rounded-[4px] text-orange hover:opacity-70"
+		class="shrink-0 rounded-[4px] text-orange-ink hover:opacity-70"
 		onclick={onDismiss}
 	>
 		<IconX size={14} stroke={2} />
