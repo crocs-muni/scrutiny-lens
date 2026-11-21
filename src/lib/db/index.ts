@@ -521,7 +521,7 @@ export async function getSessionRun(sessionId: string): Promise<PersistedSession
 }
 
 /** Persists a settled chat frame (issue #30). Errors never land here — ADR
- * 0003's "pending shimmer pills and aborted streams persist nothing", so
+ * 0003's "in-flight pills and aborted streams persist nothing", so
  * `kind` is only 'answer' | 'ungrounded'. */
 export async function putChatMessage(msg: PersistedChatMessage): Promise<void> {
 	await attempt(async (d) => {
