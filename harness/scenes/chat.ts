@@ -18,6 +18,7 @@ import {
 	enableAi,
 	MASK_ELAPSED,
 	mustNotBeVisible,
+	stripGraphForA11y,
 	waitAiIdle,
 	waitGraphFrozen
 } from './common.ts';
@@ -71,7 +72,8 @@ export function chatScenes(): Scene[] {
 				'1 source',
 				'1 claim dropped — the quote was not found in the cited record',
 				'RSA key generation runs in a certified third-party library'
-			]
+			],
+			a11yPrep: ({ page }) => stripGraphForA11y(page)
 		}
 	];
 }

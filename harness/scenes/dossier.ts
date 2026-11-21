@@ -9,7 +9,7 @@
 import type { Scene } from '../capture.ts';
 import { loadFixture } from '../fixtures.ts';
 import { CHAINS_TAG } from '../seed/chains.ts';
-import { ask, openDossier, waitGraphFrozen } from './common.ts';
+import { ask, openDossier, stripGraphForA11y, waitGraphFrozen } from './common.ts';
 
 const chains = loadFixture('chains');
 
@@ -26,7 +26,8 @@ export function dossierScenes(): Scene[] {
 				// must wait for the map's own freeze (CanvasToolbar).
 				await waitGraphFrozen(page);
 			},
-			expect: ['#1', '#2', 'applied']
+			expect: ['#1', '#2', 'applied'],
+			a11yPrep: ({ page }) => stripGraphForA11y(page)
 		},
 		{
 			// Product C: the second patch's base is missing, so the chain halts
@@ -38,7 +39,8 @@ export function dossierScenes(): Scene[] {
 				await openDossier(page, 'NXP JCOP4', 'Content');
 				await waitGraphFrozen(page);
 			},
-			expect: ['halted after 1 patch — content frozen at the last good state']
+			expect: ['halted after 1 patch — content frozen at the last good state'],
+			a11yPrep: ({ page }) => stripGraphForA11y(page)
 		},
 		{
 			// Product E: two same-parent branches — content freezes at the
@@ -50,7 +52,8 @@ export function dossierScenes(): Scene[] {
 				await openDossier(page, 'Atmel AT90SC25672RCT', 'Content');
 				await waitGraphFrozen(page);
 			},
-			expect: ['forked — content frozen at the shared parent']
+			expect: ['forked — content frozen at the shared parent'],
+			a11yPrep: ({ page }) => stripGraphForA11y(page)
 		},
 		{
 			// Product D was retracted by a kind-5 from its own author: the card
@@ -63,7 +66,8 @@ export function dossierScenes(): Scene[] {
 				await openDossier(page, 'withdrawn release', 'Summary');
 				await waitGraphFrozen(page);
 			},
-			expect: ['retracted', 'cc:HARNESS-RSALIB']
+			expect: ['retracted', 'cc:HARNESS-RSALIB'],
+			a11yPrep: ({ page }) => stripGraphForA11y(page)
 		}
 	];
 }

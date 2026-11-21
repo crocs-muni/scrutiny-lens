@@ -70,6 +70,10 @@ export interface Scene {
 	/** Text that must be visible once `run` finishes (a relay that returns
 	 * nothing must not screenshot green). */
 	expect: readonly string[];
+	/** Runs after the screenshot and before axe (a11y captures only). Use it
+	 * to remove an overlay that would make axe's contrast checks incomplete;
+	 * the screenshot still shows the overlay. */
+	a11yPrep?: (ctx: SceneContext) => Promise<void>;
 }
 
 /** One axe violation node, reduced to what a scoreboard can read: where, the
@@ -120,6 +124,9 @@ export interface SceneResult {
 	error: string | null;
 	/** Present only when captured with `a11y: true`; one entry per rule. */
 	a11yViolations?: A11yViolation[];
+	/** Rules axe could not evaluate (e.g. an overlapped element); present
+	 * only with `a11y: true`. Non-empty means the surface was not audited. */
+	a11yIncomplete?: A11yViolation[];
 	/** Why axe could not analyze the page; null when it ran. Present only with
 	 * `a11y: true`, so an empty violation list cannot hide an analysis failure. */
 	a11yError?: string | null;
@@ -161,6 +168,27 @@ async function maskVolatileText(page: Page, masks: readonly TextMask[]): Promise
 			if (value !== field.value) field.value = value;
 		}
 	}, masks.map((rule) => ({ source: rule.pattern.source, flags: rule.pattern.flags, replacement: rule.replacement })));
+}
+
+/** Wait for finite animations before axe. The screenshot loop disables
+ * animations *for the shot*, so two identical frames do not prove the page is
+ * animation-free; a live fade would let axe read a blended color. Infinite
+ * animations (the shimmer) are skipped. */
+async function settleAnimations(page: Page): Promise<void> {
+	await page.evaluate(async () => {
+		const running = document.getAnimations().filter((animation) => {
+			const timing = animation.effect?.getComputedTiming();
+			return (
+				animation.playState === 'running' &&
+				timing !== undefined &&
+				timing.endTime !== Infinity
+			);
+		});
+		const done = Promise.all(running.map((animation) => animation.finished.catch(() => {})));
+		const { promise: cap, resolve } = Promise.withResolvers<void>();
+		setTimeout(resolve, 500);
+		await Promise.race([done, cap]);
+	});
 }
 
 /** Screenshots until two consecutive frames are byte-identical, the same idea
@@ -320,14 +348,26 @@ export async function captureScenes(
 					// the surface and fake a contrast failure if axe reads mid-flight.
 					// An axe failure is recorded, never turned into an empty pass.
 					let a11yViolations: A11yViolation[] | undefined;
+					let a11yIncomplete: A11yViolation[] | undefined;
 					let a11yError: string | null | undefined;
 					if (options.a11y === true) {
 						try {
+							// The page's stripe pattern is decorative; axe cannot
+							// compute contrast over a gradient. Audit against the
+							// solid --stripe-bg underneath (the screenshot still
+							// shows the stripes).
+							await page.evaluate(() => {
+								document.body.style.backgroundImage = 'none';
+							});
+							await scene.a11yPrep?.({ page, url: server.url, relays, ai: stub.control });
+							await settleAnimations(page);
 							const analysis = await new AxeBuilder({ page }).withTags(A11Y_TAGS).analyze();
 							a11yViolations = compactViolations(analysis.violations);
+							a11yIncomplete = compactViolations(analysis.incomplete);
 							a11yError = null;
 						} catch (caught) {
 							a11yViolations = [];
+							a11yIncomplete = [];
 							a11yError = caught instanceof Error ? caught.message : String(caught);
 						}
 					}
@@ -350,6 +390,7 @@ export async function captureScenes(
 					};
 					if (a11yViolations !== undefined) {
 						result.a11yViolations = a11yViolations;
+						result.a11yIncomplete = a11yIncomplete ?? [];
 						result.a11yError = a11yError ?? null;
 					}
 					writeFileSync(

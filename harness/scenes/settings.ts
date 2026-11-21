@@ -27,7 +27,15 @@ export function settingsScenes(): Scene[] {
 				await page.getByRole('button', { name: 'Show models' }).click();
 				await page.getByRole('option', { name: HARNESS_MODEL }).waitFor();
 			},
-			expect: ['Settings', 'AI provider', 'RELAYS', HARNESS_MODEL]
+			expect: ['Settings', 'AI provider', 'RELAYS', HARNESS_MODEL],
+			// The open listbox overlaps the dialog panel, so axe cannot
+			// determine the panel's background and reports every text node as
+			// incomplete. Close it after the screenshot; the dialog itself is
+			// what this scene audits.
+			async a11yPrep({ page }) {
+				await page.getByRole('button', { name: 'Show models' }).click();
+				await page.getByRole('option', { name: HARNESS_MODEL }).waitFor({ state: 'hidden' });
+			}
 		}
 	];
 }

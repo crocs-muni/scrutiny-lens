@@ -61,6 +61,8 @@ export interface A11ySummary {
 	byRule: A11yRuleSummary[];
 	/** Capture order (scene, then theme), so a report is stable. */
 	byScene: A11yCaptureSummary[];
+	/** Rules axe could not evaluate: this is an audit gap, not a pass. */
+	incomplete: A11yBucket & { rules: number };
 	/** Captures where axe itself failed (message per capture), sorted. */
 	errors: string[];
 }
@@ -128,11 +130,19 @@ export function summarizeA11y(results: readonly SceneResult[], run: string): A11
 	const errors: string[] = [];
 	let violations = 0;
 	let nodes = 0;
+	const incompleteRules = new Set<string>();
+	let incompleteViolations = 0;
+	let incompleteNodes = 0;
 
 	for (const result of results) {
 		const capture = `${result.scene}.${result.theme}`;
 		if (result.a11yError !== undefined && result.a11yError !== null) {
 			errors.push(`${capture}: ${result.a11yError}`);
+		}
+		for (const rule of result.a11yIncomplete ?? []) {
+			incompleteRules.add(rule.id);
+			incompleteViolations += 1;
+			incompleteNodes += rule.nodes.length;
 		}
 		const captureImpact = emptyByImpact();
 		let captureViolations = 0;
@@ -208,6 +218,11 @@ export function summarizeA11y(results: readonly SceneResult[], run: string): A11
 		byImpact,
 		byRule,
 		byScene,
+		incomplete: {
+			rules: incompleteRules.size,
+			violations: incompleteViolations,
+			nodes: incompleteNodes
+		},
 		errors
 	};
 }

@@ -169,7 +169,18 @@ export function resultsScenes(): Scene[] {
 				// aria-busy + the dashed face + the neutral wash).
 				await page.addStyleTag({ content: '.fill-sweep { animation: none !important; }' });
 			},
-			expect: ['Infineon M7794']
+			expect: ['Infineon M7794'],
+			// The held fill's draft overlay is an aria-hidden, transient
+			// pre-gate layer over the card; remove it for the audit so axe
+			// reads the card underneath. The screenshot still shows the
+			// mid-fill state.
+			async a11yPrep({ page }) {
+				await page.evaluate(() => {
+					document
+						.querySelectorAll('[aria-busy="true"] [aria-hidden="true"]')
+						.forEach((el) => el.remove());
+				});
+			}
 		}
 	];
 }

@@ -110,9 +110,13 @@ if (command === 'seed') {
 	console.log(JSON.stringify(summary, null, 2));
 	console.error(
 		`a11y: ${summary.violations} rule instance(s), ${summary.nodes} node(s) across ` +
-			`${summary.rules} rule(s); ${summary.errors.length} analysis error(s)`
+			`${summary.rules} rule(s); ${summary.incomplete.nodes} incomplete node(s); ` +
+			`${summary.errors.length} analysis error(s)`
 	);
-	const broken = summary.errors.length > 0 || results.some((result) => result.error !== null);
+	const broken =
+		summary.errors.length > 0 ||
+		summary.incomplete.nodes > 0 ||
+		results.some((result) => result.error !== null);
 	process.exit(broken ? 2 : summary.violations > 0 ? 1 : 0);
 } else if (command === 'ledger') {
 	const floor = await runLedger(buildScenes(), 'build', Number(flag(args, 'runs') ?? 5));
