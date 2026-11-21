@@ -14,6 +14,7 @@ import { ask, openDossier, stripGraphForA11y, waitGraphFrozen } from './common.t
 const chains = loadFixture('chains');
 
 export function dossierScenes(): Scene[] {
+	const aborted = loadFixture('chains-aborted');
 	return [
 		{
 			// Product A: resolved chain, two applied patches (edited ×2).
@@ -53,6 +54,20 @@ export function dossierScenes(): Scene[] {
 				await waitGraphFrozen(page);
 			},
 			expect: ['forked — content frozen at the shared parent'],
+			a11yPrep: ({ page }) => stripGraphForA11y(page)
+		},
+		{
+			// Product G: the patch exceeds the resolver's hunk ceiling, so the
+			// chain aborts before applying; the banner names the ceiling, not a
+			// halt.
+			id: 'dossier-g-aborted',
+			relays: [{ host: 'relay-a.test', events: aborted }],
+			async run({ page, url }) {
+				await ask(page, url, CHAINS_TAG);
+				await openDossier(page, 'Product G', 'Content');
+				await waitGraphFrozen(page);
+			},
+			expect: ['stopped at limit before any patch applied · hunks'],
 			a11yPrep: ({ page }) => stripGraphForA11y(page)
 		},
 		{

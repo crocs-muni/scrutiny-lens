@@ -29,7 +29,7 @@ import { fixturePath } from './fixtures.ts';
 import { runLedger } from './ledger.ts';
 import { writeRunMeta } from './runmeta.ts';
 import { buildScenes } from './scenes/index.ts';
-import { buildChains } from './seed/chains.ts';
+import { buildChains, buildAbortedChain } from './seed/chains.ts';
 
 /** `--name value` or `--name=value`; the second form is what loops write. */
 function flag(args: string[], name: string): string | undefined {
@@ -46,7 +46,9 @@ if (command === 'seed') {
 	mkdirSync(join(import.meta.dirname, 'fixtures'), { recursive: true });
 	const events = buildChains();
 	writeFileSync(fixturePath('chains'), `${events.map((e) => JSON.stringify(e)).join('\n')}\n`);
-	console.log(JSON.stringify({ fixture: 'chains', events: events.length }));
+	const aborted = buildAbortedChain();
+	writeFileSync(fixturePath('chains-aborted'), `${aborted.map((e) => JSON.stringify(e)).join('\n')}\n`);
+	console.log(JSON.stringify({ fixture: 'chains', events: events.length, aborted: aborted.length }));
 } else if (command === 'list') {
 	console.log(JSON.stringify(buildScenes().map((scene) => scene.id)));
 } else if (command === 'shots') {
