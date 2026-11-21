@@ -299,7 +299,14 @@
 
 	<!-- Body stays mounted while collapsed (citation-ring persistence, header
 	 * comment); the frame clips it and the copy fades ahead of the height. -->
-	<div id="drawer-region" class="drawer-copy min-h-0 flex-1 overflow-y-auto px-3 pt-1 pb-3">
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	<div
+		id="drawer-region"
+		class="drawer-copy min-h-0 flex-1 overflow-y-auto px-3 pt-1 pb-3"
+		role="region"
+		aria-label="Dossier content"
+		tabindex="0"
+	>
 		{#if hiddenByFilter}
 			<!-- ADR 0001: the subject outlives the filter, and says so. -->
 			<div
