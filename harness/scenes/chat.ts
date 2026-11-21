@@ -1,6 +1,12 @@
 // Chat scene (spec §2 rule 3, ADR 0003): a grounded answer whose first
 // marker quotes fixture content verbatim, plus one claim whose quote does not
 // exist — the app must strip it and say how many claims it dropped.
+//
+// NOT INCLUDED: the §4 "chat asked what the session contains" keyless row.
+// The backend answers it before the provider check (agents/chat.ts's
+// capabilityAnswer), but ChatColumn disables the composer while
+// settings.apiKey is empty, so the UI path is unreachable. That is an
+// implementation gap, not a scene.
 
 import type { Scene } from '../capture.ts';
 import { loadFixture } from '../fixtures.ts';
