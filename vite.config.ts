@@ -18,6 +18,10 @@ function smokeGateway(): Plugin {
 export default defineConfig({
   plugins: [smokeGateway(), tailwindcss(), sveltekit()],
   test: {
+    // Thread pool, not the forks default: on Windows every forked test file
+    // pays a full process spawn, and the suite is 85+ files of ~1 s imports.
+    // Measured median: 145 s (forks) -> 100 s (threads) for the same tests.
+    pool: "threads",
     projects: [
       {
         extends: "./vite.config.ts",
