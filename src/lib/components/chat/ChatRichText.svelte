@@ -17,54 +17,54 @@
 	import { inlineHtml, parseBlocks, escapeHtml } from '$lib/chat/markdown';
 	import { spotlight } from './spotlight.svelte';
 	import CitationPill from './CitationPill.svelte';
+	import type { AnswerPart } from '$lib/chat/answer';
 	import type { PersistedChatCitation } from '$lib/db';
 
-	/** One render unit: flat markdown, a verified pill, or a live pending shimmer. */
-	export type RichPart =
-		| { kind: 'text'; text: string; marks: number[] }
-		| { kind: 'pill'; n: number; marks: number[] }
-		| { kind: 'pending'; n: number | null };
+	/** One render unit: flat markdown text or a verified pill. The settle
+	 * layout owns the vocabulary (chat/answer.ts); the live path feeds this
+	 * same shape from the same layout (#134). */
+	export type RichPart = AnswerPart;
 
 	interface Props {
 		parts: RichPart[];
-		/** Verified citations (settled path). Empty during streaming. */
+		/** The verified citations the pills belong to — the settle layout's
+		 * list, whether the answer is still streaming (#134) or landed. */
 		citations?: PersistedChatCitation[];
 		/** Which citation's register row is open (the turn owns it). */
 		openN?: number | null;
+		/** Absent while the answer streams: no register row exists yet, so the
+		 * mark renders as a note instead of a control (#134). */
 		onToggle?: (n: number) => void;
 		/** Turn id — prefixes the register row ids so the mark can point at
 		 * the row it expands (aria-controls) without colliding across turns. */
 		idPrefix?: string;
 	}
 
-	let { parts, citations = [], openN = null, onToggle = () => {}, idPrefix = 'turn' }: Props = $props();
+	let { parts, citations = [], openN = null, onToggle, idPrefix = 'turn' }: Props = $props();
 
 	const byN = $derived(new Map(citations.map((c) => [c.n, c])));
 
-	/** Private-use sentinels: they survive `parseBlocks` line splitting (they
-	 * are not whitespace, so block detection still sees the real line shape)
-	 * and carry which marker stood where. */
+	/** Private-use sentinel: it survives `parseBlocks` line splitting (it is
+	 * not whitespace, so block detection still sees the real line shape) and
+	 * carries where a marker stood. */
 	const PILL = '\u0001';
-	const PEND = '\u0002';
-	const INLINE = /([\u0001\u0002])([^\u0001\u0002]*)\1/g;
+	const INLINE = /\u0001([^\u0001]*)\u0001/g;
 
 	/** Recombine the run/marker split into ONE string for the block pass.
-	 * Model text cannot carry the sentinels: they are control characters and
+	 * Model text cannot carry the sentinel: it is a control character and
 	 * stripped, so a literal U+0001 in an answer can never forge a marker. */
 	const raw = $derived(
 		parts
 			.map((p) =>
 				p.kind === 'pill'
 					? `${PILL}${p.n}${PILL}`
-					: p.kind === 'pending'
-						? `${PEND}${p.n ?? ''}${PEND}`
-						: p.text.replace(/[\u0001\u0002]/g, '')
+					: p.text.replace(/\u0001/g, '')
 			)
 			.join('')
 	);
 	const blocks = $derived(parseBlocks(raw));
 
-	type Inline = { kind: 'html'; text: string } | { kind: 'pill'; n: number } | { kind: 'pending'; n: number | null };
+	type Inline = { kind: 'html'; text: string } | { kind: 'pill'; n: number };
 
 	/** Split one block's inline text into sanitized HTML runs and markers.
 	 * A marker that follows a space loses that space: the model writes
@@ -76,13 +76,9 @@
 		for (const m of text.matchAll(INLINE)) {
 			const at = m.index ?? 0;
 			if (at > last) out.push({ kind: 'html', text: text.slice(last, at) });
-			if (m[1] === PILL) {
-				const prev = out[out.length - 1];
-				if (prev?.kind === 'html') prev.text = prev.text.replace(/ $/, '');
-				out.push({ kind: 'pill', n: Number(m[2]) });
-			} else {
-				out.push({ kind: 'pending', n: m[2] === '' ? null : Number(m[2]) });
-			}
+			const prev = out[out.length - 1];
+			if (prev?.kind === 'html') prev.text = prev.text.replace(/ $/, '');
+			out.push({ kind: 'pill', n: Number(m[1]) });
 			last = at + m[0].length;
 		}
 		if (last < text.length) out.push({ kind: 'html', text: text.slice(last) });
@@ -93,10 +89,8 @@
 	function citesIn(text: string): number[] {
 		const nums: number[] = [];
 		for (const m of text.matchAll(INLINE)) {
-			if (m[1] === PILL) {
-				const n = Number(m[2]);
-				if (!nums.includes(n)) nums.push(n);
-			}
+			const n = Number(m[1]);
+			if (!nums.includes(n)) nums.push(n);
 		}
 		return nums;
 	}
@@ -121,11 +115,9 @@
 					{citation}
 					open={openN === seg.n}
 					{onToggle}
-					controls="{idPrefix}-src-{seg.n}"
+					controls={onToggle === undefined ? undefined : `${idPrefix}-src-${seg.n}`}
 				/>
 			{/if}
-		{:else}
-			<span class="pending-pill" aria-label="Verifying citation {seg.n ?? ''}…">{seg.n ?? ''}</span>
 		{/if}
 	{/each}
 {/snippet}
@@ -288,31 +280,5 @@
 	}
 	.md-table tr:last-child td {
 		border-bottom: 0;
-	}
-	/* The pending shimmer (pinned-at-stream citation): neutral on purpose —
-	 * nothing is verified yet, so nothing claims a trust color. */
-	.pending-pill {
-		display: inline-block;
-		min-width: 1.15em;
-		height: 1.05em;
-		padding: 0 0.3em;
-		border-radius: 0.5em;
-		background: var(--inset);
-		color: var(--ink-3);
-		font-size: 0.72em;
-		line-height: 1.05em;
-		text-align: center;
-		vertical-align: 0.12em;
-		overflow: hidden;
-		animation: chat-pending-pulse 1.1s ease-in-out infinite;
-	}
-	@keyframes chat-pending-pulse {
-		0%,
-		100% {
-			opacity: 1;
-		}
-		50% {
-			opacity: 0.35;
-		}
 	}
 </style>

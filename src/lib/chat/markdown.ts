@@ -10,7 +10,7 @@
  * pills are Svelte components interleaved between prose runs. A whole-document
  * {@html} paste would have to split HTML fragments across component slots,
  * and fragments split mid-`<ul>` render broken. Runs are split at pill
- * boundaries FIRST (layoutAnswer / parseChatStream own that), then each run
+ * boundaries FIRST (layoutAnswer owns that), then each run
  * blockifies independently — an item's body always starts and ends inside
  * one run, so every pasted HTML fragment is balanced.
  *

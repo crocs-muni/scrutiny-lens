@@ -749,6 +749,14 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 					? AbortSignal.any([args.signal, abortCtrl.signal])
 					: abortCtrl.signal,
 				maxRetries: 0,
+				// Telemetry scaffolding OFF: the app has no telemetry sink, so
+				// the SDK's dispatcher buys nothing — and in this SDK build
+				// leaving it on derives a tracing `completion` promise from
+				// `_totalUsage.promise` that nobody owns once an attempt dies
+				// before its first step. Measured in Chromium (Playwright,
+				// 7.0.79): the pageerror appears with the scaffolding on and
+				// disappears with it off.
+				telemetry: { isEnabled: false },
 				providerOptions: reasoningProviderOptions(args, false)
 			});
 			// AI SDK's textStream swallows open-time errors (a 429 just ends it);

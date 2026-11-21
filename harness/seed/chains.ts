@@ -177,3 +177,30 @@ export function buildChains(): NostrEvent[] {
 
 	return [pA, m1, m3, pC, m4, pE, pD, ...bindings, pa1, pa2, q1, q2, f1, f2, del, profile];
 }
+
+/** A product whose one patch has 65 hunks: the resolver's default ceiling is
+ * 64, so the chain aborts before applying. Kept out of `buildChains` so the
+ * extra product does not move every other scene's result set. */
+export function buildAbortedChain(): NostrEvent[] {
+	const before =
+		[
+			'Product G — aborted chain',
+			...Array.from(
+				{ length: 65 },
+				(_, i) =>
+					`block ${i} line a\nblock ${i} line b\nblock ${i} line c\nblock ${i} line d\nblock ${i} line e\nblock ${i} line f\nblock ${i} line g\nblock ${i} line h`
+			)
+		].join('\n') + '\n';
+	const after = before.replace(/line d/g, 'line D');
+	const product = sign(buildProduct(before, T0 - 6 * DAY, [CHAINS_TAG]).template);
+	const patch = sign(
+		buildPatch({
+			root: { id: product.id },
+			reply: { id: product.id },
+			before,
+			after,
+			createdAt: T0 - 5 * DAY
+		}).template
+	);
+	return [product, patch];
+}

@@ -33,11 +33,10 @@ import {
 	type Transport,
 } from '$lib/net/transport';
 import {
-	fillNote,
 	investigation,
-	recordFillFailure,
 	resetInvestigation,
 } from '../src/lib/investigation.svelte';
+import { fillNote, recordFillFailure } from '../src/lib/fill-note';
 import { aggregatePerRelay, degradedBannerText } from '../src/lib/relay-readout';
 import { resetShell, shell } from '../src/lib/shell.svelte';
 import { resetSettings, settings } from '../src/lib/settings.svelte';

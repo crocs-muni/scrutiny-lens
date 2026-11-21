@@ -4,7 +4,7 @@
 import type { Scene } from '../capture.ts';
 import { loadFixture } from '../fixtures.ts';
 import { CHAINS_TAG } from '../seed/chains.ts';
-import { ask, cardOf, waitGraphFrozen } from './common.ts';
+import { ask, cardOf, stripGraphForA11y, waitGraphFrozen } from './common.ts';
 
 const chains = loadFixture('chains');
 
@@ -22,7 +22,13 @@ export function graphScenes(): Scene[] {
 				await page.locator('[data-drawer-collapsed="true"]').waitFor();
 				await waitGraphFrozen(page);
 			},
-			expect: ['frozen', 'cc:HARNESS-CHAINS']
+			expect: ['frozen', 'cc:HARNESS-CHAINS'],
+			// The ring plates are decorative and overlap the card text in axe's
+			// view; remove them after the screenshot so contrast reads the card
+			// surface, not the halo.
+			async a11yPrep({ page }) {
+				await stripGraphForA11y(page, 'cc:HARNESS-CHAINS');
+			}
 		}
 	];
 }

@@ -162,21 +162,34 @@
 		return bits;
 	});
 
-	function keySelect(event: KeyboardEvent): void {
-		if (event.key === 'Enter' || event.key === ' ') {
-			event.preventDefault();
-			data.onSelect(data.id);
-		}
+	/* The card is ONE control, but the card SURFACE stays a document: its
+	 * text tips (title, publisher, counts) are mouse supplements that must
+	 * not add tab stops, and the +N bubble is its own verb. So the focusable
+	 * control is a transparent overlay BUTTON over the card — a sibling of
+	 * the content and the bubble, never their ancestor (axe
+	 * `nested-interactive`, #208). It is `pointer-events: none`: the canvas
+	 * already selects on pointerdown (press-to-select, #101), so a real
+	 * pointer click must not double-fire openDossier (#102 F2). */
+	const nodeName = $derived.by(() => {
+		const kind = data.kind === 'product' ? 'product' : 'record';
+		return data.retracted ? `${data.title} — retracted ${kind}` : data.title;
+	});
+
+	/** Keyboard / assistive activation arrives here; the overlay button is
+	 * `pointer-events: none`, so a pointer click cannot double-fire the canvas
+	 * pointerdown selection (#101/#102 F2). */
+	function activate(): void {
+		data.onSelect(data.id);
 	}
 </script>
 
 <!-- The node IS one select target (ruling 6: drawer-only detail), accepted
- *	via the canvas wrapper's pointerdown (press-to-select, #101). No mouse
- *	onclick here on purpose: it would DOUBLE-fire openDossier after the
- *	pointerdown (duplicated relay legs per click — review F2, #102). The
- *	keyboard path (Enter/Space) stays on keySelect. The +N bubble is the
- *	expansion gesture (#97): single-click, discrete hit target — it never
- *	selects. -->
+ *	via the canvas wrapper's pointerdown (press-to-select, #101). The
+ *	focusable control is the overlay button at the bottom of this wrapper
+ *	(Enter/Space activation); the wrapper itself carries no role and no tab
+ *	stop, so its tips and the +N bubble are never nested in a control. The
+ *	+N bubble is the expansion gesture (#97): single-click, discrete hit
+ *	target — it never selects. -->
 <!-- The title is CSS-clipped (truncate) and the dense tiers drop it, so the
 	 * tooltip carries the full text in the same face as the visible title. -->
 {#snippet fullTitle()}
@@ -187,12 +200,11 @@
 	 * icon, never on the whole card: a tip on the card would swallow the
 	 * pointer-enter after a child tip (publisher chip, counts, +N bubble)
 	 * closed, so moving back to the title showed nothing until the pointer
-	 * left the card. The full title is in the node's accessible name and opens
-	 * in the Dossier on Enter/Space, so the tip is a mouse supplement
-	 * (hoverOnly) by design: a child of an interactive parent gets no tab
-	 * stop (spec §9 keyboard rule, #39). -->
+	 * left the card. The full title is the overlay button's accessible name
+	 * and opens in the Dossier on Enter/Space, so the tip is a mouse
+	 * supplement (hoverOnly) by design: the card surface is one control and
+	 * its tips must not add tab stops (spec §9 keyboard rule, #39). -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <!-- §9 anatomy: a linked record is a DOCUMENT — its card is clipped at the
  * top-right corner with a 14px cut and a folded flap. The clip lives on an
  * INNER surface plus the ring plates: clipping the wrapper would swallow the
@@ -200,10 +212,6 @@
  * geometry and the badge; the inner card carries the radius, the border, the
  * surface/stripes, the fold clip, the diagonal hairline and the content. -->
 <div
-	role="button"
-	tabindex="0"
-	aria-label={tier === 'disc' ? data.title : undefined}
-	onkeydown={keySelect}
 	onmouseenter={() => {
 		hovered = true;
 		data.onHoverChange?.(data.id, true);
@@ -248,9 +256,9 @@
 	{/if}
 	{#if tier === 'disc'}
 		<!-- The disc stays a circle for both kinds — no fold (§9 anatomy: the
-			document cut only exists where there is a card to fold). The root
-			button's aria-label names it; this wrapper is the tip trigger so the
-			+N bubble is its sibling, not a child. -->
+		 * document cut only exists where there is a card to fold). The
+		 * overlay button's aria-label names it; this wrapper is the tip
+		 * trigger so the +N bubble is its sibling, not a child. -->
 		<div
 			class="relative flex h-full w-full items-center justify-center rounded-full border bg-surface
 				{stateBorder}"
@@ -401,6 +409,17 @@
 		</div>
 	{/if}
 
+	<!-- The card's single focusable control (#208). Focusable, never a
+	 * pointer hit target: the canvas selects on pointerdown already, and a
+	 * button click over the card would fire the selection twice. The visible
+	 * card keeps its own tips and the +N bubble stays the sibling verb. -->
+	<button
+		type="button"
+		class="node-hit pointer-events-none absolute inset-0 rounded-[inherit]"
+		aria-label={nodeName}
+		onclick={activate}
+	></button>
+
 	<!-- N3/G1 → #97: admitted-but-hidden neighbors (never zero-shown). The
 	 * bubble is the expansion verb — single click, discrete hit target,
 	 * never a selection. Meaning is role-bound: records hide PRODUCT
@@ -428,10 +447,10 @@
 <style>
 	/* Keyboard ring (issue #127): the node's SELECTED state already paints an
 	 * --accent border + citation ring, so the generic :focus-visible ring sat
-	 * flush against it and focus read as selection. Lift it clear. Scoped here
-	 * rather than on `.stage [role="button"]` in app.css: an ancestor selector
-	 * silences on any rename and would leak onto future stage buttons. */
-	.graph-node:focus-visible {
+	 * flush against it and focus read as selection. Lift it clear. It lives
+	 * on the overlay button (the one focusable element), which matches the
+	 * wrapper box exactly. */
+	.node-hit:focus-visible {
 		outline: 2px solid var(--accent);
 		outline-offset: 3px;
 	}

@@ -4,7 +4,7 @@
 
 import type { Locator, Page } from 'playwright';
 import { HARNESS_MODEL } from '../ai.ts';
-import type { SceneContext } from '../capture.ts';
+import type { Scene, SceneContext } from '../capture.ts';
 
 /** The trace's done row prints the run's real elapsed time
  * (`TaskTrace.svelte`), which differs between launches of the same build —
@@ -149,3 +149,30 @@ export async function mustNotBeVisible(page: Page, text: string): Promise<void> 
 		if (visible) throw new Error(`unexpected text on screen: ${text}`);
 	}
 }
+
+/** Remove the graph's decorative overlap before axe. The transparent card
+ * button, ring plates and edge SVG sit over the node text; axe reports the
+ * card text as an undetermined background instead of a contrast verdict.
+ * `keepText` keeps the one node whose card is being audited (graph scene);
+ * without it the graph is hidden and the drawer/chat surface is audited. */
+export async function stripGraphForA11y(page: Page, keepText?: string): Promise<void> {
+	await page.evaluate((keep) => {
+		document.querySelectorAll('.node-ring, svg.edges, .node-hit').forEach((el) => el.remove());
+		const nodes = [...document.querySelectorAll<HTMLElement>('.scrutiny-node')];
+		if (keep === null) {
+			for (const el of nodes) el.remove();
+			return;
+		}
+		const subject = nodes.find((el) => el.textContent?.includes(keep));
+		for (const el of nodes) if (el !== subject) el.remove();
+		// A metadata card carries a diagonal hairline gradient; axe cannot
+		// determine text contrast over it. The text sits on the surface fill,
+		// so flatten only the card fill for the audit.
+		for (const card of subject?.querySelectorAll<HTMLElement>('.graph-node > div') ?? []) {
+			card.style.background = 'var(--surface)';
+		}
+	}, keepText ?? null);
+}
+
+/** The five dossier/chat scenes that audit their own surface, not the graph. */
+export const stripGraph: NonNullable<Scene['a11yPrep']> = ({ page }) => stripGraphForA11y(page);

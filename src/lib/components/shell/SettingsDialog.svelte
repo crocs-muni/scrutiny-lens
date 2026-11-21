@@ -306,7 +306,7 @@
 				onblur={commitEndpoint}
 				onkeydown={(event) => event.key === 'Enter' && commitEndpoint()}
 				spellcheck="false"
-				class="mb-3 w-full rounded-control bg-field px-2 py-1.5 font-mono text-[12.5px] text-ink shadow-hairline outline-none transition-shadow duration-150 placeholder:text-ink-3 focus:shadow-card"
+				class="mb-3 w-full rounded-control bg-field px-2 py-1.5 font-mono text-[12.5px] text-ink shadow-hairline outline-none transition-shadow duration-150 placeholder:text-ink-2 focus:shadow-card"
 			/>
 
 			<label for="settings-key" class="mb-1 block text-[12.5px] text-ink-2">API key</label>
@@ -321,7 +321,7 @@
 				provider. Kept in this tab only: a reload keeps it, closing the tab clears it.
 			</p>
 
-			<span class="mt-3 mb-1 block text-[12.5px] text-ink-2">Model</span>
+			<span id="settings-model-label" class="mt-3 mb-1 block text-[12.5px] text-ink-2">Model</span>
 			{#if settings.apiKey === ''}
 				<input
 					disabled
@@ -347,11 +347,12 @@
 						class="flex items-center rounded-control bg-field shadow-hairline transition-shadow duration-150 focus-within:shadow-card"
 					>
 						<Combobox.Input
-							aria-label="Model"
+							aria-labelledby="settings-model-label"
+							aria-controls="settings-model-listbox"
 							placeholder={modelState === 'loading' ? 'Loading models…' : 'Search models'}
 							defaultValue={modelInput}
 							oninput={(event) => (modelInput = event.currentTarget.value)}
-							class="min-w-0 flex-1 bg-transparent px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none placeholder:text-ink-3"
+							class="min-w-0 flex-1 bg-transparent px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none placeholder:text-ink-2"
 						/>
 						<Combobox.Trigger
 							class="primitive-icon-button mr-0.5 text-ink-3 hover:bg-hover hover:text-ink"
@@ -362,38 +363,50 @@
 					</div>
 					<Combobox.Portal>
 						<Combobox.Content
-							class="z-50 max-h-48 w-[var(--bits-combobox-anchor-width)] min-w-48 overflow-y-auto rounded-card bg-surface p-1 shadow-overlay"
+							aria-label="Models"
+							class="z-50 max-h-48 w-[var(--bits-floating-anchor-width)] min-w-48 overflow-y-auto rounded-card bg-surface p-1 shadow-overlay"
 							sideOffset={4}
 						>
-							<Combobox.Viewport>
-								{#each filteredModels as model (model.value)}
-									<Combobox.Item
-										value={model.value}
-										label={model.label}
-										class="flex cursor-pointer items-center gap-1.5 rounded-control px-2 py-1.5 text-[12.5px] text-ink data-highlighted:bg-hover"
-									>
-										{#snippet children({ selected })}
-											<span class="w-3.5 text-ink-2">
-												{#if selected}<IconCheck size={13} stroke-width={2.5} />{/if}
-											</span>
-											<span class="font-mono">{model.label}</span>
-										{/snippet}
-									</Combobox.Item>
-								{:else}
-									<div class="px-2 py-1.5 text-[12.5px] text-ink-3">
-										{modelState === 'loading'
-											? 'Loading models…'
-											: modelState === 'error'
-												? modelError
-												: 'No matching models.'}
+							<!-- bits-ui renders the listbox inside a floating wrapper whose
+							 * generated id is not forwarded to the listbox; the editable
+							 * combobox needs a stable aria-controls target. The child
+							 * snippet is the library's own escape hatch: render the same
+							 * wrapper/listbox pair and pin the listbox id. -->
+							{#snippet child({ props, wrapperProps })}
+								<div {...wrapperProps}>
+									<div {...props} id="settings-model-listbox">
+										<Combobox.Viewport>
+											{#each filteredModels as model (model.value)}
+												<Combobox.Item
+													value={model.value}
+													label={model.label}
+													class="flex cursor-pointer items-center gap-1.5 rounded-control px-2 py-1.5 text-[12.5px] text-ink data-highlighted:bg-hover"
+												>
+													{#snippet children({ selected })}
+														<span class="w-3.5 text-ink-2">
+															{#if selected}<IconCheck size={13} stroke-width={2.5} />{/if}
+														</span>
+														<span class="font-mono">{model.label}</span>
+													{/snippet}
+												</Combobox.Item>
+											{:else}
+												<div class="px-2 py-1.5 text-[12.5px] text-ink-3">
+													{modelState === 'loading'
+														? 'Loading models…'
+														: modelState === 'error'
+															? modelError
+															: 'No matching models.'}
+												</div>
+											{/each}
+										</Combobox.Viewport>
 									</div>
-								{/each}
-							</Combobox.Viewport>
+								</div>
+							{/snippet}
 						</Combobox.Content>
 					</Combobox.Portal>
 				</Combobox.Root>
 				{#if modelState === 'error'}
-					<p class="mt-1.5 text-[11.5px] text-red">{modelError}</p>
+					<p class="mt-1.5 text-[11.5px] text-red-ink">{modelError}</p>
 				{:else if modelState === 'ready' && models.length === 0}
 					<p class="mt-1.5 text-[11.5px] text-ink-3">The endpoint reported no models.</p>
 				{/if}
@@ -418,7 +431,7 @@
 						class="flex flex-1 items-center justify-center gap-1.5 rounded-[6px] py-1 text-[12.5px] transition-colors duration-150 {settings.appearance ===
 						option.value
 							? 'bg-surface text-ink shadow-btn'
-							: 'text-ink-3 hover:text-ink'}"
+							: 'text-ink-2 hover:text-ink'}"
 					>
 						<option.icon size={13} stroke-width={2} />
 						{option.label}
@@ -439,7 +452,7 @@
 							onblur={() => void commitRelays()}
 							placeholder="wss://…"
 							spellcheck="false"
-							class="min-w-0 flex-1 rounded-control bg-field px-2 py-1.5 font-mono text-[12.5px] text-ink shadow-hairline outline-none transition-shadow duration-150 placeholder:text-ink-3 focus:shadow-card"
+							class="min-w-0 flex-1 rounded-control bg-field px-2 py-1.5 font-mono text-[12.5px] text-ink shadow-hairline outline-none transition-shadow duration-150 placeholder:text-ink-2 focus:shadow-card"
 						/>
 						<KeyHint
 							label="Remove relay"
@@ -463,7 +476,7 @@
 				</button>
 			{/if}
 			{#if relayError}
-				<p class="mt-1.5 text-[11.5px] text-red">{relayError}</p>
+				<p class="mt-1.5 text-[11.5px] text-red-ink">{relayError}</p>
 			{/if}
 			<p class="mt-1 text-[11.5px] text-ink-3">{RELAY_MIN}–{RELAY_MAX} relays.</p>
 			<!-- Save truth (issue #131, spec §2 never-lie): renders what the
@@ -482,7 +495,7 @@
 			<button
 				type="button"
 				onclick={() => void clearAll()}
-				class="rounded-control bg-red-tint px-2.5 py-1.5 text-[12.5px] font-medium text-red transition-colors duration-150 hover:bg-red hover:text-white"
+				class="rounded-control bg-red-tint px-2.5 py-1.5 text-[12.5px] font-medium text-red-ink transition-colors duration-150 hover:bg-red-ink hover:text-white"
 			>
 				Clear all local data
 			</button>

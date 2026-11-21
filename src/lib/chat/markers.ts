@@ -2,9 +2,10 @@
  * Chat answer marker scanner (chat-output rework T1, 2026-09-17).
  *
  * SINGLE OWNER of marker detection for the chat answer surface. Every
- * consumer — the agent's settle gate (resolveFinal), the live stream parser
- * (streamParse), the live renderer (ChatLiveMessage pre-parser) — scans
- * through THIS. The previous regex grammar (`\{([^{}]*)\}`) had a hard leak:
+ * consumer — the settle gate (chat/settle.ts, run by the agent's final
+ * frame and by the live surface) and the stream's readable-prefix rule
+ * (chat/streamParse.ts) — scans through THIS. The previous regex grammar
+ * (`\{([^{}]*)\}`) had a hard leak:
  * a model payload containing NESTED braces (observed live:
  * `[2]{"eventId":"…","quote":"Kyber":{"KYBER":1,…}}`) failed the capture,
  * bypassed every gate, and rendered the raw corrupt JSON as prose

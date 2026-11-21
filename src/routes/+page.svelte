@@ -6,7 +6,8 @@
 	 * while a session is open. */
 
 	import { handleShellKeydown, isTypingTarget, shell } from '$lib/shell.svelte';
-	import { fillNote, investigation } from '$lib/investigation.svelte';
+	import { investigation } from '$lib/investigation.svelte';
+	import { deriveRunState } from '$lib/run-state';
 	import { deriveDossier } from '$lib/dossier';
 	import { deriveNavTrail, type AscendTarget, type NavAction } from '$lib/nav';
 	import { subjectTitleOf } from '$lib/graph/subject-graph';
@@ -27,8 +28,6 @@
 	import ResultsEmpty from '$lib/components/ui/ResultsEmpty.svelte';
 	import ResultsError from '$lib/components/ui/ResultsError.svelte';
 	import { applyFacets, cohortLine } from '$lib/pipeline/cards';
-	import { aggregatePerRelay, degradedBannerText } from '$lib/relay-readout';
-	import type { PipelineNotice } from '$lib/pipeline';
 	import {
 		afterSemantics,
 		iTagSelections,
@@ -45,7 +44,7 @@
 	import type { ProviderOverrideInput } from '$lib/ai/provider';
 	import { bestIdentifier } from '$lib/ai/projector';
 	import { subjectGrounding, type NostrEvent } from '$lib/fabric';
-	import { searchTallyLabel, showsStageWait } from '$lib/trace';
+	import { searchTallyLabel } from '$lib/trace';
 
 	let centerHeight = $state(0);
 	/** The bar persists across the results↔session hop; the focus target
@@ -539,138 +538,47 @@
 	// searches. The pane must name that, not blame the relays: zero searches
 	// means nothing was asked, so "Nothing matched" would be a false claim
 	// about the corpus (spec §2).
-	const noTerms = $derived(
-		investigation.result !== null &&
-			investigation.error === null &&
-			investigation.running === false &&
-			investigation.searches.length === 0
+	// Every flag below is a pure function of the run record (run-state.ts):
+	// one derivation shared with the tests, so the banners cannot drift from
+	// the states they name.
+	const runState = $derived(
+		deriveRunState({
+			phase: investigation.phase,
+			running: investigation.running,
+			result: investigation.result,
+			error: investigation.error,
+			searches: investigation.searches,
+			skeletons: investigation.skeletons,
+			slices: investigation.slices,
+			restoredEvicted: investigation.restoredEvicted,
+			fillStats: investigation.fillStats,
+			fillFailure: investigation.fillFailure,
+			fillErrorMessage: investigation.fillErrorMessage,
+			rateLimitedCount: investigation.rateLimitedCount,
+			failed: investigation.failed,
+			viewCards,
+			notices: investigation.notices,
+			hasShareHints: investigation.hasShareHints,
+			shareHints: investigation.shareHints,
+			apiKey: settings.apiKey,
+			filling: investigation.filling
+		})
 	);
-	const emptyDone = $derived(
-		investigation.result !== null &&
-			investigation.error === null &&
-			(investigation.searches.length > 0 || noTerms) &&
-			// The settle traversal (refreshSessionContext) runs while `running`
-			// and can turn 0 cards into N: 'Nothing matched' must wait for the
-			// honest end of the run, not paint mid-settle (#82 acceptance:
-			// zero-results is a SETTLED fact, never an in-flight guess;
-			// measured live — ROCA chip flashed the empty pane between
-			// result-set and the 58-context arrival).
-			investigation.running === false &&
-			// A RESTORED session with evicted products is data loss, not a
-			// zero-result search (spec §4 conflation): 'Nothing matched' would
-			// lie about a partial frontier — the evicted footer line says it.
-			(investigation.restoredEvicted === null || investigation.restoredEvicted === 0) &&
-			viewCards.length === 0
-	);
-	// #91: the two stages with nothing to show — translate (one model round
-	// trip, 30–60s cold) and fetch before the first slice admits an event.
-	// The real skeleton cards take over from the first admitted event, so the
-	// block never paints over them, and never on a settled run.
-	const stageWait = $derived(
-		showsStageWait(investigation.phase, investigation.running, investigation.skeletons.length)
-	);
-	const anyRelayOk = $derived(
-		investigation.slices.some((s) => s.status === 'ok') || investigation.result !== null
-	);
-	// spec §4: all relays dead → error screen, never "no matches". Two shapes:
-	// the run settled with an error before any relay answered (transport
-	// throw), or every relay leg settled refused/timed out with zero events —
-	// the latter reports the per-leg statuses instead of a false EmptyState.
-	const allRefused = $derived(
-		investigation.slices.length > 0 && !investigation.slices.some((s) => s.status === 'ok')
-	);
-	const relayDead = $derived(
-		(investigation.error !== null && !anyRelayOk) ||
-			(investigation.phase === 'done' && allRefused && investigation.skeletons.length === 0)
-	);
-	// The fill settled with REAL failures — spec §4: fallback + dismissible
-	// banner, full OR partial degradation. Message stays numeric — never
-	// "broken" — and the zero-interpreted text is keyed on the real fill
-	// kind: an endpoint that answered but didn't conform is not
-	// "unreachable" (spec §2 never-lie).
-	// #106 lazy fill: `interpreted < total` ALONE is no longer a failure —
-	// beyond-window cards were never asked, so the honest steady state of
-	// an unscrolled result must NOT read as a fill failure. The banner fires
-	// only when a lane actually lost something: amber ids (asked and
-	// lost) or a pinned fill kind (an AIResult failure escaped the
-	// retries). Never-asked raw cards show the neutral dashed face and no
-	// banner (spec §2).
-	// The settle verdict sentence is shared by the visible banner AND the
-	// fillLive region (one derivation, so the two surfaces can't drift —
-	// review finding on the a11y slice).
-	const fillSettleNote = $derived(
-		fillNote(
-			investigation.fillStats.interpreted,
-			investigation.fillStats.total,
-			investigation.fillFailure,
-			investigation.fillErrorMessage,
-			investigation.rateLimitedCount
-		)
-	);
-	const aiNote = $derived(
-		investigation.result !== null &&
-			!investigation.filling &&
-			investigation.fillStats.total > 0 &&
-			investigation.fillStats.interpreted < investigation.fillStats.total &&
-			(investigation.failed.size > 0 || investigation.fillFailure !== null)
-			? fillSettleNote
-			: ''
-	);
-	// §4 translate-fallback is surfaced by the pipeline's capability notice
-	// (which carries the failure class — timeout/unreachable/etc.) as the
-	// banner; no second duplicate here.
-	// §4: some relays dead → results from the rest + corner notice (a refused
-	// leg is a degradation, not 'no matches'). Folded per relay before it
-	// reaches the page (relay-readout.ts, issue #132): the pipeline emits one
-	// slice per (search, relay) leg, so raw slices counted legs as relays.
-	const relayReceipts = $derived(aggregatePerRelay(investigation.slices));
-	const degradedRelays = $derived(relayReceipts.filter((r) => r.status !== 'ok'));
-	const degradedNote = $derived(degradedBannerText(relayReceipts));
-	// #83 (spec §2 never-lie): a restored session must read as fetched from
-	// local storage, never as a fresh network replay; evicted ids got no
-	// bytes at all and are counted honestly.
-	const footerNotes = $derived(
-		[
-			...(investigation.restoredEvicted === null
-				? []
-				: investigation.restoredEvicted === 0
-					? ['restored from local storage']
-					: [
-							'restored from local storage',
-							`${investigation.restoredEvicted} evicted from local storage`
-						]),
-			...degradedRelays.map((r) => `relay ${r.url} ${r.status}`)
-		]
-	);
-	// §4 honesty lane: every notice class surfaces as ONE roll-up banner —
-	// verbatim per-notice facts live in the trace's ticks. Must be invoked
-	// from a $derived so the $state read stays tracked.
-	function noticeRollup(kind: PipelineNotice['kind'], plural: string): string {
-		const items = investigation.notices.filter((n) => n.kind === kind);
-		if (items.length === 0) return '';
-		if (items.length === 1) return items[0].message;
-		return `${items.length} ${plural} — details in the trace`;
-	}
-	const capabilityNote = $derived(
-		noticeRollup('capability', 'relays report no or unverifiable search support')
-	);
-	const traversalNote = $derived(noticeRollup('traversal', 'context-fetch warnings'));
-	// Issue #31 (spec §4): a cold-open share link carried relay hints and
-	// some of them failed — the record still opened (from the rest of the
-	// hints or the cache), so it's a degradation banner on both center
-	// surfaces, not a block. Gated on hasShareHints (F2): a HINTLESS link
-	// that resolved via the configured pool must not be blamed for "failed
-	// hints" it never carried (spec §2 never-lie).
-	const shareNote = $derived(
-		!investigation.hasShareHints || investigation.shareHints.length === 0
-			? ''
-			: investigation.shareHints.length === 1
-				? `hinted relay ${investigation.shareHints[0]} failed — record opened from the rest`
-				: `${investigation.shareHints.length} hinted relays failed (${investigation.shareHints.join(' · ')}) — record opened from the rest`
-	);
-	// §4: no AI key set — everything still works; the hint belongs on the
-	// RESULTS surface too (the hero's NoKeyBanner is invisible post-submit).
-	const noKey = $derived(settings.apiKey === '' && investigation.result !== null);
+	// One $derived per field: destructuring the object would snapshot the
+	// values at init and freeze the result surface.
+	const noTerms = $derived(runState.noTerms);
+	const emptyDone = $derived(runState.emptyDone);
+	const stageWait = $derived(runState.stageWait);
+	const relayDead = $derived(runState.relayDead);
+	const degradedNote = $derived(runState.degradedNote);
+	const relayReceipts = $derived(runState.relayReceipts);
+	const footerNotes = $derived(runState.footerNotes);
+	const capabilityNote = $derived(runState.capabilityNote);
+	const traversalNote = $derived(runState.traversalNote);
+	const shareNote = $derived(runState.shareNote);
+	const fillSettleNote = $derived(runState.fillSettleNote);
+	const aiNote = $derived(runState.aiNote);
+	const noKey = $derived(runState.noKey);
 	let dismissed = $state<Set<string>>(new Set());
 	// Dismissals are per-run: a superseding/new investigation brings back the
 	// warnings (review finding — page-level state outlived #36-keyed remounts).

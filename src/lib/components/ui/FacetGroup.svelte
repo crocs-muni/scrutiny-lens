@@ -83,7 +83,7 @@
 						{/if}
 					</span>
 					<span class="truncate text-[14px] {selected.has(v.value) ? 'text-ink' : 'text-ink-2'}">{v.value}</span>
-					<span class="ml-auto font-mono text-[11.5px] tabular-nums text-ink-3">{v.count}</span>
+					<span class="ml-auto font-mono text-[11.5px] tabular-nums {selected.has(v.value) ? 'text-ink-2' : 'text-ink-3'}">{v.count}</span>
 				</button>
 			{/each}
 			{#if hidden > 0}

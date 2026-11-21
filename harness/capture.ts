@@ -11,7 +11,9 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import AxeBuilder from '@axe-core/playwright';
 import { chromium, type BrowserContext, type Page } from 'playwright';
+import { compactViolations } from './a11y.ts';
 import { createAiStub, type AiControl, type AiScript } from './ai.ts';
 import { FakeRelay, type RelayChaos } from './relay.ts';
 import { serveApp, type AiHandler } from './serve.ts';
@@ -68,12 +70,42 @@ export interface Scene {
 	/** Text that must be visible once `run` finishes (a relay that returns
 	 * nothing must not screenshot green). */
 	expect: readonly string[];
+	/** Runs after the screenshot and before axe (a11y captures only). Use it
+	 * to remove an overlay that would make axe's contrast checks incomplete;
+	 * the screenshot still shows the overlay. */
+	a11yPrep?: (ctx: SceneContext) => Promise<void>;
+}
+
+/** One axe violation node, reduced to what a scoreboard can read: where, the
+ * offending HTML, and why it failed. */
+export interface A11yNode {
+	/** Frame/shadow selectors; shadow parts joined with ` >>> `. */
+	target: string[];
+	html: string;
+	failureSummary: string | null;
+}
+
+/** One axe rule that fired in one scene+theme. Raw axe results are far too
+ * large for a run directory; this is the compact row `harness/score.ts` reads. */
+export interface A11yViolation {
+	id: string;
+	/** axe's `null` impact is recorded as `unknown`, never dropped. */
+	impact: 'critical' | 'serious' | 'moderate' | 'minor' | 'unknown';
+	help: string;
+	helpUrl: string;
+	nodes: A11yNode[];
 }
 
 export interface CaptureOptions {
 	buildDir: string;
 	outDir: string;
 	ai?: AiHandler;
+	/** Run axe (WCAG 2.0/2.1 A and AA) after the scene settles and record
+	 * compact violations on each result. Off by default, so `shots` output is
+	 * unchanged. */
+	a11y?: boolean;
+	/** Called once per finished scene+theme capture (progress reporting). */
+	onResult?: (result: SceneResult) => void;
 }
 
 export interface SceneResult {
@@ -90,6 +122,14 @@ export interface SceneResult {
 	missingText: string[];
 	/** Why `run` threw, or null when the scene reached its state. */
 	error: string | null;
+	/** Present only when captured with `a11y: true`; one entry per rule. */
+	a11yViolations?: A11yViolation[];
+	/** Rules axe could not evaluate (e.g. an overlapped element); present
+	 * only with `a11y: true`. Non-empty means the surface was not audited. */
+	a11yIncomplete?: A11yViolation[];
+	/** Why axe could not analyze the page; null when it ran. Present only with
+	 * `a11y: true`, so an empty violation list cannot hide an analysis failure. */
+	a11yError?: string | null;
 }
 
 // Chromium logs this for any ResizeObserver whose callback resizes its own
@@ -97,6 +137,9 @@ export interface SceneResult {
 const BENIGN_CONSOLE = [/ResizeObserver loop/];
 
 const MAX_FRAMES = 8;
+
+/** The conformance floor the app targets: WCAG 2.0 and 2.1, levels A and AA. */
+const A11Y_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
 /** Apply the scene's masks to every text node (documented escape hatch for
  * clock-derived copy). Narrow by construction: a pattern that matches
@@ -125,6 +168,27 @@ async function maskVolatileText(page: Page, masks: readonly TextMask[]): Promise
 			if (value !== field.value) field.value = value;
 		}
 	}, masks.map((rule) => ({ source: rule.pattern.source, flags: rule.pattern.flags, replacement: rule.replacement })));
+}
+
+/** Wait for finite animations before axe. The screenshot loop disables
+ * animations *for the shot*, so two identical frames do not prove the page is
+ * animation-free; a live fade would let axe read a blended color. Infinite
+ * animations (the shimmer) are skipped. */
+async function settleAnimations(page: Page): Promise<void> {
+	await page.evaluate(async () => {
+		const running = document.getAnimations().filter((animation) => {
+			const timing = animation.effect?.getComputedTiming();
+			return (
+				animation.playState === 'running' &&
+				timing !== undefined &&
+				timing.endTime !== Infinity
+			);
+		});
+		const done = Promise.all(running.map((animation) => animation.finished.catch(() => {})));
+		const { promise: cap, resolve } = Promise.withResolvers<void>();
+		setTimeout(resolve, 500);
+		await Promise.race([done, cap]);
+	});
 }
 
 /** Screenshots until two consecutive frames are byte-identical, the same idea
@@ -278,6 +342,36 @@ export async function captureScenes(
 						if (!visible) missingText.push(text);
 					}
 					const shot = await stableScreenshot(page, scene.mask);
+
+					// Accessibility facts are taken AFTER the stabilisation loop: a
+					// 160ms profile fade or a running transition can blend text toward
+					// the surface and fake a contrast failure if axe reads mid-flight.
+					// An axe failure is recorded, never turned into an empty pass.
+					let a11yViolations: A11yViolation[] | undefined;
+					let a11yIncomplete: A11yViolation[] | undefined;
+					let a11yError: string | null | undefined;
+					if (options.a11y === true) {
+						try {
+							// The page's stripe pattern is decorative; axe cannot
+							// compute contrast over a gradient. Audit against the
+							// solid --stripe-bg underneath (the screenshot still
+							// shows the stripes).
+							await page.evaluate(() => {
+								document.body.style.backgroundImage = 'none';
+							});
+							await scene.a11yPrep?.({ page, url: server.url, relays, ai: stub.control });
+							await settleAnimations(page);
+							const analysis = await new AxeBuilder({ page }).withTags(A11Y_TAGS).analyze();
+							a11yViolations = compactViolations(analysis.violations);
+							a11yIncomplete = compactViolations(analysis.incomplete);
+							a11yError = null;
+						} catch (caught) {
+							a11yViolations = [];
+							a11yIncomplete = [];
+							a11yError = caught instanceof Error ? caught.message : String(caught);
+						}
+					}
+
 					const name = `${scene.id}.${theme}`;
 					const file = join(options.outDir, `${name}.png`);
 					writeFileSync(file, shot.png);
@@ -294,6 +388,11 @@ export async function captureScenes(
 						missingText,
 						error
 					};
+					if (a11yViolations !== undefined) {
+						result.a11yViolations = a11yViolations;
+						result.a11yIncomplete = a11yIncomplete ?? [];
+						result.a11yError = a11yError ?? null;
+					}
 					writeFileSync(
 						join(options.outDir, `${name}.json`),
 						`${JSON.stringify(
@@ -309,6 +408,7 @@ export async function captureScenes(
 						)}\n`
 					);
 					results.push(result);
+					options.onResult?.(result);
 				} finally {
 					await context?.close();
 				}
