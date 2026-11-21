@@ -67,7 +67,7 @@
 						<!-- Protocol status, never presentational (spec §2 rule 2):
 						     the same word the dossier carries. -->
 						<span
-							class="shrink-0 rounded-[4px] bg-orange-tint px-1 py-px font-mono text-[8.5px] font-medium tracking-wide text-orange uppercase"
+							class="shrink-0 rounded-[4px] bg-orange-tint px-1 py-px font-mono text-[8.5px] font-medium tracking-wide text-orange-ink uppercase"
 						>
 							retracted
 						</span>

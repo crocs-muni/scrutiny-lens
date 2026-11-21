@@ -7,6 +7,40 @@
 
 @import './lib/components/ui/tokens.css';
 
+/* AA overrides — app tier, never canon. tokens.css stays a verbatim copy of
+ * beautiful-ui; these values make the muted ramp and semantic text readable
+ * on the app's surfaces. Keep the why with each value. */
+:root {
+  /* 0.54 clears 4.5:1 on --surface, --page and the stripe background; field
+   * text uses --ink-2, because no muted step can clear a 0.961 field without
+   * collapsing onto --ink-2. */
+  --ink-3: oklch(0.54 0.009 264.505);
+  /* canon's 0.556 is 4.30:1 on --accent-tint (selected drawer section). */
+  --accent-ink: oklch(0.53 0.174 255.617);
+  /* text-only tones for status pills/banners; the base hues stay for glyphs. */
+  --green-ink: oklch(0.51 0.134 150.883);
+  --orange-ink: oklch(0.55 0.141 49.902);
+  --red-ink: oklch(0.55 0.192 23.042);
+}
+
+.dark {
+  /* 0.68 clears 4.5:1 on --surface; selected tinted chips use --ink-2. */
+  --ink-3: oklch(0.68 0.01 264.484);
+  /* canon's 0.788 clears the dark --accent-tint; keep it theme-local so the
+   * light 0.53 override does not follow into dark. */
+  --accent-ink: oklch(0.788 0.113 248.33);
+  --green-ink: oklch(0.7 0.154 153.814);
+  --orange-ink: oklch(0.73 0.156 55.642);
+  /* 0.80 clears the retracted card's double-tinted background (4.56:1). */
+  --red-ink: oklch(0.8 0.17 21.433);
+}
+
+@theme inline {
+  --color-green-ink: var(--green-ink);
+  --color-orange-ink: var(--orange-ink);
+  --color-red-ink: var(--red-ink);
+}
+
 /* Canon components consumed via the file: sibling-link (e.g. GlideHighlight)
  * carry Tailwind classes in the sibling repo — v4's automatic detection
  * does not index node_modules, so scan the sibling source explicitly. */
@@ -263,9 +297,9 @@ select:focus-visible,
 }
 
 /* The ONE global reduced-motion floor (issue #82): this subsumes
- * PhaseRow's old card-local guard and closes the hole where the chat
- * pending-shimmer and PublisherChip's animate-pulse ignored reduced
- * motion entirely. Everything animated collapses to instant swaps;
+ * PhaseRow's old card-local guard and closes the hole where
+ * PublisherChip's animate-pulse ignored reduced motion entirely.
+ * Everything animated collapses to instant swaps;
  * state colors (amber, retracted red) are untouched on purpose. */
 @media (prefers-reduced-motion: reduce) {
 	*,

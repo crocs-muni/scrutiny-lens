@@ -23,7 +23,7 @@
 </script>
 
 <div {style} class="flex items-center justify-between gap-2">
-	<span class="min-w-0 flex-1 text-[12px] text-ink-2 {tick.warn ? 'text-orange' : ''}">
+	<span class="min-w-0 flex-1 text-[12px] text-ink-2 {tick.warn ? 'text-orange-ink' : ''}">
 		{tick.text}
 	</span>
 </div>

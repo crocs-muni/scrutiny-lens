@@ -175,10 +175,11 @@
 		return data.retracted ? `${data.title} — retracted ${kind}` : data.title;
 	});
 
-	/** Keyboard / assistive activation arrives as a click with `detail` 0;
-	 * pointer clicks carry a click count and already selected on pointerdown. */
-	function activate(event: MouseEvent): void {
-		if (event.detail === 0) data.onSelect(data.id);
+	/** Keyboard / assistive activation arrives here; the overlay button is
+	 * `pointer-events: none`, so a pointer click cannot double-fire the canvas
+	 * pointerdown selection (#101/#102 F2). */
+	function activate(): void {
+		data.onSelect(data.id);
 	}
 </script>
 
