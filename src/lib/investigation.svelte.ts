@@ -2301,7 +2301,5 @@ export function resetInvestigation(): void {
   investigation.running = false;
 }
 
-// The fill-lane verdicts live in $lib/fill-note (pure, store-free); they are
-// re-exported here so existing importers of the store keep working.
-export { fillNote, recordFillFailure } from "$lib/fill-note";
+// The fill-lane verdicts live in $lib/fill-note (pure, store-free).
 

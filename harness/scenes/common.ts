@@ -4,7 +4,7 @@
 
 import type { Locator, Page } from 'playwright';
 import { HARNESS_MODEL } from '../ai.ts';
-import type { SceneContext } from '../capture.ts';
+import type { Scene, SceneContext } from '../capture.ts';
 
 /** The trace's done row prints the run's real elapsed time
  * (`TaskTrace.svelte`), which differs between launches of the same build —
@@ -173,3 +173,6 @@ export async function stripGraphForA11y(page: Page, keepText?: string): Promise<
 		}
 	}, keepText ?? null);
 }
+
+/** The five dossier/chat scenes that audit their own surface, not the graph. */
+export const stripGraph: NonNullable<Scene['a11yPrep']> = ({ page }) => stripGraphForA11y(page);

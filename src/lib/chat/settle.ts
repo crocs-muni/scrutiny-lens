@@ -22,8 +22,7 @@
  */
 
 import { z } from 'zod';
-import { extractedGate, type ExtractionState } from '../ai/verifier';
-import { canonicalContentOf } from '../ai/canonical';
+import type { ExtractionState } from '../ai/verifier';
 import {
 	CITATION_SLOTS,
 	createCitationRegistry,
@@ -112,21 +111,13 @@ export function resolveFinal(
 				const event = events.find((e) => e.id === payload.data.eventId);
 				const res = registry.resolve(payload.data.eventId, events, payload.data.quote, event ? nodeTitleOf(event) : undefined);
 				if (res.ok && event) {
-					// #163: the quote is checked against the RESOLVED content — a
-					// root-author patch makes the raw content history (spec §2
-					// rule 3; the canonical-content note in
-					// docs/vision/agentic-harness.md). Unresolvable canonical
-					// content leaves the citation unverified rather than falling
-					// back to raw text.
-					const canonical = canonicalContentOf(event.id, events);
-					const gate =
-						canonical === undefined
-							? { state: 'extrapolatory' as const, span: undefined }
-							: extractedGate(payload.data.quote, canonical);
+					// The registry already verified the quote against the RESOLVED
+					// content (#163) and carries the gate state; do not re-resolve
+					// the chain or re-run the gate here.
 					resolvedCitation = {
 						...res.citation,
-						support: gate.state,
-						verified: gate.state !== 'extrapolatory',
+						support: res.citation.support ?? 'extrapolatory',
+						verified: res.citation.verified,
 						status: 'resolved',
 						colorIndex: (res.citation.n - 1) % CITATION_SLOTS
 					};

@@ -44,21 +44,21 @@
 
 	const byN = $derived(new Map(citations.map((c) => [c.n, c])));
 
-	/** Private-use sentinels: they survive `parseBlocks` line splitting (they
-	 * are not whitespace, so block detection still sees the real line shape)
-	 * and carry which marker stood where. */
+	/** Private-use sentinel: it survives `parseBlocks` line splitting (it is
+	 * not whitespace, so block detection still sees the real line shape) and
+	 * carries where a marker stood. */
 	const PILL = '\u0001';
-	const INLINE = /\u0001([^\u0001\u0002]*)\u0001/g;
+	const INLINE = /\u0001([^\u0001]*)\u0001/g;
 
 	/** Recombine the run/marker split into ONE string for the block pass.
-	 * Model text cannot carry the sentinels: they are control characters and
+	 * Model text cannot carry the sentinel: it is a control character and
 	 * stripped, so a literal U+0001 in an answer can never forge a marker. */
 	const raw = $derived(
 		parts
 			.map((p) =>
 				p.kind === 'pill'
 					? `${PILL}${p.n}${PILL}`
-					: p.text.replace(/[\u0001\u0002]/g, '')
+					: p.text.replace(/\u0001/g, '')
 			)
 			.join('')
 	);

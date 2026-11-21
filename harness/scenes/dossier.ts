@@ -9,7 +9,7 @@
 import type { Scene } from '../capture.ts';
 import { loadFixture } from '../fixtures.ts';
 import { CHAINS_TAG } from '../seed/chains.ts';
-import { ask, openDossier, stripGraphForA11y, waitGraphFrozen } from './common.ts';
+import { ask, openDossier, stripGraph, waitGraphFrozen } from './common.ts';
 
 const chains = loadFixture('chains');
 
@@ -28,7 +28,7 @@ export function dossierScenes(): Scene[] {
 				await waitGraphFrozen(page);
 			},
 			expect: ['#1', '#2', 'applied'],
-			a11yPrep: ({ page }) => stripGraphForA11y(page)
+			a11yPrep: stripGraph
 		},
 		{
 			// Product C: the second patch's base is missing, so the chain halts
@@ -41,7 +41,7 @@ export function dossierScenes(): Scene[] {
 				await waitGraphFrozen(page);
 			},
 			expect: ['halted after 1 patch — content frozen at the last good state'],
-			a11yPrep: ({ page }) => stripGraphForA11y(page)
+			a11yPrep: stripGraph
 		},
 		{
 			// Product E: two same-parent branches — content freezes at the
@@ -54,7 +54,7 @@ export function dossierScenes(): Scene[] {
 				await waitGraphFrozen(page);
 			},
 			expect: ['forked — content frozen at the shared parent'],
-			a11yPrep: ({ page }) => stripGraphForA11y(page)
+			a11yPrep: stripGraph
 		},
 		{
 			// Product G: the patch exceeds the resolver's hunk ceiling, so the
@@ -68,7 +68,7 @@ export function dossierScenes(): Scene[] {
 				await waitGraphFrozen(page);
 			},
 			expect: ['stopped at limit before any patch applied · hunks'],
-			a11yPrep: ({ page }) => stripGraphForA11y(page)
+			a11yPrep: stripGraph
 		},
 		{
 			// Product D was retracted by a kind-5 from its own author: the card
@@ -82,7 +82,7 @@ export function dossierScenes(): Scene[] {
 				await waitGraphFrozen(page);
 			},
 			expect: ['retracted', 'cc:HARNESS-RSALIB'],
-			a11yPrep: ({ page }) => stripGraphForA11y(page)
+			a11yPrep: stripGraph
 		}
 	];
 }

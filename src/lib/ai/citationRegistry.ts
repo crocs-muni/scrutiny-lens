@@ -16,7 +16,7 @@
  *     parse; numbers are never re-purposed.
  */
 
-import { extractedGate } from './verifier';
+import { extractedGate, type ExtractionState } from './verifier';
 import { canonicalContentOf } from './canonical';
 import type { NostrEvent } from '../fabric';
 
@@ -35,6 +35,8 @@ export interface Citation {
 	quote: string;
 	/** True when the quote matched verbatim or as a blockquote-subset partial. */
 	verified: boolean;
+	/** The extracted-gate state, carried so callers need not re-run the gate. */
+	support?: ExtractionState;
 	/** The node's display title (for hovercards). */
 	nodeTitle?: string;
 	/** The normalized span actually matched in the event content. */
@@ -126,7 +128,8 @@ export function createCitationRegistry(): CitationRegistry {
 				n: byEvent.get(eventId) as number,
 				eventId,
 				quote,
-				verified: false
+				verified: false,
+				support: 'extrapolatory'
 			};
 			if (nodeTitle !== undefined) citation.nodeTitle = nodeTitle;
 			return { ok: true, citation };
@@ -137,7 +140,8 @@ export function createCitationRegistry(): CitationRegistry {
 			n: byEvent.get(eventId) as number,
 			eventId,
 			quote,
-			verified: match.state !== 'extrapolatory'
+			verified: match.state !== 'extrapolatory',
+			support: match.state
 		};
 		if (match.span !== undefined) citation.span = match.span;
 		if (nodeTitle !== undefined) citation.nodeTitle = nodeTitle;

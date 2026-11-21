@@ -56,8 +56,12 @@ export interface RunState {
     noKey: boolean;
 }
 
-/** Helper to roll up notices of a given kind, matching the page implementation. */
-function noticeRollup(notices: { kind: string; message: string }[], kind: string, plural: string): string {
+/** One banner per notice class; per-notice facts stay in the trace ticks. */
+function noticeRollup(
+    notices: PipelineNotice[],
+    kind: PipelineNotice['kind'],
+    plural: string
+): string {
     const items = notices.filter((n) => n.kind === kind);
     if (items.length === 0) return '';
     if (items.length === 1) return items[0].message;
