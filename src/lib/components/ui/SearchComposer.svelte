@@ -180,6 +180,7 @@
 					flex-squashing. -->
 				<div
 					role="listbox"
+					aria-label="Models"
 					tabindex="-1"
 					class="absolute right-0 bottom-full z-10 mb-2 w-72 rounded-card bg-surface p-1 shadow-raised"
 					style:animation="pop-in 180ms cubic-bezier(0.23,1,0.32,1) both"

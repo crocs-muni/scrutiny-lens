@@ -321,7 +321,7 @@
 				provider. Kept in this tab only: a reload keeps it, closing the tab clears it.
 			</p>
 
-			<span class="mt-3 mb-1 block text-[12.5px] text-ink-2">Model</span>
+			<span id="settings-model-label" class="mt-3 mb-1 block text-[12.5px] text-ink-2">Model</span>
 			{#if settings.apiKey === ''}
 				<input
 					disabled
@@ -347,7 +347,8 @@
 						class="flex items-center rounded-control bg-field shadow-hairline transition-shadow duration-150 focus-within:shadow-card"
 					>
 						<Combobox.Input
-							aria-label="Model"
+							aria-labelledby="settings-model-label"
+							aria-controls="settings-model-listbox"
 							placeholder={modelState === 'loading' ? 'Loading models…' : 'Search models'}
 							defaultValue={modelInput}
 							oninput={(event) => (modelInput = event.currentTarget.value)}
@@ -362,33 +363,45 @@
 					</div>
 					<Combobox.Portal>
 						<Combobox.Content
+							aria-label="Models"
 							class="z-50 max-h-48 w-[var(--bits-combobox-anchor-width)] min-w-48 overflow-y-auto rounded-card bg-surface p-1 shadow-overlay"
 							sideOffset={4}
 						>
-							<Combobox.Viewport>
-								{#each filteredModels as model (model.value)}
-									<Combobox.Item
-										value={model.value}
-										label={model.label}
-										class="flex cursor-pointer items-center gap-1.5 rounded-control px-2 py-1.5 text-[12.5px] text-ink data-highlighted:bg-hover"
-									>
-										{#snippet children({ selected })}
-											<span class="w-3.5 text-ink-2">
-												{#if selected}<IconCheck size={13} stroke-width={2.5} />{/if}
-											</span>
-											<span class="font-mono">{model.label}</span>
-										{/snippet}
-									</Combobox.Item>
-								{:else}
-									<div class="px-2 py-1.5 text-[12.5px] text-ink-3">
-										{modelState === 'loading'
-											? 'Loading models…'
-											: modelState === 'error'
-												? modelError
-												: 'No matching models.'}
+							<!-- bits-ui renders the listbox inside a floating wrapper whose
+							 * generated id is not forwarded to the listbox; the editable
+							 * combobox needs a stable aria-controls target. The child
+							 * snippet is the library's own escape hatch: render the same
+							 * wrapper/listbox pair and pin the listbox id. -->
+							{#snippet child({ props, wrapperProps })}
+								<div {...wrapperProps}>
+									<div {...props} id="settings-model-listbox">
+										<Combobox.Viewport>
+											{#each filteredModels as model (model.value)}
+												<Combobox.Item
+													value={model.value}
+													label={model.label}
+													class="flex cursor-pointer items-center gap-1.5 rounded-control px-2 py-1.5 text-[12.5px] text-ink data-highlighted:bg-hover"
+												>
+													{#snippet children({ selected })}
+														<span class="w-3.5 text-ink-2">
+															{#if selected}<IconCheck size={13} stroke-width={2.5} />{/if}
+														</span>
+														<span class="font-mono">{model.label}</span>
+													{/snippet}
+												</Combobox.Item>
+											{:else}
+												<div class="px-2 py-1.5 text-[12.5px] text-ink-3">
+													{modelState === 'loading'
+														? 'Loading models…'
+														: modelState === 'error'
+															? modelError
+															: 'No matching models.'}
+												</div>
+											{/each}
+										</Combobox.Viewport>
 									</div>
-								{/each}
-							</Combobox.Viewport>
+								</div>
+							{/snippet}
 						</Combobox.Content>
 					</Combobox.Portal>
 				</Combobox.Root>

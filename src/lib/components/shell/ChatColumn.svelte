@@ -139,7 +139,18 @@
 			>
 		</header>
 
-		<div bind:this={scrollEl} class="chat-scroll flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-4">
+		<!-- The transcript is a scroll region with its own keyboard stop
+		 * (axe `scrollable-region-focusable`): when the column is collapsed
+		 * the copy is inert, so the region must hold the tab stop itself.
+		 * Named so the stop is announced as where it is. -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+		<div
+			bind:this={scrollEl}
+			class="chat-scroll flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-4"
+			role="region"
+			aria-label="Chat transcript"
+			tabindex="0"
+		>
 			{#each chat.messages as message (message.id)}
 				{#if message.role === 'user'}
 					<!-- #185: the question is a quiet row, not a bubble. A right-aligned
