@@ -47,7 +47,6 @@ export interface RunState {
     relayDead: boolean;
     degradedNote: string;
     relayReceipts: RelayReceipt[];
-    degradedRelays: RelayReceipt[];
     footerNotes: string[];
     capabilityNote: string;
     traversalNote: string;
@@ -184,7 +183,6 @@ export function deriveRunState(input: RunStateInput): RunState {
         relayDead,
         degradedNote,
         relayReceipts,
-        degradedRelays,
         footerNotes,
         capabilityNote,
         traversalNote,

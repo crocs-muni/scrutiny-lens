@@ -65,12 +65,12 @@ describe('deriveRunState – §4 edge states', () => {
         expect(state.relayDead).toBe(true);
     });
 
-    it('degradedNote and degradedRelays when some relays not ok', () => {
+    it('degradedNote and footerNotes when some relays not ok', () => {
         const input = baseInput();
         input.slices = [slice('wss://ok.example', 'ok'), slice('wss://dead.example', 'refused')];
         const state = deriveRunState(input);
         expect(state.degradedNote).toContain('relay');
-        expect(state.degradedRelays.length).toBe(1);
+        expect(state.footerNotes).toContain('relay wss://dead.example refused');
     });
 
     it('footerNotes include restored and evicted info', () => {
@@ -122,6 +122,35 @@ describe('deriveRunState – §4 edge states', () => {
         const state = deriveRunState(input);
         expect(state.fillSettleNote).toContain('2 of 5 cards filled');
         expect(state.aiNote).toBe(state.fillSettleNote);
+    });
+
+    it('relayDead on done with every leg refused and no skeletons', () => {
+        const input = baseInput();
+        input.phase = 'done';
+        input.slices = [slice('wss://dead.example', 'refused')];
+        input.skeletons = [];
+        const state = deriveRunState(input);
+        expect(state.relayDead).toBe(true);
+    });
+
+    it('emptyDone waits for the restored frontier to be intact', () => {
+        const input = baseInput();
+        input.result = {};
+        input.searches = [{ kind: 'text', value: 'roca', source: 'fallback' }];
+        input.restoredEvicted = 1;
+        const state = deriveRunState(input);
+        expect(state.emptyDone).toBe(false);
+    });
+
+    it('aiNote waits for the fill to stop filling', () => {
+        const input = baseInput();
+        input.result = {};
+        input.fillStats = { interpreted: 2, total: 5 };
+        input.fillFailure = 'schema_failure';
+        input.failed = new Set(['x']);
+        input.filling = true;
+        const state = deriveRunState(input);
+        expect(state.aiNote).toBe('');
     });
 
     it('noKey when API key empty and result present', () => {

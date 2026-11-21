@@ -571,7 +571,6 @@
 	const stageWait = $derived(runState.stageWait);
 	const relayDead = $derived(runState.relayDead);
 	const degradedNote = $derived(runState.degradedNote);
-	const degradedRelays = $derived(runState.degradedRelays);
 	const relayReceipts = $derived(runState.relayReceipts);
 	const footerNotes = $derived(runState.footerNotes);
 	const capabilityNote = $derived(runState.capabilityNote);
