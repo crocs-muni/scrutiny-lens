@@ -711,6 +711,40 @@ async function drainAttempt(
 	return waitMs(status, err, attempt);
 }
 
+/** The result-promise fields the AI SDK's streamText result carries
+ * (DelayedPromise holders). The app never reads them — the streamed text is
+ * the fullStream's job — but the SDK rejects them when an attempt ends
+ * without a finished step, and only the base promises are marked handled
+ * internally, so anything derived from them rejects unowned (a browser
+ * pageerror). Narrowest shape that exists: every field is optional, so an
+ * SDK rename degrades to a no-op instead of breaking the transport. */
+const SDK_RESULT_PROMISES = [
+	'_steps',
+	'_totalUsage',
+	'_finishReason',
+	'_rawFinishReason',
+	'_initialResponseMessages'
+] as const;
+
+type SdkResultPromises = Partial<
+	Record<(typeof SDK_RESULT_PROMISES)[number], { promise?: Promise<unknown> }>
+>;
+
+/** Attach a no-op observer to each of the SDK result's promises. Pure
+ * observation: reading `DelayedPromise.promise` starts nothing (unlike the
+ * public `text`/`steps` getters, which consume a stream branch), and the
+ * lane's real verdict still comes from the fullStream error part. */
+function observeSdkResult(result: object): void {
+	const fields = result as SdkResultPromises;
+	for (const key of SDK_RESULT_PROMISES) {
+		try {
+			fields[key]?.promise?.catch(() => {});
+		} catch {
+			/* an SDK shape change must never break the transport */
+		}
+	}
+}
+
 export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<string> {
 	await primeSecrets(args.provider.apiKey);
 	// Same one-time verdict as callLLM (issue #107): the streamed fill lanes
@@ -749,8 +783,30 @@ export const streamLLM = async function* (args: CallLLMArgs): AsyncIterable<stri
 					? AbortSignal.any([args.signal, abortCtrl.signal])
 					: abortCtrl.signal,
 				maxRetries: 0,
+				// Telemetry scaffolding OFF: the app has no telemetry sink, so
+				// the SDK's dispatcher buys nothing — and in this SDK build
+				// leaving it on derives a tracing `completion` promise from
+				// `_totalUsage.promise` that nobody owns once an attempt dies
+				// before its first step. Measured in Chromium (Playwright,
+				// 7.0.79): the pageerror below appears with the scaffolding on
+				// and disappears with it off. The result-promise observation
+				// after the call covers whatever still escapes.
+				telemetry: { isEnabled: false },
 				providerOptions: reasoningProviderOptions(args, false)
 			});
+			// The SDK's own result promises are private surface this lane
+			// never reads, and a doomed attempt (no step ever finishes) makes
+			// the SDK reject them via its internal rejectResultPromises. Its
+			// markPromiseAsHandled covers the BASE promises only; a promise
+			// derived from them inherits the rejection with no owner and
+			// reaches the page as an unhandled rejection — Chromium reports
+			// AI_NoOutputGeneratedError ("No output generated. Check the
+			// stream for errors.") while this lane's banner and raw fallback
+			// settle exactly right (harness scenes results-fill-429 /
+			// results-ai-down allow-listed it). Observe them at creation so no
+			// SDK rejection escapes the transport; the lane's honest verdict
+			// still comes from the fullStream error part, never from here.
+			observeSdkResult(stream);
 			// AI SDK's textStream swallows open-time errors (a 429 just ends it);
 			// the error rides a fullStream 'error' part instead. Walk fullStream —
 			// created ONCE per attempt; its parts are: protocol noise, one error

@@ -11,13 +11,6 @@ import { ask, cardOf, enableAi, MASK_ELAPSED, waitFor } from './common.ts';
 
 const chains = loadFixture('chains');
 
-/** The app's unhandled rejection when a fill stream's HTTP attempt fails
- * (AI SDK AI_NoOutputGeneratedError): the banner and fallback still settle,
- * but the SDK's own promise rejects outside the app's try/catch. Known app
- * bug (reported); allowed per scene so the UI state the scene targets stays
- * gated, with the error kept in the run facts (knownPageErrors). */
-const AI_STREAM_REJECT = /^No output generated\. Check the stream for errors\.$/;
-
 /** The fill lane's completion announcement (the results surface's polite
  * region) — proof the cards reached their interpreted face. */
 async function waitAllFilled(page: Page, total: number): Promise<void> {
@@ -65,7 +58,6 @@ export function resultsScenes(): Scene[] {
 					fill: [{ kind: 'status', status: 429, retryAfterSec: 1, message: 'slow down' }, okFill]
 				}
 			},
-			allowPageErrors: [AI_STREAM_REJECT],
 			mask: MASK_ELAPSED,
 			async run({ page, url }) {
 				await enableAi(page, url);
@@ -113,7 +105,6 @@ export function resultsScenes(): Scene[] {
 			ai: {
 				lanes: { fill: [{ kind: 'status', status: 500, message: 'harness: endpoint down' }] }
 			},
-			allowPageErrors: [AI_STREAM_REJECT],
 			mask: MASK_ELAPSED,
 			async run({ page, url }) {
 				await enableAi(page, url);
