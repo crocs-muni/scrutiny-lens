@@ -97,9 +97,11 @@
 		| { kind: 'free' }
 		| { kind: 'gliding'; k: number; pan: [number, number] }
 		| { kind: 'claimed' };
-	// Reactive only for the stage's data-glide seam; every effect read goes
-	// through untrack — camera phases must never drive the apply effect.
-	let glide = $state<Glide>({ kind: 'free' });
+	// Replace-only machine snapshot: `$state.raw` notifies on reassignment
+	// without deep-proxying the union. Reactive only for the stage's data-glide
+	// test seam; every effect read goes through untrack — camera phases must
+	// never drive the apply effect.
+	let glide = $state.raw<Glide>({ kind: 'free' });
 	// Live world-bounds center — flushFrame already sweeps every node per
 	// frame, so it publishes the center itself (nothing else reads a pulse).
 	let boundsC = $state({ x: 0, y: 0 });

@@ -93,6 +93,7 @@ describe('GraphCanvas glide (camera gesture)', () => {
 		expect(after).toBeLessThanOrEqual(1.6);
 		// The Glide transition itself: the gesture CLAIMS the camera, so the
 		// stage advertises the claimed state (never a rubber-band glide).
+		// `data-glide` is the documented test seam; production reads nothing.
 		expect(stage.dataset.glide).toBe('claimed');
 	});
 
