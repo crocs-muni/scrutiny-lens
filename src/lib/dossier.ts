@@ -41,7 +41,7 @@ import {
 	type Resolution
 } from '$lib/fabric';
 import { deriveFallbackTitle, type ProductCard } from '$lib/pipeline/cards';
-import type { NodeTile } from '$lib/graph/subject-graph';
+import { subjectTitleOf, type NodeTile } from '$lib/graph/subject-graph';
 import { artifactsOf, type ArtifactRef } from '$lib/artifacts';
 
 export interface DossierTitle {
@@ -132,6 +132,18 @@ export interface DossierContent {
 	banner: string | null;
 }
 
+/** How a record the trusted list does not hold entered the admitted view:
+ * a trusted publisher's binding from a record that is on the list. Null for
+ * records whose own publisher is trusted (the direct case) and for anything
+ * with no such binding — the drawer renders nothing rather than guessing. */
+export interface AdmittedVia {
+	bindingId: string;
+	publisherPubkey: string;
+	/** The binding's other endpoint, under the title the app already shows
+	 * for it (card, tile, rule-5 fallback) — never an invented name. */
+	otherTitle: string;
+}
+
 export interface Dossier {
 	subject: NostrEvent;
 	subjectType: 'product' | 'metadata';
@@ -148,6 +160,9 @@ export interface Dossier {
 	content: DossierContent;
 	history: HistoryRow[];
 	files: FileRow[];
+	/** Non-null only when the record reached the trusted view through a
+	 * trusted publisher's binding (spec §3/§9, ADR 0004). */
+	admittedVia: AdmittedVia | null;
 }
 
 function pluralize(n: number, word: string): string {
@@ -364,6 +379,60 @@ function fileRows(
 	return rows;
 }
 
+/** The title the app already shows for a record, through the shared
+ * subject-title seam (card wins when interpreted, then the canvas tile,
+ * then rule-5). A binding endpoint outside the admitted set has no event to
+ * name, so it says so instead of dressing its id up as one. */
+function titleOf(
+	id: string,
+	byId: ReadonlyMap<string, NostrEvent>,
+	cards: ProductCard[],
+	tiles: ReadonlyMap<string, NodeTile>
+): string {
+	const event = byId.get(id);
+	if (event === undefined) return 'unnamed record';
+	const text = subjectTitleOf(
+		event,
+		cards.find((c) => c.id === id),
+		tiles.get(id)
+	).text;
+	return text === id ? 'unnamed record' : text;
+}
+
+/** ADR 0004: the curated list is the default admission view, but chain
+ * construction/traversal stay on the full observed set (TR-7). A record the
+ * list does not hold is still reachable when a trusted publisher bound it to
+ * a listed one — this names that binding so the drawer can say so. `events`
+ * is never filtered here; history and files stay full. */
+function admittedViaOf(
+	subjectId: string,
+	subject: NostrEvent,
+	events: NostrEvent[],
+	coreEvents: CoreNostrEvent[],
+	cards: ProductCard[],
+	tiles: ReadonlyMap<string, NodeTile>,
+	isTrusted: ((pubkey: string) => boolean) | undefined
+): AdmittedVia | null {
+	// No provider means the default (unfiltered) admission view — nothing was
+	// "reached through" a binding. A directly trusted record is the same case.
+	if (isTrusted === undefined || isTrusted(subject.pubkey)) return null;
+	for (const event of coreEvents) {
+		if (scrutinyEventType(event) !== 'binding') continue;
+		if (!isTrusted(event.pubkey)) continue;
+		const endpoints = bindingEndpoints(event);
+		if (endpoints === undefined) continue;
+		if (endpoints.rootId !== subjectId && endpoints.linkId !== subjectId) continue;
+		const otherId = endpoints.rootId === subjectId ? endpoints.linkId : endpoints.rootId;
+		const byId = new Map(events.map((e) => [e.id, e]));
+		return {
+			bindingId: event.id,
+			publisherPubkey: event.pubkey,
+			otherTitle: titleOf(otherId, byId, cards, tiles)
+		};
+	}
+	return null;
+}
+
 /** The drawer's data contract. `events` is the session's admitted set (the
  * store, never the facet-filtered view — ADR 0001); `cards` is the
  * interpretations cache's materialized face. Returns null when the subject
@@ -372,7 +441,8 @@ export function deriveDossier(
 	subjectId: string,
 	events: NostrEvent[],
 	cards: ProductCard[],
-	tiles: ReadonlyMap<string, NodeTile> = new Map()
+	tiles: ReadonlyMap<string, NodeTile> = new Map(),
+	isTrusted?: (pubkey: string) => boolean
 ): Dossier | null {
 	const subject = events.find((e) => e.id === subjectId);
 	if (subject === undefined) return null;
@@ -400,6 +470,15 @@ export function deriveDossier(
 	const history = historyRows(subject, resolution, events, coreEvents);
 	const files = fileRows(subjectId, events, coreEvents, cards);
 	const identifiers = [...new Set(tagValues(subject, 'i'))];
+	const admittedVia = admittedViaOf(
+		subjectId,
+		subject,
+		events,
+		coreEvents,
+		cards,
+		tiles,
+		isTrusted
+	);
 
 	return {
 		subject,
@@ -416,6 +495,7 @@ export function deriveDossier(
 		counts: { summary: identifiers.length, history: history.length, files: files.length },
 		content,
 		history,
-		files
+		files,
+		admittedVia
 	};
 }

@@ -69,6 +69,8 @@ import { settings } from "$lib/settings.svelte";
 import { shell } from "$lib/shell.svelte";
 import { aggregatePerRelay, type RelayReceipt } from "$lib/relay-readout";
 import { lensDebug } from "$lib/dev-log";
+import { trust } from '$lib/trust-store.svelte';
+import { computeAdmission, trustedView, type CoreNostrEvent } from '$lib/fabric';
 
 /** Interval sleep that resolves early on abort — the lane-stagger's pause
  * must not outlive the run that scheduled it (spec §8 abort lifecycle). */
@@ -167,6 +169,30 @@ class Investigation {
   cards = $state<ProductCard[]>([]);
   /** Facet groups computed from the admitted events' tags (never AI, §3). */
   facetGroups = $state<FacetGroup[]>([]);
+  /** Trust admission index over the full observed set (spec §3, ADR 0004). */
+  admission = $derived.by(() => {
+    // Force recompute when trust overrides change.
+    void trust.version;
+    return computeAdmission(
+      (this.result?.admitted ?? []) as unknown as readonly CoreNostrEvent[],
+      trust.provider,
+    );
+  });
+  /** Events admitted by the trusted view. */
+  admittedEvents = $derived.by(() => {
+    void this.admission;
+    const view = trustedView(this.admission);
+    const evs = this.result?.admitted ?? [];
+    return evs.filter((e) => view.isAdmitted(e.id));
+  });
+  /** Cards whose IDs are admitted by the trusted view. */
+  admittedCards = $derived.by(() => {
+    void this.admission;
+    const view = trustedView(this.admission);
+    return this.cards.filter((c) => view.isAdmitted(c.id));
+  });
+  /** Facet groups derived from the admitted events. */
+  admittedFacetGroups = $derived.by(() => computeFacets(this.admittedEvents));
   /** Selected facet values per group (OR within a group, AND across, §3). */
   selections = $state<Record<string, Set<string>>>({});
   /** Write-descriptions progress for the trace's fifth row (§4 partial). */
@@ -2256,6 +2282,7 @@ clearFacets(): void {
 }
 
 export const investigation = new Investigation();
+void trust.ready();
 
 /** Test seam — same shape as resetShell/resetSettings. */
 export function resetInvestigation(): void {

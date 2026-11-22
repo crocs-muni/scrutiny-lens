@@ -96,6 +96,13 @@ export { classifyByRole } from '@scrutiny-fabric/core';
  * pipeline's skeleton sources index i-tags with it (never hand-rolled). */
 export { tagValues } from '@scrutiny-fabric/core';
 
+/** Trust & admission (spec §6 / ADR 0004): a curated list is a branded
+ * `TrustProvider`; `computeAdmission` runs over the full observed set after
+ * chain resolution (TR-7), and surfaces read the resulting `AdmissionView`.
+ * One seam for the whole mechanism — consumers never import core directly. */
+export { computeAdmission, trustedView, openView, trustSymbol } from '@scrutiny-fabric/core';
+export type { TrustProvider, AdmissionIndex, AdmissionView, Reason } from '@scrutiny-fabric/core';
+
 /* ── Shared types: docs/types.md is the canon; re-stated here so the seam is
  * self-contained and callers import one place. ──────────────────────────────*/
 

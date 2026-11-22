@@ -502,3 +502,90 @@ describe('store-level honesty guards', () => {
 		expect(d.counts.files).toBe(0);
 	});
 });
+
+// ADR 0004 / spec §3/§9: the curated list is the DEFAULT admission view, but a
+// record the list does not hold is still reachable through a trusted
+// publisher's binding. The drawer says so; direct-trust records say nothing.
+// Chain construction and traversal stay on the full observed set (TR-7).
+describe('admittedVia — the trusted list’s binding path', () => {
+	const trustedOnly = (pubkey: string) => pubkey === AUTHOR;
+
+	function product(id: string, pubkey = FOREIGN): NostrEvent {
+		return signed(buildProduct(`${id} body\n`, 1000).template, pubkey, id);
+	}
+	function metadata(id: string, pubkey = FOREIGN): NostrEvent {
+		return signed(buildMetadata(`${id} body\n`, 1200).template, pubkey, id);
+	}
+	function binding(
+		rootId: string,
+		linkId: string,
+		pubkey = AUTHOR,
+		id = 'bind'
+	): NostrEvent {
+		return signed(buildBinding({ id: rootId }, { id: linkId }, 'documents', 1500).template, pubkey, id);
+	}
+
+	it('a direct subject yields null — the strip is only for reached records', () => {
+		const root = product('root', AUTHOR);
+		const d = deriveDossier('root', [root], [], new Map(), trustedOnly)!;
+		expect(d.admittedVia).toBeNull();
+	});
+
+	it('a binding-reached subject names the binding, its trusted author, and the other title', () => {
+		const root = product('root');
+		const meta = metadata('md');
+		const bind = binding('root', 'md', AUTHOR, 'b1');
+		const cards = [
+			cardFor(root, { title: 'Infineon TPM' }),
+			cardFor(meta, { typeTag: 'scrutiny-metadata', title: 'CVE-2017-15361' })
+		];
+
+		const d = deriveDossier('md', [root, meta, bind], cards, new Map(), trustedOnly)!;
+		expect(d.admittedVia).toEqual({
+			bindingId: 'b1',
+			publisherPubkey: AUTHOR,
+			otherTitle: 'Infineon TPM'
+		});
+
+		// The path is symmetric: the product side names the metadata record.
+		const p = deriveDossier('root', [root, meta, bind], cards, new Map(), trustedOnly)!;
+		expect(p.admittedVia).toMatchObject({ bindingId: 'b1', otherTitle: 'CVE-2017-15361' });
+	});
+
+	it('a binding authored outside the list is not a path', () => {
+		const root = product('root');
+		const meta = metadata('md');
+		const bind = binding('root', 'md', FOREIGN, 'b1');
+		const d = deriveDossier('md', [root, meta, bind], [], new Map(), trustedOnly)!;
+		expect(d.admittedVia).toBeNull();
+	});
+
+	it('a binding that does not touch the subject is not a path', () => {
+		const root = product('root', FOREIGN);
+		const other = product('other');
+		const meta = metadata('md');
+		const bind = binding('other', 'md', AUTHOR, 'b1');
+		const d = deriveDossier('root', [root, other, meta, bind], [], new Map(), trustedOnly)!;
+		expect(d.admittedVia).toBeNull();
+	});
+
+	it('no trust provider means the default view — nothing was reached through', () => {
+		const root = product('root');
+		const meta = metadata('md');
+		const bind = binding('root', 'md');
+		const d = deriveDossier('md', [root, meta, bind], [])!;
+		expect(d.admittedVia).toBeNull();
+	});
+
+	it('events are never filtered: chain and files stay on the full observed set', () => {
+		const root = product('root', FOREIGN);
+		// FOREIGN's own patch applies — the subject's chain is untrusted but real.
+		const p1 = patchEvent('root', 'root', 'root body\n', 'patched\n', 2000, FOREIGN, 'p1');
+		const meta = metadata('md');
+		const bind = binding('root', 'md');
+		const d = deriveDossier('root', [root, p1, meta, bind], [], new Map(), trustedOnly)!;
+		expect(d.content.text).toBe('patched\n');
+		expect(d.history.map((r) => r.state)).toEqual(['root', 'applied']);
+		expect(d.admittedVia).toMatchObject({ bindingId: 'bind', publisherPubkey: AUTHOR });
+	});
+});

@@ -12,11 +12,27 @@
 		 * relay can match, so this pane must not talk about matches at all. */
 		noTerms?: boolean;
 		relayCount: number;
+		/** ADR 0004: the trusted-publisher view matched nothing. The pane
+		 * names what the list is hiding instead of blaming the relays. */
+		trusted?: boolean;
+		/** Records the run observed outside the trusted list — named so the
+		 * empty trusted view never reads as "your relays have nothing". */
+		outsideCount?: number;
+		onManageTrust?(): void;
 		onClearFilters?(): void;
 		onAskDifferently(): void;
 	}
 
-	let { filtered, noTerms = false, relayCount, onClearFilters, onAskDifferently }: Props = $props();
+	let {
+		filtered,
+		noTerms = false,
+		relayCount,
+		trusted = false,
+		outsideCount = 0,
+		onManageTrust,
+		onClearFilters,
+		onAskDifferently
+	}: Props = $props();
 </script>
 
 <div class="flex w-full justify-center">
@@ -27,16 +43,22 @@
 				means nothing was asked, so this is not a match verdict at all. */ ''}
 			{noTerms
 				? 'Nothing to search for'
-				: filtered
-					? 'Nothing matched your filters'
-					: 'Nothing matched on your relays'}
+				: trusted
+					? 'Nothing from your trusted publishers matched'
+					: filtered
+						? 'Nothing matched your filters'
+						: 'Nothing matched on your relays'}
 		</h3>
 		<p class="text-[12.5px] leading-relaxed text-ink-2">
 			{noTerms
 				? 'That question has no word a relay can match. Use a product name, an identifier (CVE, cert id, package URL), or a term from the record you mean.'
-				: filtered
-					? 'Relax the selection to see the rest of the result set.'
-					: 'Try a different spelling or identifier, or add more relays in Settings (Ctrl+,).'}
+				: trusted
+					? outsideCount === 0
+						? 'Nothing outside your trusted publishers matched either. Add a publisher to the list, or ask differently.'
+						: `${outsideCount} ${outsideCount === 1 ? 'record' : 'records'} on your relays ${outsideCount === 1 ? 'sits' : 'sit'} outside your trusted publishers. Add a publisher to the list to admit ${outsideCount === 1 ? 'it' : 'them'}, or ask differently.`
+					: filtered
+						? 'Relax the selection to see the rest of the result set.'
+						: 'Try a different spelling or identifier, or add more relays in Settings (Ctrl+,).'}
 		</p>
 
 		<div class="mt-2 flex flex-wrap items-center justify-center gap-2">
@@ -47,6 +69,15 @@
 					onclick={onClearFilters}
 				>
 					Clear filters
+				</button>
+			{/if}
+			{#if trusted && !noTerms && onManageTrust}
+				<button
+					type="button"
+					class="rounded-full bg-ink px-3.5 py-1.5 text-[12px] font-medium text-surface hover:opacity-90"
+					onclick={onManageTrust}
+				>
+					Manage trusted publishers
 				</button>
 			{/if}
 			<button

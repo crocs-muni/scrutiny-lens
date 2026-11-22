@@ -384,8 +384,22 @@
 				</KeyHint>
 			</div>
 			<!-- ④ description: one line on both kinds — a product's card snippet or
-				a record's node-tile label; an uninterpreted subject renders no line
-				at all rather than fabricated prose. -->
+			 * a record's node-tile label; an uninterpreted subject renders no line
+			 * at all rather than fabricated prose. -->
+			{#if dossier.admittedVia !== null}
+				<!-- ADR 0004: the curated list is the default admission view, and a
+				 * record the list does not hold can still enter through a trusted
+				 * publisher's binding. Neutral inset, same as the filter strip —
+				 * provenance, not a warning: no new hue, no pill. -->
+				<div
+					data-admitted-via
+					class="mt-2 flex flex-wrap items-center gap-1.5 rounded-[8px] border border-line bg-inset px-2.5 py-1.5 font-mono text-[11px] text-ink-2"
+				>
+					Reached through <PublisherChip pubkey={dossier.admittedVia.publisherPubkey} />'s binding
+					to
+					<span class="min-w-0 truncate text-ink">{dossier.admittedVia.otherTitle}</span>.
+				</div>
+			{/if}
 			{#if dossier.snippet !== undefined}
 				<p class="mt-1.5 text-[13.5px] leading-relaxed text-ink-2">{dossier.snippet}</p>
 			{/if}

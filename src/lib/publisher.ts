@@ -10,7 +10,7 @@
 // nothing. A pure function can carry that assertion in the node test env,
 // where the chip's DOM cannot mount.
 
-import { npubEncode } from 'nostr-tools/nip19';
+import { decode, npubEncode } from 'nostr-tools/nip19';
 
 /** Full npub for the tooltip; falls back to the raw key if bech32 encode
  * fails (a malformed author id must degrade, never throw inside a chip). */
@@ -61,4 +61,94 @@ export function identiconCells(seed: number): boolean[][] {
 		grid.push(row);
 	}
 	return grid;
+}
+
+/* ── Trusted-publisher key entry (issue #214) ─────────────────────────────────
+ * A local trust list accepts a publisher key pasted from anywhere: an npub, an
+ * nprofile, or the raw 64-character hex. The parser never throws, so Settings
+ * can render a field-level sentence instead of a stack trace. */
+
+export type PubkeyInputIssueReason =
+	| 'empty'
+	| 'not-bech32'
+	| 'wrong-kind'
+	| 'invalid-payload'
+	| 'bad-hex';
+
+export interface PubkeyInputIssue {
+	input: string;
+	reason: PubkeyInputIssueReason;
+}
+
+export type PubkeyInputResult =
+	| { ok: true; pubkey: string }
+	| { ok: false; issue: PubkeyInputIssue };
+
+const HEX_64 = /^[0-9a-fA-F]{64}$/;
+const HEX_ONLY = /^[0-9a-fA-F]+$/;
+
+export function parsePubkeyInput(input: string): PubkeyInputResult {
+	const value = typeof input === 'string' ? input.trim() : '';
+	if (!value) {
+		return { ok: false, issue: { input: value, reason: 'empty' } };
+	}
+
+	if (HEX_64.test(value)) {
+		return { ok: true, pubkey: value.toLowerCase() };
+	}
+
+	// Hex-looking but the wrong length is a truncated/extra-character key,
+	// not a failed bech32 decode — even when the hex happens to contain '1'.
+	if (HEX_ONLY.test(value)) {
+		return { ok: false, issue: { input: value, reason: 'bad-hex' } };
+	}
+
+	const separator = value.lastIndexOf('1');
+	if (separator <= 0) {
+		return { ok: false, issue: { input: value, reason: 'not-bech32' } };
+	}
+
+	const lower = value.toLowerCase();
+	const hrp = lower.slice(0, separator);
+	if (!/^[a-z]+$/.test(hrp)) {
+		return { ok: false, issue: { input: value, reason: 'not-bech32' } };
+	}
+
+	try {
+		const decoded = decode(lower);
+		if (decoded.type === 'npub') {
+			return HEX_64.test(decoded.data)
+				? { ok: true, pubkey: decoded.data.toLowerCase() }
+				: { ok: false, issue: { input: value, reason: 'invalid-payload' } };
+		}
+		if (decoded.type === 'nprofile') {
+			return HEX_64.test(decoded.data.pubkey)
+				? { ok: true, pubkey: decoded.data.pubkey.toLowerCase() }
+				: { ok: false, issue: { input: value, reason: 'invalid-payload' } };
+		}
+		return { ok: false, issue: { input: value, reason: 'wrong-kind' } };
+	} catch {
+		// An npub/nprofile that fails to decode is a malformed key, not some
+		// unrelated token — tell the reader which one it is.
+		return {
+			ok: false,
+			issue: {
+				input: value,
+				reason: hrp === 'npub' || hrp === 'nprofile' ? 'invalid-payload' : 'not-bech32'
+			}
+		};
+	}
+}
+
+const PUBKEY_ISSUE_COPY: Record<PubkeyInputIssueReason, string> = {
+	empty: 'Paste a publisher key — an npub, an nprofile, or a 64-character hex key.',
+	'not-bech32': 'That is not a Nostr key. Use an npub, an nprofile, or a 64-character hex key.',
+	'wrong-kind':
+		'That is a different kind of Nostr identifier, not a publisher key. Use an npub, an nprofile, or a 64-character hex key.',
+	'invalid-payload': 'That key is not a valid publisher key. Check the characters and paste it again.',
+	'bad-hex': 'A hex publisher key is exactly 64 characters long.'
+};
+
+export function describePubkeyIssue(issue: PubkeyInputIssue): string {
+	return PUBKEY_ISSUE_COPY[issue.reason];
 }

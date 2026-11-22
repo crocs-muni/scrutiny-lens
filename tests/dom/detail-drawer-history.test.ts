@@ -40,7 +40,8 @@ const dossier: Dossier = {
 	counts: { summary: 0, history: rows.length, files: 0 },
 	content: { text: 'v1\n', banner: null },
 	history: rows,
-	files: []
+	files: [],
+	admittedVia: null
 };
 
 describe('DetailDrawer history honesty (#165)', () => {

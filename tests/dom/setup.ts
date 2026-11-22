@@ -5,3 +5,14 @@
 // No ResizeObserver stub: floating-ui feature-detects it, and these tests
 // pass without one (checked), so none is carried.
 (globalThis as Record<string, unknown>).__sveltekit_dev ??= { env: {} };
+
+// jsdom has no Web Animations API; bits-ui's floating layer calls
+// `element.animate()` when a tooltip mounts. A no-op returning what the
+// layer cancels is enough for these tests.
+if (typeof Element !== 'undefined' && typeof Element.prototype.animate !== 'function') {
+	Element.prototype.animate = (() =>
+		({
+			cancel() {},
+			finished: Promise.resolve()
+		}) as unknown as Animation) as Element['animate'];
+}
