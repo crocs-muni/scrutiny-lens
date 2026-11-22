@@ -1,0 +1,19 @@
+{
+	"version": 1,
+	"updated": "2026-11-22",
+	"source": "Athena/Minerva demo corpus",
+	"publishers": [
+		{
+			"pubkey": "c0df886f934aad0c1e62f08b04bd54b44bdd1b5cb0b2ab250cbed25cf64c8a27",
+			"label": "CRoCS"
+		},
+		{
+			"pubkey": "2d659ca66c06732afe977befe60f67299d6459a4c7dd8b34203a0c558dc7148d",
+			"label": "Athena vendor"
+		},
+		{
+			"pubkey": "9e6d8babbab076566b96d932d7049d5820771a6e58bb11b2451b6e993f70c450",
+			"label": "Athena analyst"
+		}
+	]
+}

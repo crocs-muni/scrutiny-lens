@@ -18,6 +18,7 @@
 	} from '$lib/scroll-memory';
 	import { tick } from 'svelte';
 	import { settings } from '$lib/settings.svelte';
+	import { trust } from '$lib/trust-store.svelte';
 	import SearchHero from '$lib/components/ui/SearchHero.svelte';
 	import TaskTrace from '$lib/components/ui/TaskTrace.svelte';
 	import ResultCard from '$lib/components/ui/ResultCard.svelte';
@@ -59,8 +60,12 @@
 		const session = investigation.result;
 		if (session === null) return { events: [], cards: [] };
 		const tagSel = iTagSelections(investigation.selections);
-		const taggedEvents = applyFacets(session.admitted, tagSel);
-		const taggedCards = visibleCards(session.admitted, tagSel, investigation.cards);
+		const taggedEvents = applyFacets(investigation.admittedEvents, tagSel);
+		const taggedCards = visibleCards(
+			investigation.admittedEvents,
+			tagSel,
+			investigation.admittedCards
+		);
 		return afterSemantics(taggedEvents, taggedCards, investigation.selections);
 	});
 	const viewCards = $derived(semanticFiltered.cards);
@@ -73,8 +78,8 @@
 		// The entry anchor exists for a session that settled NO product cards
 		// (a metadata-only share/search). A facet that hides every card is not
 		// that case: products exist, the user just filtered them away.
-		if (investigation.cards.length !== 0 || investigation.result === null) return null;
-		return investigation.result.admitted[0]?.id ?? null;
+		if (investigation.admittedCards.length !== 0 || investigation.result === null) return null;
+		return investigation.admittedEvents[0]?.id ?? null;
 	});
 	// Cards render while the fill lands (issue #59): the per-chunk paint
 	// needs the product surface live DURING fillInChunks, and a mid-fill
@@ -207,11 +212,14 @@
 	const railGroups = $derived.by(() => {
 		if (investigation.result === null) return investigation.facetGroups;
 		return [
-			...semanticGroups(investigation.result.admitted, investigation.cards),
-			...investigation.facetGroups
+			...semanticGroups(investigation.admittedEvents, investigation.admittedCards),
+			...investigation.admittedFacetGroups
 		];
 	});
 	const cohort = $derived(viewCards.length === 0 ? '' : cohortLine(viewCards, viewEvents));
+	const outsideTrust = $derived(
+		(investigation.result?.admitted.length ?? 0) - investigation.admittedEvents.length
+	);
 
 	// — Dossier derivations (#29a) —
 	// Store-level selection (ADR 0001): the dossier resolves against the
@@ -220,7 +228,13 @@
 		const id = investigation.selectedEventId;
 		const session = investigation.result;
 		if (id === null || session === null) return null;
-		return deriveDossier(id, session.admitted, investigation.cards, investigation.nodeTiles);
+		return deriveDossier(
+			id,
+			session.admitted,
+			investigation.cards,
+			investigation.nodeTiles,
+			trust.isTrusted
+		);
 	});
 	/** The surface a subject renders on decides visibility: product subjects
 	 * are visible iff their CARD survives the filters (the
@@ -267,11 +281,11 @@
 	function nodeTitleOf(id: string | null) {
 		const session = investigation.result;
 		if (id === null || session === null) return null;
-		const event = session.admitted.find((e) => e.id === id);
+		const event = investigation.admittedEvents.find((e) => e.id === id);
 		if (event === undefined) return null;
 		return subjectTitleOf(
 			event,
-			investigation.cards.find((c) => c.id === id),
+			investigation.admittedCards.find((c) => c.id === id),
 			investigation.nodeTiles.get(id)
 		);
 	}
@@ -328,8 +342,7 @@
 	// grounding set) — sessionIdentity matters: an old session reopened while
 	// a different run is live must never cite that run's events.
 	const chatGrounded = $derived(
-		investigation.sessionId === shell.session?.id &&
-			(investigation.result?.admitted.length ?? 0) > 0
+		investigation.sessionId === shell.session?.id && investigation.admittedEvents.length > 0
 	);
 	/** BYOK (spec §6): memory-only key, passed straight through. */
 	const chatProvider = $derived.by((): ProviderOverrideInput | undefined =>
@@ -345,7 +358,7 @@
 		// Same identity gate as chatGrounded — the composer disables first,
 		// but the send closure must not trust the UI.
 		const admitted =
-			investigation.sessionId === shell.session?.id ? (investigation.result?.admitted ?? []) : [];
+			investigation.sessionId === shell.session?.id ? investigation.admittedEvents : [];
 		// Grounding scope (user ruling 2026-09-17): with a card open the chat
 		// answers about THAT card's cohort — the node, its one-hop neighbors,
 		// their bindings and history legs. Without a selection the session's
@@ -881,6 +894,20 @@
 										lives at the area edge); breadcrumb owns fetched/truncation -->
 									<div class="mx-auto flex w-full max-w-[760px] items-baseline gap-3 px-1 pb-1 pt-2">
 										<span class="font-mono text-[12.5px] font-semibold text-ink">{cohort}</span>
+									{#if outsideTrust > 0}
+										<!-- spec §3/§9: the scope is stated once, and only when
+											the trusted view actually hides observed records. -->
+										<span class="font-mono text-[11px] text-ink-2">
+											{outsideTrust} outside the trusted view ·
+											<button
+												type="button"
+												class="text-accent-ink underline underline-offset-2 hover:text-ink"
+												onclick={() => shell.toggleSettings()}
+											>
+												manage
+											</button>
+										</span>
+									{/if}
 										{#if anchorHidden}
 											<!-- the results ring marks the CARD (graph anchor);
 												a filtered-out anchor says so here, separately from
@@ -953,7 +980,10 @@
 										<ResultsEmpty
 											filtered={Object.keys(investigation.selections).length > 0}
 											{noTerms}
+											trusted={outsideTrust > 0}
+											outsideCount={outsideTrust}
 											relayCount={investigation.runRelays.length}
+											onManageTrust={() => shell.toggleSettings()}
 											onClearFilters={() => investigation.clearFacets()}
 											onAskDifferently={() => shell.home()}
 										/>
@@ -1015,8 +1045,8 @@
 						{@render note(shareNote !== '', 'share-hints', shareNote)}
 						{#key investigation.graphSubjectId}
 							<GraphCanvas
-								events={investigation.result?.admitted ?? []}
-								cards={investigation.cards}
+								events={investigation.admittedEvents}
+								cards={investigation.admittedCards}
 								root={investigation.graphSubjectId}
 								selectedEventId={investigation.selectedEventId}
 								onSelect={selectNode}

@@ -1,7 +1,8 @@
 <script lang="ts">
 	/* SETTINGS DIALOG (issue #11, spec §5/§6/§8): AI provider (endpoint / key /
-	 * live model list), appearance, relay pool editor (1–4 entries), and the
-	 * one Clear-all action. Replaces the #10 staging overlay; mounted only
+	 * live model list), appearance, relay pool editor (1–4 entries), the
+	 * device-local trusted-publisher list (spec §2, ADR 0004), and the one
+	 * Clear-all action. Replaces the #10 staging overlay; mounted only
 	 * while open (+page.svelte gates on shell.settingsOpen), so drafts copy
 	 * from the hydrated settings singleton at mount.
 	 *
@@ -34,6 +35,8 @@
 		settings
 	} from '$lib/settings.svelte';
 	import { RELAY_MAX, RELAY_MIN, type Appearance } from '$lib/config';
+	import { publisherNpub, publisherToken } from '$lib/publisher';
+	import { trust } from '$lib/trust-store.svelte';
 
 	interface Props {
 		onClose: () => void;
@@ -247,6 +250,63 @@
 	function closeDialog(): void {
 		(globalThis.document?.activeElement as HTMLElement | null)?.blur?.();
 		onClose();
+	}
+
+	// ── Trusted publishers (spec §2 admission, ADR 0004) ─────────────────────
+
+	// The store is the validator (parsePubkeyInput, duplicate check), so the
+	// field never guesses what a key means; Enter and blur both commit, like
+	// the relay editor.
+	let publisherDraft = $state('');
+	let trustError = $state('');
+	/** Save truth for the trust list: same never-lie mapping as the pool. */
+	const trustNote = $derived(persistNote(trust.persistState));
+	/** Counts off the effective list. Bundled = N − added + removed: the store
+	 * only records a `removed` entry for a bundled key (removing one of your
+	 * own drops it from `added`), so the arithmetic recovers the shipped
+	 * count without a second source of truth. */
+	const trustCount = $derived(trust.publishers.length);
+	const trustAdded = $derived(trust.overrides.added.length);
+	const trustRemoved = $derived(trust.overrides.removed.length);
+	const trustBundled = $derived(trustCount - trustAdded + trustRemoved);
+	const canResetTrust = $derived(trustAdded + trustRemoved > 0);
+
+	$effect(() => {
+		// The dialog can mount before the boot barrier resolves; ready() is the
+		// one-shot hydrate and must not leave the persisted list unseen.
+		void trust.ready();
+	});
+
+	function trustProvenance(pubkey: string): 'you' | 'bundled' {
+		return trust.overrides.added.includes(pubkey) ? 'you' : 'bundled';
+	}
+
+	/** Empty input is the pristine state of an untouched field, not an error;
+	 * an erased bad draft also drops its stale message. */
+	function commitPublisher(): void {
+		const input = publisherDraft.trim();
+		if (input === '') {
+			trustError = '';
+			return;
+		}
+		const result = trust.add(input);
+		if (result.ok) {
+			publisherDraft = '';
+			trustError = '';
+		} else {
+			trustError = result.message;
+		}
+	}
+
+	function removePublisher(pubkey: string): void {
+		trustError = '';
+		void trust.remove(pubkey);
+	}
+
+	function resetPublishers(): void {
+		trustError = '';
+		publisherDraft = '';
+		void trust.reset();
 	}
 
 	// ── Data (spec §6: one Clear-all action) ─────────────────────────────────
@@ -470,6 +530,100 @@
 				last save actually did, replacing the stale auto-save claim. -->
 			{#if note}
 				<p class="mt-0.5 font-mono text-[11.5px] text-ink-3">{note}</p>
+			{/if}
+		</section>
+
+		<!-- Trusted publishers (spec §2 admission, ADR 0004) -->
+		<section class="mb-4">
+			<h3 class="mb-2 text-[12px] font-semibold tracking-wide text-ink-3 uppercase">Trusted publishers</h3>
+			<p class="font-mono text-[11.5px] text-ink-3" data-trust-count>
+				{trustCount} trusted ({trustBundled} bundled, +{trustAdded} you, −{trustRemoved} removed)
+			</p>
+			<p class="mt-1 mb-1.5 text-[11.5px] leading-relaxed text-ink-3">
+				Records from these publishers, the bindings they reach, and their root chains are the
+				default view. Changes stay on this device.
+			</p>
+			<div class="max-h-[200px] overflow-y-auto" data-trust-list>
+				{#each trust.publishers as publisher (publisher.pubkey)}
+					{@const npub = publisherNpub(publisher.pubkey)}
+					{@const provenance = trustProvenance(publisher.pubkey)}
+					<div class="flex items-center gap-1.5 py-1" data-trust-row data-pubkey={publisher.pubkey}>
+						<!-- A reviewed entry carries prose (sans); a locally added key has
+							no user label (issue #214), so it shows the machine-made npub
+							token in mono. The full value lives in the tooltip. -->
+						<KeyHint nameless hoverOnly side="left">
+							{#snippet content()}
+								<span class="block font-mono break-all">{npub}</span>
+							{/snippet}
+							{#snippet trigger({ props })}
+								<span
+									{...props}
+									class="min-w-0 flex-1 truncate {provenance === 'bundled'
+										? 'font-sans text-[12.5px] text-ink'
+										: 'font-mono text-[10.5px] text-ink-2'}"
+								>
+									{#if provenance === 'bundled'}
+										{publisher.label}
+									{:else}
+										<!-- The token is abbreviated: keep the full key in the
+											accessible name, not only in the hover tooltip. -->
+										<span aria-hidden="true">{publisherToken(npub)}</span>
+										<span class="sr-only">{npub}</span>
+									{/if}
+								</span>
+							{/snippet}
+						</KeyHint>
+						<span class="shrink-0 font-mono text-[9.5px] text-ink-3">
+							{provenance}
+						</span>
+						<KeyHint
+							label="Remove publisher"
+							side="left"
+							onclick={() => removePublisher(publisher.pubkey)}
+							class="primitive-icon-button shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-red"
+						>
+							<IconTrash size={14} stroke-width={2} />
+						</KeyHint>
+					</div>
+				{:else}
+					<p class="py-1 text-[11.5px] text-ink-3">
+						No publishers trusted — the default view stays empty until you add one.
+					</p>
+				{/each}
+			</div>
+			<div class="mt-1.5 flex items-center gap-1">
+				<input
+					bind:value={publisherDraft}
+					onblur={commitPublisher}
+					onkeydown={(event) => event.key === 'Enter' && commitPublisher()}
+					placeholder="npub, nprofile, or 64-char hex"
+					aria-label="Publisher key"
+					spellcheck="false"
+					class="min-w-0 flex-1 rounded-control bg-field px-2 py-1.5 font-mono text-[12.5px] text-ink shadow-hairline outline-none transition-shadow duration-150 placeholder:text-ink-3 focus:shadow-card"
+				/>
+				<button
+					type="button"
+					onclick={commitPublisher}
+					class="rounded-control bg-field px-2.5 py-1.5 text-[12.5px] text-ink-2 shadow-hairline transition-colors duration-150 hover:text-ink"
+				>
+					Add
+				</button>
+			</div>
+			{#if trustError}
+				<p class="mt-1.5 text-[11.5px] text-red" data-trust-error>{trustError}</p>
+			{/if}
+			{#if canResetTrust}
+				<button
+					type="button"
+					onclick={resetPublishers}
+					class="mt-1.5 text-[12.5px] text-ink-2 transition-colors duration-150 hover:text-ink"
+				>
+					Reset to the project list
+				</button>
+			{/if}
+			<!-- Save truth (spec §2 never-lie), same footer as the pool editor. -->
+			{#if trustNote}
+				<p class="mt-0.5 font-mono text-[11.5px] text-ink-3" data-trust-note>{trustNote}</p>
 			{/if}
 		</section>
 

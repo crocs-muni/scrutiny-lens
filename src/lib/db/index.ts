@@ -53,9 +53,12 @@ export const DB_NAME = 'scrutiny-lens';
 // v8 (issue #135) adds profiles, the device's kind-0 snapshots. Same no-op
 // store-set change as v4..v7 — the bump is what makes the guarded create
 // fire for every live db at ≤ 7.
-export const DB_VERSION = 8;
+//
+// v9 (issue #214) adds trustOverrides, the local add/remove overrides over
+// the bundled trusted-publisher list. Same no-op store-set change as v4..v8.
+export const DB_VERSION = 9;
 const SETTINGS_KEY = 'app';
-
+const TRUST_OVERRIDES_KEY = 'app'; // key for trustOverrides store
 /** Ring size for the dead-letter store; deadLetter.ts imports this so the
  * in-memory mirror and the persisted ring never disagree. */
 export const DEAD_LETTER_CAP = 200;
@@ -68,7 +71,11 @@ export interface PersistedSettings {
 	relays: string[];
 	appearance: 'light' | 'dark' | 'system';
 }
-
+/** User overrides for trusted publishers (spec §2). */
+export interface PersistedTrustOverrides {
+    added: string[]; // hex pubkeys added to trust list
+    removed: string[]; // hex pubkeys removed from default trust list
+}
 /** One AI-written interpretation under [eventId, model]. One event yields two
  * artifacts (search card, graph node), so bySurface keeps them from colliding
  * on the issue-specified key. */
@@ -176,6 +183,7 @@ interface LensDB extends DBSchema {
 	// v8 (issue #135): one kind-0 snapshot per publisher, keyed by the hex
 	// author id a card carries (never an npub — the card hands us hex).
 	profiles: { key: string; value: PersistedProfile };
+    trustOverrides: { key: string; value: { key: string; value: PersistedTrustOverrides } };
 }
 
 let conn: IDBPDatabase<LensDB> | undefined;
@@ -302,6 +310,12 @@ async function open(): Promise<void> {
 					// shape as every store above; no index — keyed reads only.
 					db.createObjectStore('profiles', { keyPath: 'pubkey' });
 				}
+				if (!db.objectStoreNames.contains('trustOverrides')) {
+					// v9 (issue #214): local overrides over the bundled trusted-
+					// publisher list. One row keyed 'app', same wrapper shape as
+					// settings; no index — keyed reads only.
+					db.createObjectStore('trustOverrides', { keyPath: 'key' });
+				}
 			}
 		});
 		persistent = true;
@@ -386,7 +400,25 @@ export async function saveSettings(patch: Partial<PersistedSettings>): Promise<S
 export async function loadSettings(): Promise<Partial<PersistedSettings> | null> {
 	return attempt(async (d) => (await d.get('settings', SETTINGS_KEY))?.value ?? null, null);
 }
+/** Save trust overrides (full replace). */
+export async function saveTrustOverrides(value: PersistedTrustOverrides): Promise<SaveOutcome> {
+    const d = await db();
+    if (!d) return 'unavailable';
+    try {
+        const tx = d.transaction('trustOverrides', 'readwrite');
+        await tx.store.put({ key: TRUST_OVERRIDES_KEY, value: normalize(value) });
+        await tx.done;
+        return 'saved';
+    } catch (err) {
+        console.warn('[db] trustOverrides save failed —', err);
+        return 'failed';
+    }
+}
 
+/** Load trust overrides, or null if none. */
+export async function loadTrustOverrides(): Promise<PersistedTrustOverrides | null> {
+    return attempt(async (d) => (await d.get('trustOverrides', TRUST_OVERRIDES_KEY))?.value ?? null, null);
+}
 /** Merge-on-write: a later surface on the same [eventId, model] adds to
  * bySurface instead of overwriting the other artifact. One transaction — two
  * overlapping calls (the card+node pair of one event) must merge, not race
