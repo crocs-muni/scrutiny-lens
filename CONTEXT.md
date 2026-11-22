@@ -20,6 +20,18 @@ _Avoid_: attachment, download, linked file, binding row
 View-level state that projects which cards the results list shows. It filters the list only; it never filters the underlying admitted events and never touches the Selection.
 _Avoid_: filter, search refinement (unqualified)
 
+**Trusted publisher**:
+A pubkey on the curated list shipped with the build, or one the user added on this device. The list is an admission policy, not a badge: it decides which observed records enter the default view.
+_Avoid_: verified publisher, vetted, official, approved
+
+**Trusted view**:
+The event set admitted by the trusted-publisher list — direct records, records reached through a listed publisher's Binding, and the canonical chains of admitted roots. It is computed after chain resolution, never before (fabric TR-7), and it is what cards, counts, the graph, the dossier subject, and chat ground on. Facet filters narrow the list only; they never narrow the trusted view.
+_Avoid_: trust filter, allowlist view (unqualified), whitelist
+
+**Outside the trusted view**:
+The announced state where an observed record — or a restored Selection — is not admitted by the curated list. Cards do not render; a restored Selection still renders its dossier, with the reason named. Never silent.
+_Avoid_: untrusted record, blocked record, filtered out (unqualified)
+
 **Show deleted**:
 The enumeration-surface toggle that reveals retracted events in lists and on the canvas. It de-clutters enumeration only; it is never an access control — a dossier the user explicitly opened always renders, retraction included, flagged with the red pill.
 _Avoid_: hide retractions, deleted filter
