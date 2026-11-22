@@ -85,17 +85,23 @@
 	let cameraK = $state(1);
 	let panOX = $state(0);
 	let panOY = $state(0);
-	// FIT GLIDE (machine for the Commands): easing lives ONLY here — damped
-	// targets written by fit()/settle-correction, converged by a small rAF
-	// loop with exponential smoothing (log-space for k; multiplicative value,
-	// equal-ratio glide). Gestures (zoomAt/pan) write the live values and
-	// NULL the targets in the same line: the wheel always wins instantly,
-	// never a rubber band (scout-verified convention).
-	let kTarget: number | null = null;
-	let panTarget: [number, number] | null = null;
-	// Set by ANY deliberate input (wheel, pan, card drag, bubble expand);
-	// cleared by fit. Until then the settle correction never touches the frame.
-	let camClaimed = false;
+	// FIT GLIDE — one discriminant for the camera's three phases. `gliding`
+	// carries the damped targets written by fit()/settle-correction; a small
+	// rAF loop converges them with exponential smoothing (log-space for k;
+	// multiplicative value, equal-ratio glide). A gesture (zoomAt/pan/drag)
+	// goes straight to `claimed`, dropping any in-flight glide in the same
+	// line: the wheel always wins instantly, never a rubber band
+	// (scout-verified convention). `claimed` persists until fit() re-glides —
+	// the settle correction never yanks a camera the user touched.
+	type Glide =
+		| { kind: 'free' }
+		| { kind: 'gliding'; k: number; pan: [number, number] }
+		| { kind: 'claimed' };
+	// Replace-only machine snapshot: `$state.raw` notifies on reassignment
+	// without deep-proxying the union. Reactive only for the stage's data-glide
+	// test seam; every effect read goes through untrack — camera phases must
+	// never drive the apply effect.
+	let glide = $state.raw<Glide>({ kind: 'free' });
 	// Live world-bounds center — flushFrame already sweeps every node per
 	// frame, so it publishes the center itself (nothing else reads a pulse).
 	let boundsC = $state({ x: 0, y: 0 });
@@ -162,7 +168,7 @@
 				onSelect,
 				onExpand: (target: string) => {
 					pendingExpand = target;
-					camClaimed = true; // deliberate input — the settle correction stays off
+					glide = { kind: 'claimed' }; // deliberate input — the settle correction stays off
 					// The bubble's meaning is role-bound (#97): a record's bubble
 					// reveals its related products; a related's reveals its records.
 					if (n.role === 'related') investigation.expandRelated(target);
@@ -193,9 +199,8 @@
 		// Episodes invalidate camera glides (#102-review F5): a fit/correction
 		// computed for the pre-arrival spread must not keep converging onto a
 		// frame that no longer describes the world — the next freeze re-decides.
-		if (added.length > 0) {
-			kTarget = null;
-			panTarget = null;
+		if (added.length > 0 && untrack(() => glide.kind) === 'gliding') {
+			glide = { kind: 'free' };
 		}
 		// Analytic pre-fit (#102 ruling, scout-verified Figma/Excalidraw
 		// convention): the final frame is a property of the DERIVED slot
@@ -204,7 +209,8 @@
 		// already-correct frame.
 		if (added.length > 0 && !firstApplyDone) {
 			firstApplyDone = true;
-			if (stageW > 0 && !camClaimed) preFit(view.nodes as { x: number; y: number }[]);
+			if (stageW > 0 && untrack(() => glide.kind) !== 'claimed')
+				preFit(view.nodes as { x: number; y: number }[]);
 		}
 		// Mid-drag removal (live retraction, undo-expand): the card is gone, so
 		// its pointerup never lands — cool the episode down at the sync point.
@@ -278,16 +284,16 @@
 		// freeze moment (settling flips false — the only event we can hear),
 		// measure the organized bounds; if the fit drifted >10% in k from
 		// what the frame shows, glide quietly to it. Never once the user has
-		// touched the camera (camClaimed — Mapbox/Excalidraw: don't yank).
+		// touched the camera (glide.kind === 'claimed' — Mapbox/Excalidraw:
+		// don't yank).
 		const wasSettling = settling;
 		settling = sim.settling();
-		if (wasSettling && !settling && !camClaimed && draggingId === null) {
+		if (wasSettling && !settling && glide.kind !== 'claimed' && draggingId === null) {
 			const sb = simBounds();
 			if (sb) {
 				const nowK = fitK(sb);
 				if (Math.abs(nowK - cameraK) > 0.1 * nowK) {
-					kTarget = nowK;
-					panTarget = [0, 0];
+					glide = { kind: 'gliding', k: nowK, pan: [0, 0] };
 					ensureDampLoop();
 				}
 			}
@@ -337,9 +343,7 @@
 	function fit(): void {
 		const b = simBounds();
 		if (!b) return;
-		kTarget = fitK(b);
-		panTarget = [0, 0];
-		camClaimed = false;
+		glide = { kind: 'gliding', k: fitK(b), pan: [0, 0] };
 		ensureDampLoop();
 	}
 	let dampRaf: number | null = null;
@@ -353,27 +357,26 @@
 		const dt = Math.min(0.1, Math.max(0.001, (now - lastStep) / 1000)); // clamp tab-switch spikes
 		lastStep = now;
 		const t = 1 - Math.exp(-4 * dt); // rate 4 → lands in ~300 ms
-		if (kTarget !== null) {
+		if (glide.kind === 'gliding') {
+			const target = glide;
 			// log-space: k is multiplicative ⇒ equal ratio, equal glide speed
-			cameraK = Math.exp(Math.log(cameraK) + (Math.log(kTarget) - Math.log(cameraK)) * t);
-			if (Math.abs(Math.log(kTarget) - Math.log(cameraK)) < 0.005) {
-				cameraK = kTarget;
-				kTarget = null;
-			}
-		}
-		if (panTarget !== null) {
-			panOX += (panTarget[0] - panOX) * t;
-			panOY += (panTarget[1] - panOY) * t;
-			if (Math.abs(panTarget[0] - panOX) < 0.5 && Math.abs(panTarget[1] - panOY) < 0.5) {
-				panOX = panTarget[0];
-				panOY = panTarget[1];
-				panTarget = null;
-			}
+			const nextLogK = Math.log(cameraK) + (Math.log(target.k) - Math.log(cameraK)) * t;
+			const kDone = Math.abs(Math.log(target.k) - nextLogK) < 0.005;
+			cameraK = kDone ? target.k : Math.exp(nextLogK);
+			const nextX = panOX + (target.pan[0] - panOX) * t;
+			const nextY = panOY + (target.pan[1] - panOY) * t;
+			const panDone =
+				Math.abs(target.pan[0] - nextX) < 0.5 && Math.abs(target.pan[1] - nextY) < 0.5;
+			panOX = panDone ? target.pan[0] : nextX;
+			panOY = panDone ? target.pan[1] : nextY;
+			// Both destinations reached — the glide is over, the camera is
+			// unowned again (only fit() or a settle correction may re-glide).
+			if (kDone && panDone) glide = { kind: 'free' };
 		}
 		// #102-review F2: the glide moves k — re-clip edges every frame, or
 		// dense-mode floors desync the SVG under the cards it already showed.
 		flushFrame();
-		if (kTarget !== null || panTarget !== null) {
+		if (glide.kind === 'gliding') {
 			dampRaf = requestAnimationFrame(dampStep);
 		} else {
 			dampRaf = null;
@@ -392,9 +395,7 @@
 		cameraK = next;
 		panOX = px - stageW / 2 + next * boundsC.x - next * qx;
 		panOY = py - stageH / 2 + next * boundsC.y - next * qy;
-		kTarget = null;
-		panTarget = null;
-		camClaimed = true;
+		glide = { kind: 'claimed' };
 		flushFrame(); // #102-review F2: re-clip edges at the new k NOW (dense-mode tier math lives here; the main-era zoom contract)
 	}
 
@@ -437,7 +438,7 @@
 	/** The analytic t0 fit: the final frame is a property of the DERIVED
 	 * slot grammar — computed once, from the effect leg when the stage was
 	 * already measured, else from the ResizeObserver's first size. Never
-	 * after the user gestures (gestures always win — same grammar: camClaimed). */
+	 * after the user gestures (gestures always win — same grammar: glide.kind === 'claimed'). */
 	function preFit(nodes: { x: number; y: number }[]): void {
 		if (preFitted) return;
 		const b = boundsOf(nodes);
@@ -479,9 +480,7 @@
 		}
 		draggingId = id;
 		justDragged = true;
-		camClaimed = true; // any deliberate input owns the camera from here
-		kTarget = null; // #102-review F1: same line as wheel/pan
-		panTarget = null;
+		glide = { kind: 'claimed' }; // any deliberate input owns the camera (kills glides)
 		flushFrame(); // light the chip without waiting for the first tick
 	}
 	function onWindowPointerUp(e: PointerEvent) {
@@ -516,9 +515,9 @@
 			const ny = ev.clientY - panStart[1];
 			if (!justPanned && Math.hypot(nx - panOX, ny - panOY) < 4) return;
 			justPanned = true;
-			camClaimed = true; // a pan gesture owns the camera too
-			kTarget = null; // #102-review F1: gestures kill in-flight glides
-			panTarget = null; // (the damp loop must never fight the pointer)
+			// A pan owns the camera and kills in-flight glides in one line; the
+			// guard keeps a per-move event from re-allocating the same state.
+			if (glide.kind !== 'claimed') glide = { kind: 'claimed' };
 			panOX = nx;
 			panOY = ny;
 		};
@@ -571,7 +570,8 @@
 			// The first stage-size notification lands AFTER the first apply
 			// (attach→measure is async): the t0 pre-fit waits, not dies —
 			// still instant, still before the visible frames.
-			if (firstApplyDone && !camClaimed) preFit(graph.nodes as { x: number; y: number }[]);
+			if (firstApplyDone && glide.kind !== 'claimed')
+				preFit(graph.nodes as { x: number; y: number }[]);
 		});
 		resizeObserver.observe(el);
 		return () => {
@@ -609,8 +609,10 @@
 			actions={toolbarActions}
 			settling={settling}
 			onRedistribute={() => {
-				kTarget = null; // #102-review F5: the snap rewrites the world —
-				panTarget = null; // a glide aimed at its old spread must die here
+				// The snap rewrites the world — a glide aimed at its old spread
+				// must die here. A `claimed` camera keeps its claim (no targets
+				// exist to clear, and the user's ownership survives).
+				if (glide.kind === 'gliding') glide = { kind: 'free' };
 				sim.redistribute();
 			}}
 		/>
@@ -618,7 +620,14 @@
 		 * listener is imperative (attach zone, next to zoom): template-level
 		 * clicks on a static div fight the a11y linter for zero gain — Esc
 		 * stays the keyboard deselect (page-level), unaffected by the swap. -->
-		<div class="stage min-h-0 flex-1" role="region" aria-label="Session graph" bind:this={stage} {@attach setupStage}>
+		<div
+			class="stage min-h-0 flex-1"
+			role="region"
+			aria-label="Session graph"
+			data-glide={glide.kind}
+			bind:this={stage}
+			{@attach setupStage}
+		>
 			<div class="world" style="transform: translate({cam.x}px, {cam.y}px) scale({cam.k})">
 				<svg class="edges" aria-hidden="true">
 					<defs>

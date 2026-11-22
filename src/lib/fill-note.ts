@@ -1,4 +1,4 @@
-// Fill-lane verdicts for the card-fill surface (spec §6 deterministic wording).
+// Fill-lane verdicts for the card-fill surface (spec §2/§4 deterministic wording).
 // Pure and store-free on purpose: importing these must not drag the
 // investigation store (IndexedDB, relays) into every caller or test.
 
@@ -22,7 +22,7 @@ export function recordFillFailure(
 }
 
 /**
- * Results-surface banner text for the card-fill lane (spec §6 deterministic
+ * Results-surface banner text for the card-fill lane (spec §2/§4 deterministic
  * wording — never AI-written). Distinguishes a dead endpoint (unreachable/
  * timeout), one blocked by the browser before any HTTP response (browser_blocked
  * — CORS preflight / mixed content, spec §2), one throttling us (rate_limited

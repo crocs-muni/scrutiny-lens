@@ -12,7 +12,7 @@
  * same answer.
  */
 
-import type { RelayState } from '$lib/net/transport';
+import { isRelayState, type RelayState } from '$lib/net/transport';
 
 /** One relay's run-level verdict. */
 export interface RelayReceipt {
@@ -33,6 +33,14 @@ export interface RelayReceipt {
 	 * field existed; the live fold always observes it. Unknown stays ABSENT,
 	 * never zero (spec §2). */
 	rejected?: number;
+}
+
+/** Parse a status read back from IndexedDB. `null` means the code cannot
+ * prove a verdict, so the restore boundary drops the receipt instead of
+ * painting one (issue #212; "absent" already means "not recorded"). */
+export function parseRelayReceiptStatus(value: string): RelayReceipt['status'] | null {
+	if (value === 'unasked' || isRelayState(value)) return value;
+	return null;
 }
 
 /** The pipeline's cache slice label (pipeline/index.ts emits url

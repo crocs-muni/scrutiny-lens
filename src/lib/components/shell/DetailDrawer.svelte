@@ -215,6 +215,8 @@
 		 * shape is WAI-ARIA canon. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<!-- A keyboard-operable splitter IS interactive (APG window splitter);
+		     svelte-check's noninteractive heuristic is the false positive. -->
 		<div
 			role="separator"
 			tabindex="0"

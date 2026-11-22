@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
 	createTransport,
+	TransportClosedError,
 	CONNECT_TIMEOUT_MS,
 	FETCH_TIMEOUT_MS,
 	COUNT_TIMEOUT_MS,
@@ -233,6 +234,21 @@ describe('relay transport', () => {
 			expect(relay.close).toHaveBeenCalledTimes(1);
 		}
 		expect(pool.destroy).toHaveBeenCalledTimes(1);
+	});
+
+	it('refuses new work after close instead of reopening the destroyed pool', async () => {
+		const pool = new FakePool({ 'wss://a': { kind: 'ok', events: [] } });
+		const transport = createTransport({ urls: ['wss://a'] }, () => pool);
+		await transport.fetch([{}]); // cache the relay so close has something to close
+		await transport.close();
+		const ensureRelay = vi.spyOn(pool, 'ensureRelay');
+
+		const res = await transport.fetch([{}]);
+
+		expect(res.relays[0]).toMatchObject({ url: 'wss://a', status: 'refused', count: 0 });
+		expect(res.relays[0].lastError).toContain('Transport is closed');
+		expect(ensureRelay).not.toHaveBeenCalled();
+		expect(() => transport.capability('wss://a')).toThrow(TransportClosedError);
 	});
 });
 

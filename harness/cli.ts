@@ -6,8 +6,8 @@
 //                             capture scenes into .harness/runs/<label>/
 //   a11y [--label L] [--scene ID] [--theme light|dark]
 //                             capture with axe (WCAG 2.0/2.1 A+AA); JSON
-//                             summary to stdout, exit 1 on any violation,
-//                             2 when a capture or the analysis failed
+//                             summary to stdout, exit 1 on any violation or
+//                             failed capture, 2 when the analysis failed
 //   ledger [--runs N]         capture N times, write .harness/noise.json
 //                             (the per-scene noise floor compare must clear)
 //   compare --base last|run:<label>|main [--head <label>] [--scene ID]
@@ -23,7 +23,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { summarizeA11y } from './a11y.ts';
-import { captureScenes, type Theme } from './capture.ts';
+import { captureFailed, captureScenes, type Theme } from './capture.ts';
 import { runCompare } from './compare.ts';
 import { fixturePath } from './fixtures.ts';
 import { runLedger } from './ledger.ts';
@@ -66,10 +66,7 @@ if (command === 'seed') {
 	const results = await captureScenes(scenes, { buildDir, outDir }, { theme });
 	await writeRunMeta({ label, outDir, buildDir, scenes: scenes.map((scene) => scene.id) });
 	console.log(JSON.stringify(results, null, 2));
-	const bad = results.filter(
-		(r) => !r.stable || r.error !== null || r.pageErrors.length > 0 || r.missingText.length > 0
-	);
-	process.exit(bad.length === 0 ? 0 : 1);
+	process.exit(results.some(captureFailed) ? 1 : 0);
 } else if (command === 'a11y') {
 	const label = flag(args, 'label') ?? 'a11y';
 	const sceneId = flag(args, 'scene');
@@ -109,17 +106,23 @@ if (command === 'seed') {
 	);
 	await writeRunMeta({ label, outDir, buildDir: 'build', scenes: scenes.map((scene) => scene.id) });
 	const summary = summarizeA11y(results, label);
-	console.log(JSON.stringify(summary, null, 2));
+	const analysisFailed =
+		summary.errors.length > 0 ||
+		summary.incomplete.nodes > 0 ||
+		results.some((result) => result.error !== null);
+	// Same facts that fail `shots`: a capture that never settled, logged an
+	// unexpected page error or lost its expected text is a failed run even
+	// when axe found no violations.
+	const captureBroken = results.some(captureFailed);
+	const broken = analysisFailed || captureBroken;
+	console.log(JSON.stringify({ ...summary, broken }, null, 2));
 	console.error(
 		`a11y: ${summary.violations} rule instance(s), ${summary.nodes} node(s) across ` +
 			`${summary.rules} rule(s); ${summary.incomplete.nodes} incomplete node(s); ` +
 			`${summary.errors.length} analysis error(s)`
 	);
-	const broken =
-		summary.errors.length > 0 ||
-		summary.incomplete.nodes > 0 ||
-		results.some((result) => result.error !== null);
-	process.exit(broken ? 2 : summary.violations > 0 ? 1 : 0);
+	if (broken) console.error('a11y: run is broken (analysis failure or failed capture)');
+	process.exit(analysisFailed ? 2 : captureBroken || summary.violations > 0 ? 1 : 0);
 } else if (command === 'ledger') {
 	const floor = await runLedger(buildScenes(), 'build', Number(flag(args, 'runs') ?? 5));
 	console.log(JSON.stringify(floor, null, 2));

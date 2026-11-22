@@ -54,7 +54,14 @@ export const FETCH_TIMEOUT_MS = 8_000;
 /** Per-relay NIP-45 COUNT timeout (ms). */
 export const COUNT_TIMEOUT_MS = 3_000;
 
-export type RelayState = 'ok' | 'timeout' | 'refused';
+/** The union's single source: every consumer reads it, never a literal list. */
+export const RELAY_STATES = ['ok', 'timeout', 'refused'] as const;
+export type RelayState = (typeof RELAY_STATES)[number];
+
+/** `includes` cannot narrow, so the one cast in the union's home is here. */
+export function isRelayState(value: string): value is RelayState {
+	return (RELAY_STATES as readonly string[]).includes(value);
+}
 
 export interface RelayStatus {
 	url: string;
@@ -174,6 +181,16 @@ class TransportTimeoutError extends Error {
 	}
 }
 
+/** Thrown when a closed transport is asked for a relay: close() destroyed the
+ * pool, so re-opening one would leak a connection the caller can never close
+ * through this transport. */
+export class TransportClosedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'TransportClosedError';
+	}
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number, url: string, tag: string): Promise<T> {
 	return new Promise<T>((resolve, reject) => {
 		const timer = setTimeout(() => reject(new TransportTimeoutError(url, tag, ms)), ms);
@@ -218,6 +235,7 @@ class RelayTransport implements Transport {
 	private readonly urls: readonly string[];
 
 	private async ensure(url: string): Promise<RelayLike> {
+		if (this.closed) throw new TransportClosedError('Transport is closed');
 		const cached = this.relays.get(url);
 		if (cached) return cached;
 		const relay = await this.pool.ensureRelay(url, { connectionTimeout: CONNECT_TIMEOUT_MS });
@@ -239,6 +257,7 @@ class RelayTransport implements Transport {
 	}
 
 	capability(url: string): Promise<RelayCapability> {
+		if (this.closed) throw new TransportClosedError('Transport is closed');
 		let cached = this.capabilities.get(url);
 		if (!cached) {
 			cached = this.probeCapability(url);
@@ -417,6 +436,10 @@ class RelayTransport implements Transport {
 	async close(): Promise<void> {
 		if (this.closed) return;
 		this.closed = true;
+		// The pool is destroyed below: drop every cached promise/state so a
+		// late capability() call cannot resurrect a probe against it.
+		this.capabilities.clear();
+		this.capabilityState.clear();
 		// Close each relay we obtained exactly once, then destroy the pool.
 		const relays = [...this.relays.values()];
 		this.relays.clear();

@@ -19,7 +19,7 @@ import { recordFillFailure } from "$lib/fill-note";
 import { streamLLM, surfaced429Count } from "$lib/ai/gateway";
 import type { StreamLLM } from "$lib/ai/records";
 import type { ProviderOverrideInput } from "$lib/ai/provider";
-import { createTransport, type Transport, type RelayState } from "$lib/net/transport";
+import { createTransport, type Transport } from "$lib/net/transport";
 import {
   runSearch,
   skeletonOf,
@@ -29,6 +29,16 @@ import {
   type SearchSession,
   type SkeletonCard,
 } from "$lib/pipeline";
+import {
+  errorOf,
+  fillingOf,
+  initialRun,
+  phaseOf,
+  reduce,
+  runningOf,
+  type RunEvent,
+  type RunSnapshot,
+} from "$lib/run-machine";
 import type { SearchRequest } from "$lib/ai/agents/query";
 import type { NostrEvent } from 'nostr-tools/core';
 import { batchNodeInterpret, BATCH_SIZE, type NodeVM } from "$lib/ai/agents/nodes";
@@ -68,7 +78,11 @@ import {
 import { mergeSettledCards, paintCard } from "$lib/pipeline/card-fill";
 import { settings } from "$lib/settings.svelte";
 import { shell } from "$lib/shell.svelte";
-import { aggregatePerRelay, type RelayReceipt } from "$lib/relay-readout";
+import {
+  aggregatePerRelay,
+  parseRelayReceiptStatus,
+  type RelayReceipt,
+} from "$lib/relay-readout";
 import { lensDebug } from "$lib/dev-log";
 
 /** Interval sleep that resolves early on abort — the lane-stagger's pause
@@ -147,7 +161,17 @@ export interface AnchorFrame {
 }
 
 class Investigation {
-  phase = $state<Phase | "idle">("idle");
+  /** One replace-only machine snapshot (#212): lifecycle + fill ownership.
+   * Getters below are projections, never a second writable copy. */
+  private machine = $state.raw<RunSnapshot>(initialRun());
+  /** Monotonic run owner: a superseded run's late event is a tested no-op. */
+  private runToken = 0;
+  /** Monotonic fill-cycle owner: a stale drain cannot clear a newer lane. */
+  private fillCycle = 0;
+
+  get phase(): Phase | "idle" {
+    return phaseOf(this.machine);
+  }
   /** Per-relay slice receipts, in arrival order — the trace's literal layer. */
   slices = $state<
     {
@@ -171,7 +195,9 @@ class Investigation {
   /** Selected facet values per group (OR within a group, AND across, §3). */
   selections = $state<Record<string, Set<string>>>({});
   /** Write-descriptions progress for the trace's fifth row (§4 partial). */
-  filling = $state(false);
+  get filling(): boolean {
+    return fillingOf(this.machine);
+  }
   /** Cards claimed by a fill lane but not yet merged (issue #59): the
    * interpretation lane's promised-but-unpaid subset — the badge on their
    * raw cards reads `interpreting…` while they sit here. Never AI-written
@@ -239,9 +265,13 @@ class Investigation {
   } | null = null;
   result = $state<SearchSession | null>(null);
   /** Settled failure (never a deliberate abort); the §4 error surfaces
-   * (#38) render from this. */
-  error = $state<string | null>(null);
-  running = $state(false);
+   * (#38) render from this. Painted while the run is still finishing. */
+  get error(): string | null {
+    return errorOf(this.machine);
+  }
+  get running(): boolean {
+    return runningOf(this.machine);
+  }
 
   /** Wall time of the settled run (ms) — the done row's "· 4.2s". */
   elapsedMs = $state<number | null>(null);
@@ -348,17 +378,47 @@ class Investigation {
 
   private controller: AbortController | null = null;
 
+  /** The only machine writer: every lifecycle/fill change is a reduce. */
+  private apply(event: RunEvent): void {
+    this.machine = reduce(this.machine, event);
+  }
+
+  /** Callers gate on `filling` (or a fresh run's begin); the un-gated
+   * `_fillInChunksForTests` seam reuses the owning cycle by design. */
+  private armFill(): number {
+    // Already filling → return the owning cycle, never a number the reducer
+    // would reject (callers drain exactly what they armed).
+    if (this.machine.fill.filling) return this.machine.fill.cycle;
+    const cycle = ++this.fillCycle;
+    this.apply({ type: "fillArm", cycle });
+    return cycle;
+  }
+
+  private drainFill(cycle: number): void {
+    this.apply({ type: "fillDrain", cycle });
+  }
+
+  /** @internal — reset seam: bump the owner so an in-flight run's settle
+   * cannot repaint after the store was reset. */
+  _resetLifecycle(): void {
+    ++this.runToken;
+    // Drop the controller identity too: an in-flight run's finally must bail
+    // instead of re-pinning a row after the store was reset.
+    this.controller = null;
+    this.apply({ type: "reset" });
+  }
+
   /** Monotonic restore token: the LAST restore click wins — a superseded
    * restore must not paint over a newer one (same honesty class as the
    * controller-identity guards, spec §8). Monotonic forever, never reset. */
   private restoreToken = 0;
 
-  private applyEvent(controller: AbortController, event: PipelineEvent): void {
+  private applyEvent(controller: AbortController, owner: number, event: PipelineEvent): void {
     // Only the current run may write — an aborted run's late events die here.
     if (this.controller !== controller) return;
     switch (event.type) {
       case "phase":
-        this.phase = event.phase;
+        this.apply({ type: "advance", owner, stage: event.phase });
         break;
       case "slice":
         this.slices.push({
@@ -385,22 +445,21 @@ class Investigation {
 
   /** Fresh-canvas reset for a brand-new run (issue #31): start() and
    * openShared() both supersede whatever a live run painted — identical
-   * fields, so one reset keeps the two entry points in lockstep. Callers
-   * set their deltas right after (start: the question; openShared: done
-   * phase + the cold-open's failed hints). */
-  private resetRun(): void {
-    this.phase = "idle";
+   * fields, so one reset keeps the entry points in lockstep. Callers set
+   * their deltas right after (start: the question and the pipeline's phase
+   * events; openShared/restore: a settleNow at the done stage). */
+  private resetRun(owner: number): void {
+    // Begin first: a fresh run supersedes the old owner and clears the fill lane.
+    this.apply({ type: "begin", owner });
     this.lastQuestion = "";
     this.slices = [];
     this.searches = [];
     this.skeletons = [];
     this.notices = [];
     this.result = null;
-    this.error = null;
     this.cards = [];
     this.facetGroups = [];
     this.selections = {};
-    this.filling = false;
     this.armed = new Set(); // fresh run — the last cohort's arms mean nothing (#106)
     this.fillCtx = null; // and no scroll cycle may start for it
     this.pending = new Set();
@@ -434,7 +493,6 @@ class Investigation {
     // with it (fresh runs own neither field, issue #83).
     this.restoredEvicted = null;
     this.restoreMissId = null;
-    this.running = true;
   }
 
   /** The fill lane's desire gate (issue #118 review): the early leg, the
@@ -530,6 +588,7 @@ class Investigation {
    * mid-run. */
   async start(question: string, title?: string): Promise<void> {
     this.controller?.abort();
+    const owner = ++this.runToken;
     const controller = new AbortController();
     this.controller = controller;
     // New runs supersede in-flight restores identically (review H2): the
@@ -545,7 +604,7 @@ class Investigation {
     // surface — this invocation must not reset or repaint it (spec §8
     // abort lifecycle, same identity rule as every other write).
     if (this.controller !== controller) return;
-    this.resetRun();
+    this.resetRun(owner);
     this.lastQuestion = question;
     // The run's relay pool, frozen HERE (issue #131): from this point every
     // leg of THIS run reads the snapshot, so a Settings edit re-points the
@@ -585,6 +644,7 @@ class Investigation {
     // Declared in the try scope so the catch below can chain its drain —
     // a settle-path throw must not orphan the early fill cycle.
     let earlyFill: Promise<void> | null = null;
+    let earlyCycle: number | null = null;
     try {
       transport = createTransport({ urls: [...pool] });
       const session = await runSearch({
@@ -594,7 +654,7 @@ class Investigation {
         callLLM,
         transport,
         signal: controller.signal,
-        emit: (event) => this.applyEvent(controller, event),
+        emit: (event) => this.applyEvent(controller, owner, event),
       });
       // The transport never sees the abort signal, so a superseded
       // run RESOLVES instead of throwing — the terminal write takes
@@ -639,7 +699,7 @@ class Investigation {
         // fillInChunks with fresh claimedRanges (double-claim, re-pay,
         // spec §6). On the happy path the join below is the drain.
         if (this.fillDesired(provider)) {
-          this.filling = true;
+          earlyCycle = this.armFill();
           earlyFill = this.fillInChunks(
             provider,
             callLLM,
@@ -691,13 +751,12 @@ class Investigation {
         // Join the early leg BEFORE any top-up runs: two live
         // fillInChunks instances hold PER-CALL claimedRanges and would
         // double-claim the same chunks (re-paying the endpoint, spec §6).
-        // This flip is one synchronous run into the top-up's own
-        // filling = true, so armChunk cannot interleave a cycle in the
-        // gap.
+        // Drain then arm in one synchronous run, so armChunk cannot
+        // interleave a cycle in the gap.
         if (earlyFill !== null) {
           await earlyFill;
           if (this.controller !== controller) return;
-          this.filling = false;
+          if (earlyCycle !== null) this.drainFill(earlyCycle);
         }
         // Top-up leg (issue #118): fills what the early leg could not
         // claim — context arrivals appended past its entry horizon, or
@@ -706,40 +765,43 @@ class Investigation {
         // hasWork, so a covered cohort costs one claim-scan and exits —
         // fillCards' (eventId, model) cache pass re-pays nothing (§6).
         if (this.fillDesired(provider)) {
-          this.filling = true;
+          const topCycle = this.armFill();
           // Prod passes the gateway's streamText lane: the fill paints
           // per-record. Tests injecting only callLLM keep the batch path.
           // Lazy (issue #106): the viewport + prefetch window fills now,
           // the rest when scrolled toward — the results surface arms it.
           await this.fillInChunks(provider, callLLM, controller, streamLLM, true);
-          if (this.controller === controller) this.filling = false;
+          if (this.controller === controller) this.drainFill(topCycle);
         }
       }
     } catch (err) {
       // Deliberate aborts are not errors; real failures settle into the
       // §4 error surface's input instead of an unhandled rejection.
       if (this.controller === controller && !controller.signal.aborted) {
-        this.error = err instanceof Error ? err.message : String(err);
+        this.apply({
+          type: "fail",
+          owner,
+          message: err instanceof Error ? err.message : String(err),
+        });
         // The early fill keeps owning `filling` until it drains (issue
         // #106): flipping it here would let an armChunk start a second
         // fillInChunks with fresh claimedRanges while the early cycle
         // still runs (double-claim, re-pay, spec §6). Chain the drain —
-        // no run guard inside: a superseded run's armChunk gate
-        // (controller identity) already refuses new cycles, and the
-        // flag must land false even then.
-        if (earlyFill !== null) {
+        // cycle-scoped: after a newer begin the stale drain is a no-op,
+        // and the lane must not clear the new run's fill.
+        if (earlyFill !== null && earlyCycle !== null) {
+          const cycle = earlyCycle;
           void earlyFill.finally(() => {
-            this.filling = false;
+            // Cycle-scoped: a newer run's lane keeps its own ownership.
+            this.drainFill(cycle);
           });
-        } else {
-          this.filling = false;
         }
       }
     } finally {
       // One pool per run: close its relay websockets when it settles.
       await transport?.close();
       if (this.controller === controller) {
-        this.running = false;
+        this.apply({ type: "settle", owner });
         this.elapsedMs = Math.round(performance.now() - startedAt);
         // Second pin (issue #83): the done-row timing rides this upsert.
         this.persistRunRecord();
@@ -773,6 +835,7 @@ class Investigation {
     receipts?: RelayReceipt[],
   ): Promise<void> {
     this.controller?.abort();
+    const owner = ++this.runToken;
     const controller = new AbortController();
     this.controller = controller;
     // Same supersession rule as start() (review H2): a cold open also
@@ -793,8 +856,7 @@ class Investigation {
     if (this.controller !== controller) return;
     // Same fresh-canvas reset as start() — a cold open supersedes any
     // live run — plus its deltas: no trace stages, hints carried over.
-    this.resetRun();
-    this.phase = "done";
+    this.resetRun(owner);
     this.shareHints = failedHints;
     this.hasShareHints = hadHints;
 
@@ -892,17 +954,17 @@ class Investigation {
       // (the event route) must hand over to the shell immediately — the
       // card renders rule-5 now and the existing fill lane interprets it in
       // place on the session surface ("uninterpreted first", spec §8).
-      this.filling = true;
+      const cycle = this.armFill();
       // Lazy (issue #106) — a shared root is one card in practice, which
       // is chunk 0: armed at t0, so the cold-open paint is unchanged.
       void this.fillInChunks(provider, defaultCallLLM, controller, streamLLM, true)
         .catch(() => {})
         .finally(() => {
-          if (this.controller === controller) this.filling = false;
+          if (this.controller === controller) this.drainFill(cycle);
         });
     }
     if (this.controller === controller) {
-      this.running = false;
+      this.apply({ type: "settleNow", owner });
       this.elapsedMs = Math.round(performance.now() - startedAt);
     }
   }
@@ -928,6 +990,7 @@ class Investigation {
   async restore(sessionId: string): Promise<boolean> {
     if (this.sessionId === sessionId) return true; // already painted
     const token = ++this.restoreToken; // races: last click wins
+    const owner = ++this.runToken;
     const run = await getSessionRun(sessionId);
     if (this.restoreToken !== token) return false;
     this.restoreMissId = null;
@@ -973,8 +1036,7 @@ class Investigation {
             (p, i) => p ?? assembled[i],
           );
     if (this.restoreToken !== token) return false;
-    this.resetRun(); // ends running=true; set deltas below
-    this.phase = "done";
+    this.resetRun(owner); // begins at the idle stage; settleNow lands done
     this.sessionId = sessionId;
     // Card + selection (issue #142 review): a restored session should not
     // drop the user on a fresh results list. Persisted ids are validated
@@ -1013,15 +1075,13 @@ class Investigation {
     // reconstruction), so persistRunRecord re-pins THESE instead of folding
     // an empty set — otherwise displacing this run would erase the truth its
     // row already carries. A legacy row without the field carries none.
-    this.recordedRelayReceipts = (run.relays?.perRelay ?? []).map(
-      (r): RelayReceipt => ({
-        url: r.url,
-        status: r.status as RelayState,
-        routes: r.routes,
-        received: r.received,
-        rejected: r.rejected,
-      })
-    );
+    // A status the code cannot prove is not a verdict: drop the receipt, keep
+    // the row (absent already means "not recorded", spec §2).
+    this.recordedRelayReceipts = (run.relays?.perRelay ?? []).flatMap((r): RelayReceipt[] => {
+      const status = parseRelayReceiptStatus(r.status);
+      if (status === null) return [];
+      return [{ url: r.url, status, routes: r.routes, received: r.received, rejected: r.rejected }];
+    });
     this.searches = run.searches;
     // Trace honesty (review H3, spec §2 rule 6): the literal layer reports
     // the cache reconstruction in the pipeline's OWN vocabulary — the
@@ -1054,7 +1114,7 @@ class Investigation {
       // "raw" beside them (spec §2 rule 6).
       this.syncFillStats(painted);
     }
-    this.running = false;
+    this.apply({ type: "settleNow", owner });
     // #84's other half (ruling: caused, not derived): a key being present
     // at restore is one of the two refill call sites. Fired ONLY from this
     // post-commit tail, so the lane always sees the complete snapshot and
@@ -1120,7 +1180,7 @@ class Investigation {
         model: settings.model,
         apiKey: settings.apiKey,
       };
-      this.filling = true;
+      const cycle = this.armFill();
       try {
         // Stream seam defaults to the production gateway (progressive
         // per-record paint, same as start()/openShared()); tests pass
@@ -1132,7 +1192,7 @@ class Investigation {
       } catch {
         /* per-chunk degrade lives inside fillInChunks */
       } finally {
-        if (this.controller === controller) this.filling = false;
+        if (this.controller === controller) this.drainFill(cycle);
       }
     }
     // Await the lane's own completion signal: it settles every drained id and
@@ -1145,6 +1205,10 @@ class Investigation {
   stop(): void {
     // Selection survives an abort (ruling 10): stop() freezes the run but
     // keeps what it painted, so the dossier's evidence is still intact.
+    const run = this.machine.run;
+    // Recorded while still running: the settle in finally lands `aborted`,
+    // never `failed` (spec §8 — a deliberate abort is not an error).
+    if (run.status === "running") this.apply({ type: "stop", owner: run.owner });
     this.controller?.abort();
   }
 
@@ -1186,13 +1250,13 @@ class Investigation {
       (this.cards.length > 0 && this.cards.slice(0, 3).some(hasWork)) ||
       this.cards.some((c) => this.armed.has(c.id) && hasWork(c));
     if (claimable) {
-      this.filling = true;
+      const cycle = this.armFill();
       void this.fillInChunks(ctx.provider, ctx.callLLM, this.controller, ctx.stream, true)
         .catch(() => {
           /* per-chunk degrade lives inside fillInChunks */
         })
         .finally(() => {
-          if (this.controller !== null) this.filling = false;
+          if (this.controller !== null) this.drainFill(cycle);
         });
     }
   }
@@ -2240,7 +2304,7 @@ clearFacets(): void {
     const controller = new AbortController();
     this.controller = controller;
     this.cards = cards;
-    this.filling = true;
+    const cycle = this.armFill();
     this.fillStats = { interpreted: 0, total: cards.length };
     this.pending = new Set();
     this.drafts = new Map(); // a fresh seam run owns a fresh drafting voice (#109)
@@ -2252,7 +2316,7 @@ clearFacets(): void {
       opts.lazy ?? false,
       perChunkMs,
     );
-    this.filling = false;
+    this.drainFill(cycle);
   }
 }
 
@@ -2261,18 +2325,16 @@ export const investigation = new Investigation();
 /** Test seam — same shape as resetShell/resetSettings. */
 export function resetInvestigation(): void {
   investigation.stop();
-  investigation.phase = "idle";
+  investigation._resetLifecycle();
   investigation.slices = [];
   investigation.searches = [];
   investigation.skeletons = [];
   investigation.notices = [];
   investigation.result = null;
-  investigation.error = null;
   investigation.elapsedMs = null;
   investigation.cards = [];
   investigation.facetGroups = [];
   investigation.selections = {};
-  investigation.filling = false;
   investigation.resetArming();
   investigation.pending = new Set();
   investigation.failed = new Set();
@@ -2298,7 +2360,6 @@ export function resetInvestigation(): void {
   investigation.shareHints = [];
   investigation.recordedRelayReceipts = [];
   investigation._resetNodeFill();
-  investigation.running = false;
 }
 
 // The fill-lane verdicts live in $lib/fill-note (pure, store-free).

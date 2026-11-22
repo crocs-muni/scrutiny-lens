@@ -132,6 +132,37 @@ export interface SceneResult {
 	a11yError?: string | null;
 }
 
+/** The capture facts that fail both `shots` and `a11y`: never settled, threw,
+ * logged an unexpected page error, or lost expected text. `score.ts --gate`
+ * adds console errors and failed requests; those stay informational here
+ * because a 429 scene logs one on purpose. */
+export function captureFailed(result: SceneResult): boolean {
+	return (
+		!result.stable ||
+		result.error !== null ||
+		result.pageErrors.length > 0 ||
+		result.missingText.length > 0
+	);
+}
+
+/** One verdict per (rule, node): the pre-pass audits the live stage that
+ * `a11yPrep` strips, and page-level rules can fire in both passes. */
+function mergeViolations(...runs: A11yViolation[][]): A11yViolation[] {
+	const byRuleNode = new Map<string, A11yViolation>();
+	for (const rule of runs.flat()) {
+		for (const node of rule.nodes) {
+			const key = `${rule.id}:${node.target.join(' ')}`;
+			const existing = byRuleNode.get(key);
+			if (existing) {
+				existing.nodes.push(node);
+				continue;
+			}
+			byRuleNode.set(key, { ...rule, nodes: [node] });
+		}
+	}
+	return [...byRuleNode.values()];
+}
+
 // Chromium logs this for any ResizeObserver whose callback resizes its own
 // target; the app's stage and label measuring trip it, and it is not a defect.
 const BENIGN_CONSOLE = [/ResizeObserver loop/];
@@ -359,10 +390,24 @@ export async function captureScenes(
 							await page.evaluate(() => {
 								document.body.style.backgroundImage = 'none';
 							});
+							// Audit the live graph stage BEFORE a11yPrep strips it:
+							// `.node-hit` is the focusable control #208 added, and
+							// the recorded pass below removes it. Contrast stays off
+							// here (overlapped cards are axe's false positive);
+							// mergeViolations dedupes rules that fire in both passes.
+							let liveStage: A11yViolation[] = [];
+							if ((await page.locator('.stage').count()) > 0) {
+								const pre = await new AxeBuilder({ page })
+									.include('.stage')
+									.options({ rules: { 'color-contrast': { enabled: false } } })
+									.withTags(A11Y_TAGS)
+									.analyze();
+								liveStage = compactViolations(pre.violations);
+							}
 							await scene.a11yPrep?.({ page, url: server.url, relays, ai: stub.control });
 							await settleAnimations(page);
 							const analysis = await new AxeBuilder({ page }).withTags(A11Y_TAGS).analyze();
-							a11yViolations = compactViolations(analysis.violations);
+							a11yViolations = mergeViolations(liveStage, compactViolations(analysis.violations));
 							a11yIncomplete = compactViolations(analysis.incomplete);
 							a11yError = null;
 						} catch (caught) {
