@@ -1,10 +1,6 @@
 // Dossier drawer scenes (spec §9 DetailDrawer, §2 rule 2 chain states):
 // the resolved chain's history, the halted and forked content banners, and a
 // retracted subject rendered in full.
-//
-// NOT INCLUDED: the aborted chain state. The resolver aborts only when a
-// patch exceeds its hunk ceiling (DEFAULT_MAX_HUNKS); a one-hunk patch would
-// fake the state, so the fixture is left to a dedicated task.
 
 import type { Scene } from '../capture.ts';
 import { loadFixture } from '../fixtures.ts';
