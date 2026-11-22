@@ -11,6 +11,7 @@ import Harness from './SettingsDialogHarness.svelte';
 import { clearAllLocalData, initPersistence, _closeForTests } from '$lib/db';
 import { resetSettings } from '$lib/settings.svelte';
 import { trust } from '$lib/trust-store.svelte';
+import { publisherNpub } from '$lib/publisher';
 
 let teardown: (() => void) | null = null;
 let target: HTMLElement | null = null;
@@ -48,8 +49,6 @@ function mountDialog(): void {
 const rows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[data-trust-row]')];
 const rowFor = (pubkey: string): HTMLElement | null =>
 	document.querySelector<HTMLElement>(`[data-trust-row][data-pubkey="${pubkey}"]`);
-const countLine = (): string =>
-	(document.querySelector('[data-trust-count]')?.textContent ?? '').replace(/\s+/g, ' ').trim();
 const errorText = (): string | null =>
 	document.querySelector('[data-trust-error]')?.textContent?.trim() ?? null;
 const noteText = (): string | null =>
@@ -88,8 +87,7 @@ describe('settings trusted publishers (spec §2 admission, ADR 0004)', () => {
 		const list = document.querySelector('[data-trust-list]');
 		expect(list?.className).toContain('max-h-[200px]');
 		expect(list?.className).toContain('overflow-y-auto');
-		expect(countLine()).toContain('0 trusted');
-		expect(countLine()).toContain(`${trust.overrides.removed.length} removed`);
+		expect(list?.textContent).toContain('No publishers trusted.');
 	});
 
 	it('renders a scrollable list of 30 rows', async () => {
@@ -98,8 +96,6 @@ describe('settings trusted publishers (spec §2 admission, ADR 0004)', () => {
 		mountDialog();
 
 		await vi.waitFor(() => expect(rows()).toHaveLength(30));
-		expect(countLine()).toContain('30 trusted');
-		expect(countLine()).toContain(`+${trust.overrides.added.length} you`);
 	});
 
 	it('adds a publisher through the field and clears it', async () => {
@@ -113,7 +109,7 @@ describe('settings trusted publishers (spec §2 admission, ADR 0004)', () => {
 		await vi.waitFor(() => expect(rowFor(key)).not.toBeNull());
 		expect(keyInput().value).toBe('');
 		expect(errorText()).toBeNull();
-		expect(rowFor(key)?.textContent).toContain('you');
+		expect(rowFor(key)?.textContent).toContain(publisherNpub(key));
 	});
 
 	it('shows the store message for an invalid key and adds nothing', async () => {
