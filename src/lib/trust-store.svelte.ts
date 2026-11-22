@@ -72,6 +72,39 @@ export class TrustStore {
 		return this.publishers.some((publisher) => publisher.pubkey === key);
 	}
 
+	/** Atomic commit for the list editor: validate every entry first, then
+	 * derive the overrides against the reviewed base. A bad key mutates
+	 * nothing, so the committed list stays the last good one. */
+	async setTrusted(
+		inputs: readonly string[]
+	): Promise<{ ok: true } | { ok: false; message: string }> {
+		const keys: string[] = [];
+		for (const input of inputs) {
+			const value = input.trim();
+			if (value === '') continue;
+			const parsed = parsePubkeyInput(value);
+			if (!parsed.ok) return { ok: false, message: describePubkeyIssue(parsed.issue) };
+			keys.push(parsed.pubkey);
+		}
+		const unique = [...new Set(keys)];
+		const wanted = new Set(unique);
+		const base = BUNDLED_TRUSTED.publishers.map((publisher) => publisher.pubkey);
+		const nextAdded = unique.filter((key) => !base.includes(key));
+		const nextRemoved = base.filter((key) => !wanted.has(key));
+		const sameSet = (a: readonly string[], b: readonly string[]): boolean =>
+			a.length === b.length && a.every((key) => b.includes(key));
+		if (
+			sameSet(nextAdded, this.overrides.added) &&
+			sameSet(nextRemoved, this.overrides.removed)
+		) {
+			return { ok: true };
+		}
+		this.overrides = { added: nextAdded, removed: nextRemoved };
+		this.version++;
+		await this.#enqueue();
+		return { ok: true };
+	}
+
 	/** The branded predicate fabric's computeAdmission consumes. */
 	get provider(): TrustProvider {
 		return createTrustProvider((pubkey) => this.isTrusted(pubkey), this.version);

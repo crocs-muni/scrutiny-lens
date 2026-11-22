@@ -255,10 +255,12 @@
 
 	// ── Trusted publishers (spec §2 admission, ADR 0004) ─────────────────────
 
-	// The store is the validator (parsePubkeyInput, duplicate check), so the
-	// field never guesses what a key means; Enter and blur both commit, like
-	// the relay editor.
-	let publisherDraft = $state('');
+	// Same editor contract as the relay pool: the rows ARE the draft list, Add
+	// appends a blank row, Enter/blur commits the whole list, Delete splices a
+	// row and commits. The store validates the atomic list and derives the
+	// local additions/removals against the reviewed base.
+	let trustDrafts = $state<string[]>([]);
+	let trustDirty = $state(false);
 	let trustError = $state('');
 	/** Save truth for the trust list: same never-lie mapping as the pool. */
 	const trustNote = $derived(persistNote(trust.persistState));
@@ -270,6 +272,18 @@
 		// The dialog can mount before the boot barrier resolves; ready() is the
 		// one-shot hydrate and must not leave the persisted list unseen.
 		void trust.ready();
+	});
+	$effect(() => {
+		const committed = trust.publishers.map((publisher) => publisherNpub(publisher.pubkey));
+		if (trustDirty) return;
+		const current = untrack(() => trustDrafts);
+		if (
+			current.length === committed.length &&
+			current.every((value, index) => value === committed[index])
+		) {
+			return;
+		}
+		trustDrafts = committed;
 	});
 
 	/** Kind-0 names fetched on row hover. The npub is always visible and a
@@ -289,32 +303,34 @@
 		}
 	}
 
-	/** Empty input is the pristine state of an untouched field, not an error;
-	 * an erased bad draft also drops its stale message. */
-	function commitPublisher(): void {
-		const input = publisherDraft.trim();
-		if (input === '') {
-			trustError = '';
+	async function commitTrust(): Promise<void> {
+		// Blank rows are "not entered yet", never a payload (same as relays).
+		const drafts = trustDrafts.map((value) => value.trim()).filter((value) => value !== '');
+		const result = await trust.setTrusted(drafts);
+		if (!result.ok) {
+			// Keep the user's text and the error naming it; the committed list
+			// is untouched.
+			trustError = result.message;
 			return;
 		}
-		const result = trust.add(input);
-		if (result.ok) {
-			publisherDraft = '';
-			trustError = '';
-		} else {
-			trustError = result.message;
-		}
+		trustError = '';
+		// Committed truth, canonical npub spelling: a pasted hex/nprofile
+		// becomes its npub.
+		trustDrafts = trust.publishers.map((publisher) => publisherNpub(publisher.pubkey));
+		trustDirty = false;
 	}
 
-	function removePublisher(pubkey: string): void {
-		trustError = '';
-		void trust.remove(pubkey);
+	function removeTrust(index: number): void {
+		trustDrafts.splice(index, 1);
+		void commitTrust();
 	}
 
 	function resetPublishers(): void {
 		trustError = '';
-		publisherDraft = '';
-		void trust.reset();
+		void trust.reset().then(() => {
+			trustDrafts = trust.publishers.map((publisher) => publisherNpub(publisher.pubkey));
+			trustDirty = false;
+		});
 	}
 
 	// ── Data (spec §6: one Clear-all action) ─────────────────────────────────
@@ -545,32 +561,37 @@
 		<section class="mb-4">
 			<h3 class="mb-2 text-[12px] font-semibold tracking-wide text-ink-3 uppercase">Trusted publishers</h3>
 			<div class="flex max-h-[200px] flex-col gap-1.5 overflow-y-auto" data-trust-list>
-				{#each trust.publishers as publisher (publisher.pubkey)}
-					{@const npub = publisherNpub(publisher.pubkey)}
-					<!-- Same row shape as the relay editor: a field-like cell plus a
-						remove action. The npub is always visible; the kind-0 name
-						loads on hover, so a cold profile never blocks the list. -->
+				{#each trustDrafts as draft, index (index)}
+					{@const committed = trust.publishers[index]}
+					{@const committedNpub = committed ? publisherNpub(committed.pubkey) : ''}
 					<div
 						class="flex items-start gap-1"
 						role="group"
 						data-trust-row
-						data-pubkey={publisher.pubkey}
-						onmouseenter={() => void loadNickname(publisher.pubkey)}
+						data-pubkey={committed?.pubkey ?? ''}
+						onmouseenter={() => committed && void loadNickname(committed.pubkey)}
 					>
-						<div class="min-w-0 flex-1 rounded-control bg-field px-2 py-1.5 shadow-hairline">
-							<span class="block truncate font-sans text-[12.5px] text-ink">
-								{nicknames[publisher.pubkey] ?? publisher.label}
-							</span>
-							<span
-								class="mt-0.5 block select-all break-all font-mono text-[10.5px] leading-[1.4] text-ink-3"
-							>
-								{npub}
-							</span>
+						<div class="min-w-0 flex-1">
+							<input
+								bind:value={trustDrafts[index]}
+								oninput={() => (trustDirty = true)}
+								onblur={() => void commitTrust()}
+								onkeydown={(event) => event.key === 'Enter' && void commitTrust()}
+								placeholder="npub, nprofile, or 64-char hex"
+								aria-label="Publisher key"
+								spellcheck="false"
+								class="min-w-0 w-full rounded-control bg-field px-2 py-1.5 font-mono text-[12.5px] text-ink shadow-hairline outline-none transition-shadow duration-150 placeholder:text-ink-3 focus:shadow-card"
+							/>
+							{#if committed && draft === committedNpub && nicknames[committed.pubkey]}
+								<span class="mt-0.5 block truncate font-sans text-[11px] text-ink-3">
+									{nicknames[committed.pubkey]}
+								</span>
+							{/if}
 						</div>
 						<KeyHint
 							label="Remove publisher"
 							side="left"
-							onclick={() => removePublisher(publisher.pubkey)}
+							onclick={() => removeTrust(index)}
 							class="primitive-icon-button mt-1 shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-red"
 						>
 							<IconTrash size={14} stroke-width={2} />
@@ -580,24 +601,16 @@
 					<p class="py-1 text-[11.5px] text-ink-3">No publishers trusted.</p>
 				{/each}
 			</div>
-			<div class="mt-1.5 flex items-center gap-1">
-				<input
-					bind:value={publisherDraft}
-					onblur={commitPublisher}
-					onkeydown={(event) => event.key === 'Enter' && commitPublisher()}
-					placeholder="npub, nprofile, or 64-char hex"
-					aria-label="Publisher key"
-					spellcheck="false"
-					class="min-w-0 flex-1 rounded-control bg-field px-2 py-1.5 font-mono text-[12.5px] text-ink shadow-hairline outline-none transition-shadow duration-150 placeholder:text-ink-3 focus:shadow-card"
-				/>
-				<button
-					type="button"
-					onclick={commitPublisher}
-					class="shrink-0 text-[12.5px] text-ink-2 transition-colors duration-150 hover:text-ink"
-				>
-					Add
-				</button>
-			</div>
+			<button
+				type="button"
+				onclick={() => {
+					trustDrafts.push('');
+					trustDirty = true;
+				}}
+				class="mt-1.5 flex items-center gap-1 text-[12.5px] text-ink-2 transition-colors duration-150 hover:text-ink"
+			>
+				<IconPlus size={13} stroke-width={2} /> Add publisher
+			</button>
 			{#if trustError}
 				<p class="mt-1.5 text-[11.5px] text-red" data-trust-error>{trustError}</p>
 			{/if}

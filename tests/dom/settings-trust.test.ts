@@ -59,9 +59,22 @@ const resetButton = (): HTMLButtonElement | null =>
 	) ?? null;
 
 function keyInput(): HTMLInputElement {
-	const input = document.querySelector<HTMLInputElement>('input[aria-label="Publisher key"]');
-	if (input === null) throw new Error('publisher key input not found');
+	const inputs = document.querySelectorAll<HTMLInputElement>('[data-trust-row] input');
+	const input = inputs[inputs.length - 1];
+	if (input === undefined) throw new Error('publisher key input not found');
 	return input;
+}
+
+async function addPublisherRow(): Promise<void> {
+	// Let the hydrate rebase land before appending; the new row is a dirty
+	// edit, so the same effect cannot erase it.
+	await vi.waitFor(() => expect(rows().length).toBeGreaterThan(0));
+	const button = [...document.querySelectorAll('button')].find(
+		(candidate) => candidate.textContent?.trim() === 'Add publisher'
+	);
+	if (button === undefined) throw new Error('add publisher button not found');
+	button.click();
+	await vi.waitFor(() => expect(rows()[rows().length - 1]?.querySelector('input')).toBeTruthy());
 }
 
 function typeKey(value: string): void {
@@ -98,18 +111,18 @@ describe('settings trusted publishers (spec §2 admission, ADR 0004)', () => {
 		await vi.waitFor(() => expect(rows()).toHaveLength(30));
 	});
 
-	it('adds a publisher through the field and clears it', async () => {
+	it('adds a publisher through a new row and commits it', async () => {
 		mountDialog();
 		expect(resetButton()).toBeNull();
 		const key = hexKey(0xabc);
+		await addPublisherRow();
 		typeKey(key);
 		pressEnter();
 
 		await vi.waitFor(() => expect(trust.isTrusted(key)).toBe(true));
 		await vi.waitFor(() => expect(rowFor(key)).not.toBeNull());
-		expect(keyInput().value).toBe('');
+		await vi.waitFor(() => expect(keyInput().value).toBe(publisherNpub(key)));
 		expect(errorText()).toBeNull();
-		expect(rowFor(key)?.textContent).toContain(publisherNpub(key));
 	});
 
 	it('shows the store message for an invalid key and adds nothing', async () => {
@@ -117,6 +130,7 @@ describe('settings trusted publishers (spec §2 admission, ADR 0004)', () => {
 		if (returned.ok) throw new Error('expected the store to reject the input');
 		const before = trust.publishers.length;
 		mountDialog();
+		await addPublisherRow();
 		typeKey('definitely not a key');
 		pressEnter();
 
@@ -124,15 +138,17 @@ describe('settings trusted publishers (spec §2 admission, ADR 0004)', () => {
 		expect(trust.publishers).toHaveLength(before);
 	});
 
-	it('shows the store message for a duplicate instead of adding it twice', async () => {
-		const key = hexKey(0xdef);
-		await trust.add(key);
+	it('dedupes a duplicate on commit instead of adding a second row', async () => {
+		const key = trust.publishers[0]!.pubkey;
 		mountDialog();
-		typeKey(key);
+		await addPublisherRow();
+		typeKey(publisherNpub(key));
 		pressEnter();
 
-		await vi.waitFor(() => expect(errorText()).toBe('Already on your list.'));
-		expect(trust.publishers.filter((publisher) => publisher.pubkey === key)).toHaveLength(1);
+		await vi.waitFor(() => expect(errorText()).toBeNull());
+		await vi.waitFor(() =>
+			expect(rows().filter((row) => row.dataset.pubkey === key)).toHaveLength(1)
+		);
 	});
 
 	it('removes a publisher from its row', async () => {
@@ -171,6 +187,7 @@ describe('settings trusted publishers (spec §2 admission, ADR 0004)', () => {
 		mountDialog();
 		expect(noteText()).toBeNull();
 
+		await addPublisherRow();
 		typeKey(hexKey(0x789));
 		pressEnter();
 		await vi.waitFor(() => expect(trust.persistState).toBe('saved'));
