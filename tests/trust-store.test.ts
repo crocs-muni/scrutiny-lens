@@ -88,6 +88,29 @@ describe('trust store (spec §2 admission, ADR 0004)', () => {
 		);
 	});
 
+	it('commits a whole list atomically and derives the overrides', async () => {
+		const keep = BUNDLED_TRUSTED.publishers[0]!.pubkey;
+		const result = await trust.setTrusted([keep, KEY_A]);
+		expect(result).toEqual({ ok: true });
+		expect(trust.publishers.map((publisher) => publisher.pubkey)).toEqual([keep, KEY_A]);
+		expect(trust.overrides.added).toEqual([KEY_A]);
+		expect(trust.overrides.removed).toEqual(
+			BUNDLED_TRUSTED.publishers.slice(1).map((publisher) => publisher.pubkey)
+		);
+	});
+
+	it('rejects an invalid whole list without mutating', async () => {
+		const before = { added: [...trust.overrides.added], removed: [...trust.overrides.removed] };
+		const result = await trust.setTrusted([KEY_A, 'not-a-key']);
+		expect(result.ok).toBe(false);
+		expect(trust.overrides).toEqual(before);
+	});
+
+	it('clears the whole list', async () => {
+		expect(await trust.setTrusted([])).toEqual({ ok: true });
+		expect(trust.publishers).toEqual([]);
+	});
+
 	it('exposes a branded fabric provider over the effective set', () => {
 		const provider = trust.provider;
 		expect(provider[trustSymbol]).toBe(true);
