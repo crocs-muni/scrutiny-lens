@@ -19,7 +19,7 @@ import { recordFillFailure } from "$lib/fill-note";
 import { streamLLM, surfaced429Count } from "$lib/ai/gateway";
 import type { StreamLLM } from "$lib/ai/records";
 import type { ProviderOverrideInput } from "$lib/ai/provider";
-import { createTransport, type Transport, type RelayState } from "$lib/net/transport";
+import { createTransport, type Transport } from "$lib/net/transport";
 import {
   runSearch,
   skeletonOf,
@@ -68,7 +68,11 @@ import {
 import { mergeSettledCards, paintCard } from "$lib/pipeline/card-fill";
 import { settings } from "$lib/settings.svelte";
 import { shell } from "$lib/shell.svelte";
-import { aggregatePerRelay, type RelayReceipt } from "$lib/relay-readout";
+import {
+  aggregatePerRelay,
+  parseRelayReceiptStatus,
+  type RelayReceipt,
+} from "$lib/relay-readout";
 import { lensDebug } from "$lib/dev-log";
 
 /** Interval sleep that resolves early on abort — the lane-stagger's pause
@@ -1013,15 +1017,13 @@ class Investigation {
     // reconstruction), so persistRunRecord re-pins THESE instead of folding
     // an empty set — otherwise displacing this run would erase the truth its
     // row already carries. A legacy row without the field carries none.
-    this.recordedRelayReceipts = (run.relays?.perRelay ?? []).map(
-      (r): RelayReceipt => ({
-        url: r.url,
-        status: r.status as RelayState,
-        routes: r.routes,
-        received: r.received,
-        rejected: r.rejected,
-      })
-    );
+    // A status the code cannot prove is not a verdict: drop the receipt, keep
+    // the row (absent already means "not recorded", spec §2).
+    this.recordedRelayReceipts = (run.relays?.perRelay ?? []).flatMap((r): RelayReceipt[] => {
+      const status = parseRelayReceiptStatus(r.status);
+      if (status === null) return [];
+      return [{ url: r.url, status, routes: r.routes, received: r.received, rejected: r.rejected }];
+    });
     this.searches = run.searches;
     // Trace honesty (review H3, spec §2 rule 6): the literal layer reports
     // the cache reconstruction in the pipeline's OWN vocabulary — the

@@ -280,6 +280,26 @@ describe('restore — the relay pool comes from the record (issue #131)', () => 
 		expect(investigation.runRelays).toEqual(['wss://persisted.test']);
 	});
 
+	it('drops a receipt whose persisted status is not in the receipt domain', async () => {
+		await cacheEvent(product('a1'));
+		await pinRun('s1', ['a1'], 4_200, {
+			pool: ['wss://persisted.test'],
+			perRelay: [
+				{ url: 'wss://drift.test', status: 'error', received: 3 },
+				{ url: 'wss://persisted.test', status: 'ok', received: 1 }
+			]
+		});
+
+		expect(await investigation.restore('s1')).toBe(true);
+
+		// A status the code cannot prove is not a verdict (spec §2): the row
+		// still names the pool, but only the honest receipt is painted.
+		expect(investigation.runRelays).toEqual(['wss://persisted.test']);
+		expect(investigation.recordedRelayReceipts.map((r) => r.url)).toEqual([
+			'wss://persisted.test'
+		]);
+	});
+
 	it('a legacy row without the field restores as "not recorded", never as live relays', async () => {
 		await cacheEvent(product('a1'));
 		await pinRun('s1', ['a1']); // no relays block — the pre-#131 row shape
