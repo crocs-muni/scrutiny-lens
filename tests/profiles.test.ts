@@ -130,6 +130,37 @@ describe('pool-scoped profile lookup (issue #131 WP7)', () => {
 		expect(fake.queries).toHaveLength(2);
 	});
 
+	it('refresh bypasses the stored snapshot and replaces the name', async () => {
+		settings.relays = [...POOL_A];
+		fake.respond = () => [kind0({ name: 'Alice', picture: 'https://img/x.png' })];
+		expect(await getProfile(PUBKEY)).toEqual({
+			name: 'Alice',
+			picture: 'https://img/x.png'
+		});
+
+		// A reload keeps the device row but loses the tab memo.
+		resetProfiles();
+		fake.respond = () => [kind0({ name: 'Bob', picture: 'https://img/y.png' })];
+		expect(await getProfile(PUBKEY)).toEqual({
+			name: 'Alice',
+			picture: 'https://img/x.png'
+		});
+		expect(fake.queries).toHaveLength(1);
+
+		expect(await getProfile(PUBKEY, { refresh: true })).toEqual({
+			name: 'Bob',
+			picture: 'https://img/y.png'
+		});
+		expect(fake.queries).toHaveLength(2);
+
+		// The refresh updated the memo, so the normal path answers the new name.
+		expect(await getProfile(PUBKEY)).toEqual({
+			name: 'Bob',
+			picture: 'https://img/y.png'
+		});
+		expect(fake.queries).toHaveLength(2);
+	});
+
 	it('answers undefined for an empty pool and asks nothing', async () => {
 		settings.relays = [];
 
@@ -254,7 +285,10 @@ describe('cache-restored cards keep their publisher identity (issue #135)', () =
 		];
 		// One query each for the two strangers — the bound the acceptance line
 		// names — and the stored author comes back without touching a relay.
-		const results = await Promise.all([getProfile(PUBKEY), ...unknown.map(getProfile)]);
+		const results = await Promise.all([
+			getProfile(PUBKEY),
+			...unknown.map((pubkey) => getProfile(pubkey))
+		]);
 		expect(results[0]).toEqual(ALICE);
 		expect(results.slice(1)).toEqual([null, null]);
 		expect(fake.queries).toHaveLength(2);
