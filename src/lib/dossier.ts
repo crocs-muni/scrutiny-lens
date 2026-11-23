@@ -38,7 +38,8 @@ import {
 	type CoreNostrEvent,
 	type NostrEvent,
 	type OverlayState,
-	type Resolution
+	type Resolution,
+	type TrustProvider
 } from '$lib/fabric';
 import { deriveFallbackTitle, type ProductCard } from '$lib/pipeline/cards';
 import { subjectTitleOf, type NodeTile } from '$lib/graph/subject-graph';
@@ -411,14 +412,14 @@ function admittedViaOf(
 	coreEvents: CoreNostrEvent[],
 	cards: ProductCard[],
 	tiles: ReadonlyMap<string, NodeTile>,
-	isTrusted: ((pubkey: string) => boolean) | undefined
+	trust: Pick<TrustProvider, 'isTrusted'> | undefined
 ): AdmittedVia | null {
 	// No provider means the default (unfiltered) admission view — nothing was
 	// "reached through" a binding. A directly trusted record is the same case.
-	if (isTrusted === undefined || isTrusted(subject.pubkey)) return null;
+	if (trust === undefined || trust.isTrusted(subject.pubkey)) return null;
 	for (const event of coreEvents) {
 		if (scrutinyEventType(event) !== 'binding') continue;
-		if (!isTrusted(event.pubkey)) continue;
+		if (!trust.isTrusted(event.pubkey)) continue;
 		const endpoints = bindingEndpoints(event);
 		if (endpoints === undefined) continue;
 		if (endpoints.rootId !== subjectId && endpoints.linkId !== subjectId) continue;
@@ -435,14 +436,16 @@ function admittedViaOf(
 
 /** The drawer's data contract. `events` is the session's admitted set (the
  * store, never the facet-filtered view — ADR 0001); `cards` is the
- * interpretations cache's materialized face. Returns null when the subject
- * is not in the admitted set at all. */
+ * interpretations cache's materialized face. `trust` is the admission oracle
+ * object (never a detached method); callers only derive subjects that
+ * survived the trusted view. Returns null when the subject is not in the
+ * admitted set at all. */
 export function deriveDossier(
 	subjectId: string,
 	events: NostrEvent[],
 	cards: ProductCard[],
 	tiles: ReadonlyMap<string, NodeTile> = new Map(),
-	isTrusted?: (pubkey: string) => boolean
+	trust?: Pick<TrustProvider, 'isTrusted'>
 ): Dossier | null {
 	const subject = events.find((e) => e.id === subjectId);
 	if (subject === undefined) return null;
@@ -477,7 +480,7 @@ export function deriveDossier(
 		coreEvents,
 		cards,
 		tiles,
-		isTrusted
+		trust
 	);
 
 	return {
