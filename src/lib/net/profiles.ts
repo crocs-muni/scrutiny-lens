@@ -105,7 +105,10 @@ export function profileClaim(lookup: ProfileLookup): ProfileClaim {
  * pre-hydration default relays and cache that answer under relays the user
  * never chose (issue #131 WP7). ready() is single-flight and free after boot.
  */
-export async function getProfile(pubkey: string): Promise<ProfileLookup> {
+export async function getProfile(
+	pubkey: string,
+	options: { refresh?: boolean } = {}
+): Promise<ProfileLookup> {
 	// Settings read at call time so this seam follows the live relay pool.
 	// Dynamic import REQUIRED (ts-no-dynamic-import exception): this net seam
 	// must not make the presentational chip pull the settings singleton as a
@@ -115,7 +118,11 @@ export async function getProfile(pubkey: string): Promise<ProfileLookup> {
 	await settings.ready();
 	// Snapshot the hydrated pool: the key and the query must name the same
 	// relays even if the user edits the list mid-flight.
-	return queryProfile(pubkey, [...settings.relays]);
+	const pool = [...settings.relays];
+	// A refresh is an explicit "look again" gesture (trust editor click or a
+	// relay-pool edit): bypass the memo, the 24h current-row gate, and the
+	// short miss window. Normal callers keep the local-first path.
+	return options.refresh === true ? refreshProfile(pubkey, pool) : queryProfile(pubkey, pool);
 }
 
 /**
@@ -163,33 +170,68 @@ async function queryProfile(pubkey: string, pool: readonly string[]): Promise<Pr
 	const pending = inflight.get(key);
 	if (pending) return pending;
 
-	const fetch = (async () => {
-		await acquire();
-		try {
-			const profile = await fetchProfile(pubkey, pool);
-			if (profile === null) {
-				misses.set(key, Date.now());
-				// A relay that has forgotten the author does not erase what this
-				// device saw: paint the stale snapshot, still ask again later.
-				if (storedProfile !== null) {
-					cache.set(key, storedProfile);
-					return storedProfile;
-				}
-			} else {
-				cache.set(key, profile);
-				misses.delete(key);
-				// Fire-and-forget, like every write-through in this app: the
-				// chip paints from `profile` either way, and a lost row only
-				// costs one relay query on the next load (spec §6 degrade).
-				void saveProfile({ pubkey, ...profile, at: Date.now() });
-			}
-			return profile;
-		} finally {
-			release();
-		}
-	})().finally(() => inflight.delete(key));
+	const fetch = fetchAndStore(pubkey, pool, key, storedProfile).finally(() => inflight.delete(key));
 	inflight.set(key, fetch);
 	return fetch;
+}
+
+/**
+ * Force one relay read, bypassing the pool memo, the device snapshot's
+ * "current" gate, and the short miss window. The trust editor calls this when
+ * the user clicks a key or edits the relay pool: both are explicit "look
+ * again" gestures, and a renamed author must replace the stale name. A failed
+ * read still paints the last known snapshot — never a blank identity, and
+ * never a "missing" claim caused by a dead relay.
+ */
+async function refreshProfile(pubkey: string, pool: readonly string[]): Promise<ProfileLookup> {
+	if (pool.length === 0) return Promise.resolve(undefined);
+	const key = lookupKey(pool, pubkey);
+	const pending = inflight.get(key);
+	if (pending) return pending;
+
+	// The stored row is a fallback, not a gate.
+	const stored = await loadProfile(pubkey);
+	const fallback: PublisherProfile | null =
+		stored !== null && (stored.name !== null || stored.picture !== null)
+			? { name: stored.name, picture: stored.picture }
+			: null;
+
+	const fetch = fetchAndStore(pubkey, pool, key, fallback).finally(() => inflight.delete(key));
+	inflight.set(key, fetch);
+	return fetch;
+}
+
+/** One shared relay read: cache the hit, record the miss, save the device row.
+ * `fallback` is the last known identity a failed read may paint. */
+async function fetchAndStore(
+	pubkey: string,
+	pool: readonly string[],
+	key: string,
+	fallback: PublisherProfile | null
+): Promise<ProfileLookup> {
+	await acquire();
+	try {
+		const profile = await fetchProfile(pubkey, pool);
+		if (profile === null) {
+			misses.set(key, Date.now());
+			// A relay that has forgotten the author does not erase what this
+			// device saw: paint the stale snapshot, still ask again later.
+			if (fallback !== null) {
+				cache.set(key, fallback);
+				return fallback;
+			}
+			return null;
+		}
+		cache.set(key, profile);
+		misses.delete(key);
+		// Fire-and-forget, like every write-through in this app: the chip
+		// paints from `profile` either way, and a lost row only costs one
+		// relay query on the next load (spec §6 degrade).
+		void saveProfile({ pubkey, ...profile, at: Date.now() });
+		return profile;
+	} finally {
+		release();
+	}
 }
 
 /**

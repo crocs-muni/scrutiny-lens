@@ -286,22 +286,75 @@
 		trustDrafts = committed;
 	});
 
-	/** Kind-0 names fetched on row hover. The npub is always visible and a
-	 * bundled row carries its curated label, so this is an enhancement, never
-	 * a blocking fetch (a 30-row list must not open 30 relay queries). */
-	let nicknames = $state<Record<string, string>>({});
-	const nicknamePending = new Set<string>();
-	async function loadNickname(pubkey: string): Promise<void> {
-		if (nicknames[pubkey] !== undefined || nicknamePending.has(pubkey)) return;
-		nicknamePending.add(pubkey);
+	/** Kind-0 identity per committed publisher. The name line above the input
+	 * is the primary display; `pending` only before the first answer, so a
+	 * refresh never repaints a known name with a skeleton. */
+	type NameState =
+		| { state: 'pending' }
+		| { state: 'found'; name: string }
+		| { state: 'missing' }
+		| { state: 'unasked' };
+	let names = $state<Record<string, NameState>>({});
+	const namePending = new Set<string>();
+
+	async function loadName(pubkey: string, refresh: boolean): Promise<void> {
+		const current = names[pubkey];
+		// A normal open/add read is local-first; an explicit click or relay
+		// change forces the relay read. A pending name already covers both.
+		if (!refresh && current !== undefined && current.state !== 'unasked') return;
+		if (namePending.has(pubkey)) return;
+		namePending.add(pubkey);
+		if (current === undefined) names = { ...names, [pubkey]: { state: 'pending' } };
 		try {
-			const profile = await getProfile(pubkey);
+			const profile = await getProfile(pubkey, { refresh });
 			const name = profile?.name?.trim();
-			if (name) nicknames = { ...nicknames, [pubkey]: name };
+			const next: NameState = name
+				? { state: 'found', name }
+				: profile === null
+					? { state: 'missing' }
+					: { state: 'unasked' };
+			const previous = names[pubkey];
+			if (
+				previous !== undefined &&
+				previous.state === next.state &&
+				(previous.state !== 'found' || (next.state === 'found' && previous.name === next.name))
+			) {
+				return;
+			}
+			names = { ...names, [pubkey]: next };
 		} finally {
-			nicknamePending.delete(pubkey);
+			namePending.delete(pubkey);
 		}
 	}
+
+	/** What the line above the input says: the kind-0 name when found, the
+	 * curated seed label for a bundled row, and an explicit miss only for a
+	 * locally added key. A genuinely unasked lookup claims nothing. */
+	function nameFor(pubkey: string, label: string): { text: string; pending: boolean } {
+		const state = names[pubkey];
+		const bundled = !trust.overrides.added.includes(pubkey);
+		if (state?.state === 'found') return { text: state.name, pending: false };
+		if (state?.state === 'missing') {
+			return { text: bundled ? label : 'No kind-0 profile', pending: false };
+		}
+		if (state?.state === 'pending' || state === undefined) {
+			return { text: bundled ? label : '', pending: !bundled };
+		}
+		return { text: bundled ? label : '', pending: false };
+	}
+
+	// Open/add: read every committed key (cache is fine). A relay-pool edit is
+	// an explicit "look again": force the relay read for every key. Clicking or
+	// focusing a row does the same for that key.
+	let lastPool: string | null = null;
+	$effect(() => {
+		const pool = settings.relays.join('\n');
+		const refresh = lastPool !== null && lastPool !== pool;
+		lastPool = pool;
+		for (const publisher of trust.publishers) {
+			void untrack(() => loadName(publisher.pubkey, refresh));
+		}
+	});
 
 	async function commitTrust(): Promise<void> {
 		// Blank rows are "not entered yet", never a payload (same as relays).
@@ -563,15 +616,26 @@
 			<div class="flex max-h-[200px] flex-col gap-1.5 overflow-y-auto" data-trust-list>
 				{#each trustDrafts as draft, index (index)}
 					{@const committed = trust.publishers[index]}
-					{@const committedNpub = committed ? publisherNpub(committed.pubkey) : ''}
+					{@const identity = committed ? nameFor(committed.pubkey, committed.label) : null}
 					<div
 						class="flex items-start gap-1"
 						role="group"
 						data-trust-row
 						data-pubkey={committed?.pubkey ?? ''}
-						onmouseenter={() => committed && void loadNickname(committed.pubkey)}
+						onfocusin={() => committed && void loadName(committed.pubkey, true)}
 					>
 						<div class="min-w-0 flex-1">
+							<span
+								id={`trust-name-${index}`}
+								data-trust-name
+								class="mb-0.5 block min-h-[15px] truncate font-sans text-[11.5px] leading-[1.3] text-ink"
+							>
+								{#if identity?.pending}
+									<span class="inline-block h-[7px] w-24 rounded bg-inset" aria-hidden="true"></span>
+								{:else}
+									{identity?.text ?? ''}
+								{/if}
+							</span>
 							<input
 								bind:value={trustDrafts[index]}
 								oninput={() => (trustDirty = true)}
@@ -579,20 +643,16 @@
 								onkeydown={(event) => event.key === 'Enter' && void commitTrust()}
 								placeholder="npub, nprofile, or 64-char hex"
 								aria-label="Publisher key"
+								aria-describedby={`trust-name-${index}`}
 								spellcheck="false"
 								class="min-w-0 w-full rounded-control bg-field px-2 py-1.5 font-mono text-[12.5px] text-ink shadow-hairline outline-none transition-shadow duration-150 placeholder:text-ink-3 focus:shadow-card"
 							/>
-							{#if committed && draft === committedNpub && nicknames[committed.pubkey]}
-								<span class="mt-0.5 block truncate font-sans text-[11px] text-ink-3">
-									{nicknames[committed.pubkey]}
-								</span>
-							{/if}
 						</div>
 						<KeyHint
 							label="Remove publisher"
 							side="left"
 							onclick={() => removeTrust(index)}
-							class="primitive-icon-button mt-1 shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-red"
+							class="primitive-icon-button mt-[17px] shrink-0 text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-red"
 						>
 							<IconTrash size={14} stroke-width={2} />
 						</KeyHint>

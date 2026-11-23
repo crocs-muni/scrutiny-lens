@@ -14,6 +14,10 @@ import Harness from './SettingsDialogHarness.svelte';
 import { resetSettings } from '../../src/lib/settings.svelte';
 import { clearAllLocalData, initPersistence, _closeForTests } from '$lib/db';
 
+// The dialog reads kind-0 names on mount; this test is about focus, so the
+// seam is mocked rather than opening relay sockets in jsdom.
+vi.mock('$lib/net/profiles', () => ({ getProfile: vi.fn(async () => null) }));
+
 let app: ReturnType<typeof mount> | null = null;
 let target: HTMLElement | null = null;
 

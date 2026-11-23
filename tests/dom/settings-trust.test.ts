@@ -1,8 +1,8 @@
 // Contract test for Settings → Trusted publishers (spec §2 admission, ADR
 // 0004): the curated list is the default view and is editable on this device
-// only. Drives the real dialog against the real trust store — no module mocks —
-// so the field, the store's returned messages, and the rendered list cannot
-// drift apart.
+// only. Drives the real dialog against the real trust store; only the profile
+// seam is mocked, because a settings dialog must not open relay sockets in
+// jsdom (the name line is a separate, deterministic contract).
 
 import 'fake-indexeddb/auto';
 import { mount, unmount } from 'svelte';
@@ -12,6 +12,11 @@ import { clearAllLocalData, initPersistence, _closeForTests } from '$lib/db';
 import { resetSettings } from '$lib/settings.svelte';
 import { trust } from '$lib/trust-store.svelte';
 import { publisherNpub } from '$lib/publisher';
+
+const profileMock = vi.hoisted(() =>
+	vi.fn(async (pubkey: string) => ({ name: `Name ${pubkey.slice(0, 4)}`, picture: null }))
+);
+vi.mock('$lib/net/profiles', () => ({ getProfile: profileMock }));
 
 let teardown: (() => void) | null = null;
 let target: HTMLElement | null = null;
@@ -23,6 +28,7 @@ beforeEach(async () => {
 	await initPersistence();
 	await clearAllLocalData();
 	resetSettings();
+	profileMock.mockClear();
 	await trust.ready();
 	await trust.reset();
 	// reset() persists (and would show its note); start each test from the
@@ -49,6 +55,9 @@ function mountDialog(): void {
 const rows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[data-trust-row]')];
 const rowFor = (pubkey: string): HTMLElement | null =>
 	document.querySelector<HTMLElement>(`[data-trust-row][data-pubkey="${pubkey}"]`);
+const nameLine = (pubkey: string): string =>
+	rowFor(pubkey)?.querySelector('[data-trust-name]')?.textContent?.replace(/\s+/g, ' ').trim() ??
+	'';
 const errorText = (): string | null =>
 	document.querySelector('[data-trust-error]')?.textContent?.trim() ?? null;
 const noteText = (): string | null =>
@@ -122,7 +131,20 @@ describe('settings trusted publishers (spec §2 admission, ADR 0004)', () => {
 		await vi.waitFor(() => expect(trust.isTrusted(key)).toBe(true));
 		await vi.waitFor(() => expect(rowFor(key)).not.toBeNull());
 		await vi.waitFor(() => expect(keyInput().value).toBe(publisherNpub(key)));
+		await vi.waitFor(() => expect(nameLine(key)).toContain('Name '));
 		expect(errorText()).toBeNull();
+	});
+
+	it('shows the kind-0 name above the input and refreshes it on focus', async () => {
+		const publisher = trust.publishers[0]!;
+		mountDialog();
+		await vi.waitFor(() => expect(nameLine(publisher.pubkey)).toContain('Name '));
+
+		const input = rowFor(publisher.pubkey)?.querySelector('input');
+		input?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+		await vi.waitFor(() =>
+			expect(profileMock).toHaveBeenCalledWith(publisher.pubkey, { refresh: true })
+		);
 	});
 
 	it('shows the store message for an invalid key and adds nothing', async () => {
