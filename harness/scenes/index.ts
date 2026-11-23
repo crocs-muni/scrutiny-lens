@@ -4,6 +4,7 @@ import { chatScenes } from './chat.ts';
 import { dossierScenes } from './dossier.ts';
 import { graphScenes } from './graph.ts';
 import { resultsScenes } from './results.ts';
+import { sessionScenes } from './session.ts';
 import { settingsScenes } from './settings.ts';
 
 /** The one entry `harness/cli.ts` calls; order is the capture order, so the
@@ -15,6 +16,7 @@ export function buildScenes(): readonly Scene[] {
 		...dossierScenes(),
 		...graphScenes(),
 		...chatScenes(),
+		...sessionScenes(),
 		...settingsScenes()
 	];
 }
