@@ -15,7 +15,8 @@
     "test": "vitest run",
     "smoke:parse": "vitest run tests/smoke-parse.test.ts",
     "smoke": "vite dev --open /smoke",
-    "harness": "node harness/cli.ts"
+    "harness": "node harness/cli.ts",
+    "harness:smoke": "node harness/cli.ts shots --label ci-smoke --theme light --scene results-chains,dossier-a-history,graph-canvas,chat-citations,session-shared-trusted,session-shared-untrusted"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.10",

@@ -9,9 +9,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Check out lens
         uses: actions/checkout@v4
@@ -28,3 +32,35 @@ jobs:
       - name: Test
         working-directory: lens
         run: pnpm test
+
+      # The unit gate cannot see a route that throws inside a $derived. This
+      # job builds the real SPA and drives the session/results/graph/chat
+      # surfaces through the screenshot harness, which fails on page errors,
+      # missing expected text, unstable shots and scene errors (issue #219).
+      - name: Build static site
+        working-directory: lens
+        run: pnpm build
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('lens/pnpm-lock.yaml') }}
+
+      - name: Install Chromium for the harness
+        working-directory: lens
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Surface smoke
+        working-directory: lens
+        run: pnpm -s harness:smoke
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-smoke
+          include-hidden-files: true
+          path: lens/.harness/runs/ci-smoke
+          retention-days: 7
+          if-no-files-found: warn

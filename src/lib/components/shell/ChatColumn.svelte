@@ -34,11 +34,22 @@
 		/** The session's admitted set is in memory — asking needs it
 		 * (transcript never does). */
 		grounded: boolean;
+		/** `grounded` is false because the records are outside the trusted
+		 * view, not because they were evicted (issue #219). */
+		outsideTrustView?: boolean;
 		onSend: (question: string) => void;
 		onOpenDossier: (eventId: string) => void;
 	}
 
-	let { collapsed, onToggle, unread = false, grounded, onSend, onOpenDossier }: Props = $props();
+	let {
+		collapsed,
+		onToggle,
+		unread = false,
+		grounded,
+		outsideTrustView = false,
+		onSend,
+		onOpenDossier
+	}: Props = $props();
 
 	// Width-only 280ms; copy fades in 180ms ahead of it (issue #10).
 	const MOTION = {
@@ -51,8 +62,11 @@
 	const composerNote = $derived.by((): string | null => {
 		if (!hasKey)
 			return 'Chat needs an AI key — set one in Settings (Ctrl+,). Answers are verified against this session’s events.';
-		if (!grounded)
+		if (!grounded) {
+			if (outsideTrustView)
+				return 'This session’s records are outside the trusted view — manage the list in Settings (Ctrl+,) to ask about them.';
 			return 'This session’s events aren’t in memory — the transcript stays readable; asking unlocks when the session’s events are admitted.';
+		}
 		return null;
 	});
 

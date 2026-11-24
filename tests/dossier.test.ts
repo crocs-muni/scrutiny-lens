@@ -18,6 +18,8 @@ import {
 	type UnsignedEvent
 } from '@scrutiny-fabric/core';
 import { deriveDossier, historyRows, incomingFrom } from '$lib/dossier';
+import { trust } from '$lib/trust-store.svelte';
+import { BUNDLED_TRUSTED } from '$lib/trust';
 import type { CoreNostrEvent, NostrEvent } from '$lib/fabric';
 import type { ProductCard } from '$lib/pipeline/cards';
 
@@ -525,9 +527,24 @@ describe('admittedVia — the trusted list’s binding path', () => {
 		return signed(buildBinding({ id: rootId }, { id: linkId }, 'documents', 1500).template, pubkey, id);
 	}
 
+	it('accepts the branded provider as the oracle and names the bundled binding path', () => {
+		const root = product('root');
+		const meta = metadata('md');
+		const bundled = BUNDLED_TRUSTED.publishers[0]!.pubkey;
+		const bind = binding('root', 'md', bundled);
+		const d = deriveDossier('md', [root, meta, bind], [], new Map(), trust.provider)!;
+		expect(d.admittedVia?.publisherPubkey).toBe(bundled);
+	});
+
+	it('a detached isTrusted is not a valid oracle (issue #219 canary)', () => {
+		expect(() =>
+			deriveDossier('root', [product('root')], [], new Map(), { isTrusted: trust.isTrusted })
+		).toThrow(TypeError);
+	});
+
 	it('a direct subject yields null — the strip is only for reached records', () => {
 		const root = product('root', AUTHOR);
-		const d = deriveDossier('root', [root], [], new Map(), trustedOnly)!;
+		const d = deriveDossier('root', [root], [], new Map(), { isTrusted: trustedOnly })!;
 		expect(d.admittedVia).toBeNull();
 	});
 
@@ -540,7 +557,7 @@ describe('admittedVia — the trusted list’s binding path', () => {
 			cardFor(meta, { typeTag: 'scrutiny-metadata', title: 'CVE-2017-15361' })
 		];
 
-		const d = deriveDossier('md', [root, meta, bind], cards, new Map(), trustedOnly)!;
+		const d = deriveDossier('md', [root, meta, bind], cards, new Map(), { isTrusted: trustedOnly })!;
 		expect(d.admittedVia).toEqual({
 			bindingId: 'b1',
 			publisherPubkey: AUTHOR,
@@ -548,7 +565,7 @@ describe('admittedVia — the trusted list’s binding path', () => {
 		});
 
 		// The path is symmetric: the product side names the metadata record.
-		const p = deriveDossier('root', [root, meta, bind], cards, new Map(), trustedOnly)!;
+		const p = deriveDossier('root', [root, meta, bind], cards, new Map(), { isTrusted: trustedOnly })!;
 		expect(p.admittedVia).toMatchObject({ bindingId: 'b1', otherTitle: 'CVE-2017-15361' });
 	});
 
@@ -556,7 +573,7 @@ describe('admittedVia — the trusted list’s binding path', () => {
 		const root = product('root');
 		const meta = metadata('md');
 		const bind = binding('root', 'md', FOREIGN, 'b1');
-		const d = deriveDossier('md', [root, meta, bind], [], new Map(), trustedOnly)!;
+		const d = deriveDossier('md', [root, meta, bind], [], new Map(), { isTrusted: trustedOnly })!;
 		expect(d.admittedVia).toBeNull();
 	});
 
@@ -565,7 +582,7 @@ describe('admittedVia — the trusted list’s binding path', () => {
 		const other = product('other');
 		const meta = metadata('md');
 		const bind = binding('other', 'md', AUTHOR, 'b1');
-		const d = deriveDossier('root', [root, other, meta, bind], [], new Map(), trustedOnly)!;
+		const d = deriveDossier('root', [root, other, meta, bind], [], new Map(), { isTrusted: trustedOnly })!;
 		expect(d.admittedVia).toBeNull();
 	});
 
@@ -583,7 +600,7 @@ describe('admittedVia — the trusted list’s binding path', () => {
 		const p1 = patchEvent('root', 'root', 'root body\n', 'patched\n', 2000, FOREIGN, 'p1');
 		const meta = metadata('md');
 		const bind = binding('root', 'md');
-		const d = deriveDossier('root', [root, p1, meta, bind], [], new Map(), trustedOnly)!;
+		const d = deriveDossier('root', [root, p1, meta, bind], [], new Map(), { isTrusted: trustedOnly })!;
 		expect(d.content.text).toBe('patched\n');
 		expect(d.history.map((r) => r.state)).toEqual(['root', 'applied']);
 		expect(d.admittedVia).toMatchObject({ bindingId: 'bind', publisherPubkey: AUTHOR });

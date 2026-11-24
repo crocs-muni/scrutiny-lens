@@ -5,6 +5,7 @@
 import type { Locator, Page } from 'playwright';
 import { HARNESS_MODEL } from '../ai.ts';
 import type { SceneContext } from '../capture.ts';
+import { FIXTURE_PUBKEY } from '../seed/chains.ts';
 
 /** The trace's done row prints the run's real elapsed time
  * (`TaskTrace.svelte`), which differs between launches of the same build —
@@ -12,9 +13,53 @@ import type { SceneContext } from '../capture.ts';
  * before the shot; nothing else in the row is touched. */
 export const MASK_ELAPSED = [{ pattern: / · \d+\.\ds\b/, replacement: ' · 0.0s' }];
 
+/** The Settings dialog, opened from the rail (the Ctrl+, shortcut does not
+ * reach the shell handler in this build). */
+async function openSettings(page: Page, url: string) {
+	if (!page.url().startsWith(url)) await page.goto(`${url}/`);
+	await page.getByRole('button', { name: /^Settings/ }).first().click();
+	const dialog = page.getByRole('dialog', { name: 'Settings' });
+	await dialog.waitFor();
+	return dialog;
+}
+
+async function closeSettings(page: Page, dialog: Locator): Promise<void> {
+	await page.getByRole('button', { name: 'Close settings' }).click();
+	await dialog.waitFor({ state: 'detached' });
+}
+
+/** The fixture corpus is signed by a test key. The app ships a curated
+ * admission list (ADR 0004), so every data scene must add that key through
+ * the real trust editor before its search — otherwise the trusted view hides
+ * the whole fixture and the scene fails for the wrong reason (issue #219). */
+export async function trustFixturePublisher(
+	page: Page,
+	url: string,
+	{ persist = false }: { persist?: boolean } = {}
+): Promise<void> {
+	const dialog = await openSettings(page, url);
+	const row = dialog.locator(`[data-trust-row][data-pubkey="${FIXTURE_PUBKEY}"]`);
+	if ((await row.count()) === 0) {
+		await dialog.getByRole('button', { name: 'Add publisher' }).click();
+		const input = dialog.locator('[data-trust-row][data-pubkey=""] input').last();
+		await input.fill(FIXTURE_PUBKEY);
+		await input.press('Enter');
+		await row.waitFor();
+		// A full page load rehydrates from IndexedDB. The Save footer is the
+		// app's own persistence barrier (`persistNote('saved')`), so scenes
+		// that navigate wait on it instead of opening the DB by hand.
+		if (persist) {
+			await dialog
+				.locator('[data-trust-note]', { hasText: 'saved on this device' })
+				.waitFor({ timeout: 5_000 });
+		}
+	}
+	await closeSettings(page, dialog);
+}
+
 /** Ask from the hero composer the way a person does. */
 export async function ask(page: Page, url: string, question: string): Promise<void> {
-	if (!page.url().startsWith(url)) await page.goto(`${url}/`);
+	await trustFixturePublisher(page, url);
 	// Exact, role-scoped: 'Search' also prefixes the recents rail's
 	// "Search sessions" field and the submit tooltip, and Playwright's label
 	// match is a substring by default.
@@ -63,20 +108,13 @@ export async function waitAiIdle(ctx: SceneContext, quietMs = 400): Promise<void
  * exercise the AI path open the dialog once, let the single-model auto-select
  * run, and close it. */
 export async function enableAi(page: Page, url: string): Promise<void> {
-	if (!page.url().startsWith(url)) await page.goto(`${url}/`);
-	// The rail's visible Settings button, not Ctrl+,: in this build the
-	// shortcut's keydown never reaches the shell handler (see report), while
-	// the button path is the same shell.toggleSettings call.
-	await page.getByRole('button', { name: /^Settings/ }).first().click();
-	const dialog = page.getByRole('dialog', { name: 'Settings' });
-	await dialog.waitFor();
+	const dialog = await openSettings(page, url);
 	await page.getByRole('button', { name: 'Show models' }).click();
 	// The option exists only after GET /v1/models resolved; the auto-select
 	// runs in the same handler that fills the list.
 	await page.getByRole('option', { name: HARNESS_MODEL }).waitFor();
 	await page.keyboard.press('Escape'); // closes the combobox layer
-	await page.getByRole('button', { name: 'Close settings' }).click();
-	await dialog.waitFor({ state: 'detached' });
+	await closeSettings(page, dialog);
 }
 
 /** Click the result card whose text names the product. */

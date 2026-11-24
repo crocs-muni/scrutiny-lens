@@ -71,6 +71,9 @@
 		/** Visible twin of the Esc first step: clear the drawer subject while
 		 * the graph anchor stays (#29b ruling 7, issue #142 review). */
 		onClearSelection?: () => void;
+		/** A selection exists but it is outside the trusted view: the null
+		 * dossier is admission, not "nothing selected" (issue #219). */
+		outsideTrustView?: boolean;
 		onToggle: () => void;
 		onResize: (next: number) => void;
 	}
@@ -84,6 +87,7 @@
 		onSelect,
 		onClearFilters,
 		onClearSelection,
+		outsideTrustView = false,
 		onToggle,
 		onResize
 	}: Props = $props();
@@ -319,7 +323,9 @@
 		{#if dossier === null}
 			<!-- ruling 7: one honest line, section bar above stays constant. -->
 			<p class="max-w-md font-mono text-[11.5px] leading-relaxed text-ink-3">
-				select a result to open its dossier
+				{outsideTrustView
+					? 'this record is outside the trusted view'
+					: 'select a result to open its dossier'}
 			</p>
 		{:else if active === 'summary'}
 			<div class="flex items-center gap-2.5">

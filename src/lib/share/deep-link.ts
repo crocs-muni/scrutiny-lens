@@ -74,16 +74,23 @@ export function decodeShareLink(neventText: string): SharePointer {
  * full NostrEvent would advertise a false dependency on fields this
  * function never reads.
  */
-export function buildShareLinks(
+export function encodeShareNevent(
 	subject: { id: string; pubkey: string; kind: number },
 	seenOn: string[]
-): { url: string; nostrUri: string } {
-	const nevent = neventEncode({
+): string {
+	return neventEncode({
 		id: subject.id,
 		relays: seenOn.slice(0, 3),
 		author: subject.pubkey,
 		kind: subject.kind
 	});
+}
+
+export function buildShareLinks(
+	subject: { id: string; pubkey: string; kind: number },
+	seenOn: string[]
+): { url: string; nostrUri: string } {
+	const nevent = encodeShareNevent(subject, seenOn);
 	const url = `${location.origin}${import.meta.env.BASE_URL}event/${nevent}`;
 	return { url, nostrUri: `nostr:${nevent}` };
 }

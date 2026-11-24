@@ -29,6 +29,27 @@ export interface RunningServer {
 	close(): Promise<void>;
 }
 
+const UNSAFE_PORTS = new Set([10080, 6697]);
+
+async function listenSafe(server: Server): Promise<number> {
+	for (let attempt = 0; attempt < 10; attempt++) {
+		const listening = Promise.withResolvers<void>();
+		const failed = Promise.withResolvers<never>();
+		const onError = (error: Error): void => failed.reject(error);
+		server.once('error', onError);
+		server.listen(0, '127.0.0.1', () => listening.resolve());
+		await Promise.race([listening.promise, failed.promise]);
+		server.off('error', onError);
+		const { port } = server.address() as AddressInfo;
+		const unsafe = port < 1024 || (port >= 6665 && port <= 6669) || UNSAFE_PORTS.has(port);
+		if (!unsafe) return port;
+		const closed = Promise.withResolvers<void>();
+		server.close(() => closed.resolve());
+		await closed.promise;
+	}
+	throw new Error('harness: could not obtain a Chromium-safe port');
+}
+
 export async function serveApp(options: ServeOptions): Promise<RunningServer> {
 	const files = sirv(options.buildDir, { single: true, dev: true });
 	const server: Server = createServer(async (req, res) => {
@@ -51,10 +72,10 @@ export async function serveApp(options: ServeOptions): Promise<RunningServer> {
 		}
 		files(req, res);
 	});
-	const listening = Promise.withResolvers<void>();
-	server.listen(0, '127.0.0.1', () => listening.resolve());
-	await listening.promise;
-	const { port } = server.address() as AddressInfo;
+	// Chromium refuses a set of "unsafe" ports (1–1023, 6665–6669, 10080, …).
+	// Port 0 can hand one back on some hosts, so retry rather than fail the
+	// scene with ERR_UNSAFE_PORT (a real CI flake: 6666/6668).
+	const port = await listenSafe(server);
 	return {
 		url: `http://127.0.0.1:${port}`,
 		async close() {

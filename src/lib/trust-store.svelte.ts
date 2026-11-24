@@ -62,14 +62,16 @@ export class TrustStore {
 		this.version++;
 	}
 
-	/** The effective list the app actually admits: base ∪ added \ removed. */
-	get publishers(): TrustedPublisher[] {
-		return effectiveTrusted(BUNDLED_TRUSTED.publishers, this.overrides.added, this.overrides.removed);
-	}
+	/** The effective list the app actually admits: base ∪ added \ removed.
+	 * Derived once per override version — `isTrusted` runs per admitted event,
+	 * and the old getter rebuilt the list (and its npub labels) on every read. */
+	publishers = $derived.by(() =>
+		effectiveTrusted(BUNDLED_TRUSTED.publishers, this.overrides.added, this.overrides.removed)
+	);
+	#keys = $derived(new Set(this.publishers.map((publisher) => publisher.pubkey)));
 
 	isTrusted(pubkey: string): boolean {
-		const key = pubkey.trim().toLowerCase();
-		return this.publishers.some((publisher) => publisher.pubkey === key);
+		return this.#keys.has(pubkey.trim().toLowerCase());
 	}
 
 	/** Atomic commit for the list editor: validate every entry first, then

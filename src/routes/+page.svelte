@@ -45,7 +45,7 @@
 	import { chat } from '$lib/chat.svelte';
 	import type { ProviderOverrideInput } from '$lib/ai/provider';
 	import { bestIdentifier } from '$lib/ai/projector';
-	import { subjectGrounding, type NostrEvent } from '$lib/fabric';
+	import { scrutinyEventType, subjectGrounding, type NostrEvent } from '$lib/fabric';
 	import { searchTallyLabel, showsStageWait } from '$lib/trace';
 
 	let centerHeight = $state(0);
@@ -217,8 +217,26 @@
 		];
 	});
 	const cohort = $derived(viewCards.length === 0 ? '' : cohortLine(viewCards, viewEvents));
+	/** Records (not bindings/patches/deletions) the trusted view hides —
+	 * the number the scope line and empty states stand behind. */
 	const outsideTrust = $derived(
-		(investigation.result?.admitted.length ?? 0) - investigation.admittedEvents.length
+		(investigation.result?.admitted ?? []).filter((event) => {
+			const type = scrutinyEventType(event);
+			return (
+				(type === 'product' || type === 'metadata') && !investigation.admittedIds.has(event.id)
+			);
+		}).length
+	);
+	const outsideTrustView = $derived(
+		investigation.sessionId === shell.session?.id &&
+			investigation.admittedEvents.length === 0 &&
+			outsideTrust > 0
+	);
+	/** The selected record itself, not the session, is outside the view — the
+	 * drawer needs its own reason for a null dossier (issue #219). */
+	const selectedOutsideTrust = $derived(
+		investigation.selectedEventId !== null &&
+			!investigation.admittedIds.has(investigation.selectedEventId)
 	);
 
 	// — Dossier derivations (#29a) —
@@ -228,12 +246,17 @@
 		const id = investigation.selectedEventId;
 		const session = investigation.result;
 		if (id === null || session === null) return null;
+		// A stale selection outside the trusted view must not derive a dossier:
+		// the session surface has hidden that record (issue #219).
+		if (!investigation.admittedIds.has(id)) return null;
+		// The branded provider's isTrusted is already bound; one admission
+		// convention with computeAdmission (issue #219).
 		return deriveDossier(
 			id,
 			session.admitted,
 			investigation.cards,
 			investigation.nodeTiles,
-			trust.isTrusted
+			trust.provider
 		);
 	});
 	/** The surface a subject renders on decides visibility: product subjects
@@ -1043,16 +1066,54 @@
 							surface, so the failed-hint degradation lives here too —
 							same dismissible lane as the results surface. -->
 						{@render note(shareNote !== '', 'share-hints', shareNote)}
-						{#key investigation.graphSubjectId}
-							<GraphCanvas
-								events={investigation.admittedEvents}
-								cards={investigation.admittedCards}
-								root={investigation.graphSubjectId}
-								selectedEventId={investigation.selectedEventId}
-								onSelect={selectNode}
-								onDeselect={clearSelection}
-							/>
-						{/key}
+						{#if outsideTrust > 0 && !outsideTrustView}
+							<!-- Partial trust still states its scope above the graph. -->
+							<p class="shrink-0 px-1 pb-1 font-mono text-[11px] tabular-nums text-ink-2">
+								{outsideTrust} outside the trusted view ·
+								<button
+									type="button"
+									class="text-accent-ink underline underline-offset-2 hover:text-ink"
+									onclick={() => shell.toggleSettings()}
+								>
+									manage
+								</button>
+							</p>
+						{/if}
+						{#if outsideTrustView}
+							<!-- The session counterpart of ResultsEmpty: the run exists,
+							     but every record is outside the trusted view. Never a
+							     blank canvas and never a fabricated "no evidence". -->
+							<div
+								data-session-trusted-empty
+								class="m-auto flex max-w-72 flex-col items-center gap-3 text-center"
+							>
+								<p class="text-[13px] leading-relaxed text-ink-2">
+									No records in this session are inside the trusted view.
+								</p>
+								<p class="font-mono text-[11.5px] tabular-nums text-ink-3">
+									<span data-outside-count>{outsideTrust}</span>
+									{outsideTrust === 1 ? ' record sits' : ' records sit'} outside the trusted view.
+								</p>
+								<button
+									type="button"
+									class="rounded-control border border-line px-3 py-1.5 text-[12.5px] text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+									onclick={() => shell.toggleSettings()}
+								>
+									Manage trusted publishers
+								</button>
+							</div>
+						{:else}
+							{#key investigation.graphSubjectId}
+								<GraphCanvas
+									events={investigation.admittedEvents}
+									cards={investigation.admittedCards}
+									root={investigation.graphSubjectId}
+									selectedEventId={investigation.selectedEventId}
+									onSelect={selectNode}
+									onDeselect={clearSelection}
+								/>
+							{/key}
+						{/if}
 					</div>
 				{:else}
 					{#if investigation.restoreMissId === shell.session?.id}
@@ -1111,6 +1172,7 @@
 				maxHeight={drawerMax}
 				{dossier}
 				hiddenByFilter={selectionHidden}
+				outsideTrustView={selectedOutsideTrust}
 				onSelect={openDossier}
 				onClearFilters={() => investigation.clearFacets()}
 				onClearSelection={clearSelection}
@@ -1129,6 +1191,7 @@
 			onToggle={() => shell.toggleChat()}
 			unread={chat.unseen}
 			grounded={chatGrounded}
+			outsideTrustView={outsideTrustView}
 			onSend={askChat}
 			onOpenDossier={openDossier}
 		/>

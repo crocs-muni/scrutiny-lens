@@ -2,7 +2,7 @@
 //
 //   seed                      regenerate harness/fixtures/*.ndjson
 //   list                      scene ids as JSON
-//   shots [--label L] [--scene ID] [--theme light|dark] [--build-dir DIR]
+//   shots [--label L] [--scene a,b] [--theme light|dark] [--build-dir DIR]
 //                             capture scenes into .harness/runs/<label>/
 //   ledger [--runs N]         capture N times, write .harness/noise.json
 //                             (the per-scene noise floor compare must clear)
@@ -35,6 +35,17 @@ function flag(args: string[], name: string): string | undefined {
 	return at === -1 ? undefined : args[at + 1];
 }
 
+/** Comma-separated `--scene a,b` for a CI smoke subset. */
+function sceneIds(args: string[]): string[] | undefined {
+	const raw = flag(args, 'scene');
+	return raw === undefined
+		? undefined
+		: raw
+				.split(',')
+				.map((id) => id.trim())
+				.filter(Boolean);
+}
+
 const [command, ...args] = process.argv.slice(2);
 
 if (command === 'seed') {
@@ -46,15 +57,22 @@ if (command === 'seed') {
 	console.log(JSON.stringify(buildScenes().map((scene) => scene.id)));
 } else if (command === 'shots') {
 	const label = flag(args, 'label') ?? 'head';
-	const sceneId = flag(args, 'scene');
+	const ids = sceneIds(args);
 	const theme = flag(args, 'theme') as Theme | undefined;
 	const buildDir = flag(args, 'build-dir') ?? 'build';
 	const all = buildScenes();
-	const scenes = sceneId === undefined ? all : all.filter((scene) => scene.id === sceneId);
-	if (scenes.length === 0) {
-		console.error(`no scene "${sceneId}"`);
+	const known = new Set(all.map((scene) => scene.id));
+	const unknown = ids?.filter((id) => !known.has(id)) ?? [];
+	if (ids !== undefined && ids.length === 0) {
+		console.error('--scene needs at least one id');
 		process.exit(2);
 	}
+	if (unknown.length > 0) {
+		console.error(`no scene "${unknown.join('", "')}"`);
+		process.exit(2);
+	}
+	const wanted = ids === undefined ? undefined : new Set(ids);
+	const scenes = wanted === undefined ? all : all.filter((scene) => wanted.has(scene.id));
 	const outDir = join('.harness', 'runs', label);
 	const results = await captureScenes(scenes, { buildDir, outDir }, { theme });
 	await writeRunMeta({ label, outDir, buildDir, scenes: scenes.map((scene) => scene.id) });

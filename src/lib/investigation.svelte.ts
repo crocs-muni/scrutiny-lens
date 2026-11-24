@@ -185,6 +185,8 @@ class Investigation {
     const evs = this.result?.admitted ?? [];
     return evs.filter((e) => view.isAdmitted(e.id));
   });
+  /** Admitted event ids: O(1) membership for the dossier/selection guards. */
+  admittedIds = $derived.by(() => new Set(this.admittedEvents.map((event) => event.id)));
   /** Cards whose IDs are admitted by the trusted view. */
   admittedCards = $derived.by(() => {
     void this.admission;
