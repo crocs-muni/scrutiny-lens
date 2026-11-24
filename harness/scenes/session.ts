@@ -4,7 +4,6 @@
 // editor); one proves the honest untrusted empty state — the surface that
 // dde25bc left blank.
 
-import type { NostrEvent } from 'nostr-tools/core';
 import { encodeShareNevent } from '../../src/lib/share/deep-link.ts';
 import type { Scene } from '../capture.ts';
 import { loadFixture } from '../fixtures.ts';
@@ -39,9 +38,13 @@ export function sessionScenes(): Scene[] {
 			async run({ page, url }) {
 				await page.goto(`${url}${shareUrl}`);
 				await page.locator('[data-session-trusted-empty]').waitFor();
+				const count = Number(await page.locator('[data-outside-count]').innerText());
+				if (!Number.isInteger(count) || count <= 0) {
+					throw new Error(`outside-the-trusted-view count is ${count}`);
+				}
 			},
 			expect: [
-				'No records from your trusted publishers are in this session.',
+				'No records in this session are inside the trusted view.',
 				'outside the trusted view'
 			]
 		}
