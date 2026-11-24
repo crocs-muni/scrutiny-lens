@@ -527,12 +527,12 @@ describe('admittedVia — the trusted list’s binding path', () => {
 		return signed(buildBinding({ id: rootId }, { id: linkId }, 'documents', 1500).template, pubkey, id);
 	}
 
-	it('accepts the store itself as the oracle and names the bundled binding path', () => {
+	it('accepts the branded provider as the oracle and names the bundled binding path', () => {
 		const root = product('root');
 		const meta = metadata('md');
 		const bundled = BUNDLED_TRUSTED.publishers[0]!.pubkey;
 		const bind = binding('root', 'md', bundled);
-		const d = deriveDossier('md', [root, meta, bind], [], new Map(), trust)!;
+		const d = deriveDossier('md', [root, meta, bind], [], new Map(), trust.provider)!;
 		expect(d.admittedVia?.publisherPubkey).toBe(bundled);
 	});
 

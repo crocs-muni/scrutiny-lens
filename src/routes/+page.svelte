@@ -227,10 +227,16 @@
 			);
 		}).length
 	);
-	const untrustedSession = $derived(
+	const outsideTrustView = $derived(
 		investigation.sessionId === shell.session?.id &&
 			investigation.admittedEvents.length === 0 &&
 			outsideTrust > 0
+	);
+	/** The selected record itself, not the session, is outside the view — the
+	 * drawer needs its own reason for a null dossier (issue #219). */
+	const selectedOutsideTrust = $derived(
+		investigation.selectedEventId !== null &&
+			!investigation.admittedIds.has(investigation.selectedEventId)
 	);
 
 	// — Dossier derivations (#29a) —
@@ -243,13 +249,14 @@
 		// A stale selection outside the trusted view must not derive a dossier:
 		// the session surface has hidden that record (issue #219).
 		if (!investigation.admittedIds.has(id)) return null;
-		// Pass the store, not a detached method: isTrusted reads this.publishers.
+		// The branded provider's isTrusted is already bound; one admission
+		// convention with computeAdmission (issue #219).
 		return deriveDossier(
 			id,
 			session.admitted,
 			investigation.cards,
 			investigation.nodeTiles,
-			trust
+			trust.provider
 		);
 	});
 	/** The surface a subject renders on decides visibility: product subjects
@@ -1059,7 +1066,20 @@
 							surface, so the failed-hint degradation lives here too —
 							same dismissible lane as the results surface. -->
 						{@render note(shareNote !== '', 'share-hints', shareNote)}
-						{#if untrustedSession}
+						{#if outsideTrust > 0 && !outsideTrustView}
+							<!-- Partial trust still states its scope above the graph. -->
+							<p class="shrink-0 px-1 pb-1 font-mono text-[11px] tabular-nums text-ink-2">
+								{outsideTrust} outside the trusted view ·
+								<button
+									type="button"
+									class="text-accent-ink underline underline-offset-2 hover:text-ink"
+									onclick={() => shell.toggleSettings()}
+								>
+									manage
+								</button>
+							</p>
+						{/if}
+						{#if outsideTrustView}
 							<!-- The session counterpart of ResultsEmpty: the run exists,
 							     but every record is outside the trusted view. Never a
 							     blank canvas and never a fabricated "no evidence". -->
@@ -1068,10 +1088,10 @@
 								class="m-auto flex max-w-72 flex-col items-center gap-3 text-center"
 							>
 								<p class="text-[13px] leading-relaxed text-ink-2">
-									No records from your trusted publishers are in this session.
+									No records in this session are inside the trusted view.
 								</p>
-								<p class="font-mono text-[11.5px] text-ink-3">
-									{outsideTrust}
+								<p class="font-mono text-[11.5px] tabular-nums text-ink-3">
+									<span data-outside-count>{outsideTrust}</span>
 									{outsideTrust === 1 ? ' record sits' : ' records sit'} outside the trusted view.
 								</p>
 								<button
@@ -1152,7 +1172,7 @@
 				maxHeight={drawerMax}
 				{dossier}
 				hiddenByFilter={selectionHidden}
-				hiddenByTrust={untrustedSession && investigation.selectedEventId !== null}
+				outsideTrustView={selectedOutsideTrust}
 				onSelect={openDossier}
 				onClearFilters={() => investigation.clearFacets()}
 				onClearSelection={clearSelection}
@@ -1171,7 +1191,7 @@
 			onToggle={() => shell.toggleChat()}
 			unread={chat.unseen}
 			grounded={chatGrounded}
-			untrusted={untrustedSession}
+			outsideTrustView={outsideTrustView}
 			onSend={askChat}
 			onOpenDossier={openDossier}
 		/>
